@@ -7,16 +7,13 @@ import ee
 logger = logging.getLogger(__name__)
 
 # ── GEE Initialization ────────────────────────────────────────────────────────
-try:
-    ee.Initialize()
-    logger.info("Google Earth Engine initialized successfully.")
-except ee.EEException as e:
-    logger.error(f"GEE init error: {e}. Run 'earthengine authenticate'.")
-except Exception as e:
-    logger.error(f"Unexpected GEE init error: {e}")
+import os, json, tempfile
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
+creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+if creds_json:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        f.write(creds_json)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = f.name# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _today_ee() -> ee.Date:
     return ee.Date(datetime.datetime.utcnow().strftime("%Y-%m-%d"))
