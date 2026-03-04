@@ -1,5 +1,8 @@
 import logging
 import datetime
+import os
+import json
+import tempfile
 from typing import Dict, Any
 
 import ee
@@ -7,13 +10,35 @@ import ee
 logger = logging.getLogger(__name__)
 
 # ── GEE Initialization ────────────────────────────────────────────────────────
-import os, json, tempfile
+def _initialize_gee():
+    creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if creds_json:
+        # Server/Render deployment — use service account from env var
+        try:
+            creds_dict = json.loads(creds_json)
+            credentials = ee.ServiceAccountCredentials(
+                email=creds_dict["client_email"],
+                key_data=creds_json,
+            )
+            ee.Initialize(credentials)
+            logger.info("GEE initialized with service account.")
+            return
+        except Exception as e:
+            logger.error(f"GEE service account init failed: {e}")
+            raise
 
-creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-if creds_json:
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        f.write(creds_json)
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = f.name# ── Helpers ───────────────────────────────────────────────────────────────────
+    # Local development — use earthengine authenticate credentials
+    try:
+        ee.Initialize()
+        logger.info("GEE initialized with local credentials.")
+    except Exception as e:
+        logger.error(f"GEE init error: {e}. Run earthengine authenticate.")
+        raise
+
+_initialize_gee()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _today_ee() -> ee.Date:
     return ee.Date(datetime.datetime.utcnow().strftime("%Y-%m-%d"))
