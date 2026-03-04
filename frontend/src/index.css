@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #050a0e;
+  --surface: #0d1821;
+  --surface2: #142231;
+  --border: #1e3448;
+  --border2: #2a4a6b;
+  --accent: #00d4ff;
+  --accent2: #00ff9d;
+  --accent3: #ff6b35;
+  --text: #e8f4f8;
+  --text2: #8ab4cc;
+  --text3: #4a7a9b;
+  --mono: 'Space Mono', monospace;
+  --sans: 'DM Sans', sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+.leaflet-control-attribution { display: none !important; }
+.leaflet-draw-toolbar a { background-color: var(--surface) !important; border-color: var(--border2) !important; }
+.leaflet-draw-toolbar a:hover { background-color: var(--surface2) !important; }
+.leaflet-bar a { background-color: var(--surface) !important; border-color: var(--border2) !important; color: var(--text) !important; }
+.leaflet-bar a:hover { background-color: var(--surface2) !important; }
+.leaflet-touch .leaflet-control-layers, .leaflet-touch .leaflet-bar { border: 1px solid var(--border2) !important; box-shadow: 0 0 20px rgba(0,212,255,0.1) !important; }
+
+@keyframes fadeSlideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@keyframes glow { 0%,100% { box-shadow: 0 0 5px rgba(0,212,255,0.3); } 50% { box-shadow: 0 0 20px rgba(0,212,255,0.6); } }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
+@keyframes scanline { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
+
+.animate-fade-up { animation: fadeSlideUp 0.35s ease-out forwards; }
+.animate-glow { animation: glow 2s ease-in-out infinite; }
+.animate-spin { animation: spin 1s linear infinite; display: inline-block; }
+
+.vayu-input { background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: var(--sans); transition: border-color 0.2s, box-shadow 0.2s; }
+.vayu-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0,212,255,0.12); }
+.vayu-input::placeholder { color: var(--text3); }
+
+.progress-bar { height: 2px; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.5s ease; box-shadow: 0 0 8px var(--accent); }
+.metric-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; transition: border-color 0.2s; }
+.metric-card:hover { border-color: var(--border2); }
+.glass-panel { background: rgba(13,24,33,0.97); backdrop-filter: blur(12px); border-right: 1px solid var(--border); }
+
+.scan-overlay { position: relative; overflow: hidden; }
+.scan-overlay::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(0,212,255,0.25), transparent); animation: scanline 6s linear infinite; pointer-events: none; z-index: 999; }
