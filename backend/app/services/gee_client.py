@@ -29,7 +29,19 @@ def _initialize_gee():
 
     # Local development — use earthengine authenticate credentials
     try:
-        ee.Initialize()
+        project = os.environ.get("GCP_PROJECT_ID", "")
+        # Always pass project explicitly — GEE now requires it since early 2025
+        if project:
+            ee.Initialize(project=project)
+        else:
+            # Fallback: try without project (works if earthengine set_project was run)
+            try:
+                ee.Initialize()
+            except ee.EEException:
+                raise ee.EEException(
+                    "No GCP_PROJECT_ID set in .env and no default project configured. "
+                    "Run: earthengine set_project YOUR_PROJECT_ID"
+                )
         logger.info("GEE initialized with local credentials.")
     except Exception as e:
         logger.error(f"GEE init error: {e}. Run earthengine authenticate.")
