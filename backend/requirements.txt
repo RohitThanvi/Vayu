@@ -2,6 +2,7 @@
 fastapi==0.115.5
 uvicorn[standard]==0.32.0
 python-multipart==0.0.20
+websockets==13.1
 
 # Validation & settings
 pydantic==2.10.3
@@ -11,7 +12,7 @@ python-dotenv==1.0.1
 # Rate limiting
 slowapi==0.1.9
 
-# Google Earth Engine (latest stable)
+# Google Earth Engine
 earthengine-api==1.7.16
 
 # Google Cloud Storage
@@ -20,5 +21,5 @@ google-cloud-storage==2.18.2
 # LLM
 groq==0.12.0
 
-# Utilities
+# HTTP client (intel fetchers)
 httpx==0.27.2
