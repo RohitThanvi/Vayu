@@ -1,18 +1,35 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import IntelPanel from './components/IntelPanel';
+import { useVesselTracker } from './hooks/useVesselTracker';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 const POLL_MS = 2500;
 
 const METRICS_META = {
-  vegetation_change:        { label: 'Vegetation Change',       icon: '🌿', color: '#00ff9d', desc: 'NDVI green cover loss/gain' },
-  builtup_change:           { label: 'Built-up Change',         icon: '🏙️', color: '#ff6b35', desc: 'Urban expansion analysis' },
-  water_change:             { label: 'Water Body Change',       icon: '💧', color: '#00d4ff', desc: 'Surface water gain/loss' },
-  flood_detection:          { label: 'Flood Detection',         icon: '🌊', color: '#4a9eff', desc: 'SAR flood mapping' },
-  fire_detection:           { label: 'Fire & Burn Scars',       icon: '🔥', color: '#ff4136', desc: 'Active fire mapping' },
-  drought_index:            { label: 'Drought Index',           icon: '🏜️', color: '#f5a623', desc: 'Drought severity' },
-  land_surface_temperature: { label: 'Land Surface Temp',       icon: '🌡️', color: '#ff6b6b', desc: 'Heat & UHI analysis' },
-  deforestation:            { label: 'Deforestation',           icon: '🌲', color: '#2ecc71', desc: 'Forest loss detection' },
-  soil_moisture:            { label: 'Soil Moisture',           icon: '🌱', color: '#a0784a', desc: 'Soil & crop stress' },
+  vegetation_change:        { label: 'Vegetation Change',       color: '#4a7c59', desc: 'NDVI green cover loss/gain' },
+  builtup_change:           { label: 'Built-up Change',         color: '#c9933a', desc: 'Urban expansion analysis' },
+  water_change:             { label: 'Water Body Change',       color: '#2a6abd', desc: 'Surface water gain/loss' },
+  flood_detection:          { label: 'Flood Detection',         color: '#1a5a9a', desc: 'SAR flood mapping' },
+  fire_detection:           { label: 'Fire Detection',          color: '#8b2020', desc: 'Active fire mapping' },
+  drought_index:            { label: 'Drought Index',           color: '#8a6010', desc: 'Drought severity' },
+  land_surface_temperature: { label: 'Land Surface Temp',       color: '#7a3020', desc: 'Heat & UHI analysis' },
+  deforestation:            { label: 'Deforestation',           color: '#4a7c59', desc: 'Forest loss detection' },
+  soil_moisture:            { label: 'Soil Moisture',           color: '#6a5a30', desc: 'Soil & crop stress' },
+};
+
+const INTEL_COLORS = {
+  'USGS':       { fill: '#b09020', border: '#d4b030' },
+  'NASA FIRMS': { fill: '#8b2020', border: '#c03030' },
+  'GDELT':      { fill: '#3a3a8a', border: '#5a5abd' },
+  'ACLED':      { fill: '#6b2020', border: '#9b3030' },
+};
+
+const VESSEL_COLORS = {
+  TANKER:    { fill: '#c9933a', border: '#e0aa50', label: 'Tanker' },
+  CARGO:     { fill: '#2a6abd', border: '#4a8add', label: 'Cargo / Bulk' },
+  PASSENGER: { fill: '#3a8a6a', border: '#50aa80', label: 'Passenger' },
+  FISHING:   { fill: '#6a5a8a', border: '#8a7aaa', label: 'Fishing' },
+  OTHER:     { fill: '#5a6470', border: '#7a8490', label: 'Other' },
 };
 
 const EXAMPLES = [
@@ -26,31 +43,104 @@ const EXAMPLES = [
   'Has soil moisture decreased in this area since 2020?',
 ];
 
+const S = {
+  mono: "'JetBrains Mono','Courier New',monospace",
+  bg: '#0a0c0f',
+  surface: '#0d1117',
+  surface2: '#0f1419',
+  border: '#2a3040',
+  border2: '#3a4250',
+  text: '#ffffff',
+  text2: 'rgba(255,255,255,0.8)',
+  text3: 'rgba(255,255,255,0.6)',
+  accent: '#7eb8d4',
+};
+
 function fmtKey(k) { return k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()); }
 function fmtVal(k, v) {
   if (typeof v !== 'number') return String(v);
   if (k.includes('pct')||k.includes('rate')) return `${v.toFixed(1)}%`;
-  if (k.includes('km2')||k.includes('area')) return `${v.toFixed(2)} km²`;
-  if (k.includes('_c')||k.includes('temp')) return `${v.toFixed(1)}°C`;
+  if (k.includes('km2')||k.includes('area')) return `${v.toFixed(2)} km2`;
+  if (k.includes('_c')||k.includes('temp')) return `${v.toFixed(1)}C`;
   if (k.includes('count')||k.includes('years')) return v.toFixed(0);
   return v.toFixed(3);
 }
 
+// ── Intel marker layer on Leaflet map ─────────────────────────────────────────
+function createIntelMarker(event) {
+  const c = INTEL_COLORS[event.source] || { fill: '#4a5568', border: '#6b7a8d' };
+  const size = event.severity === 'critical' ? 10 : event.severity === 'warn' ? 8 : 6;
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="
+      width:${size}px; height:${size}px; border-radius:50%;
+      background:${c.fill}; border:1.5px solid ${c.border};
+      box-shadow:0 0 6px ${c.fill}88;
+      cursor:pointer;
+    "></div>`,
+    iconSize: [size, size],
+    iconAnchor: [size/2, size/2],
+  });
+  return L.marker([event.lat, event.lon], { icon, zIndexOffset: 100 });
+}
+
+// ── Vessel marker — small rotated diamond pointing along course-over-ground ──
+function createVesselMarker(vessel) {
+  const c = VESSEL_COLORS[vessel.category] || VESSEL_COLORS.OTHER;
+  const cog = typeof vessel.cog === 'number' ? vessel.cog : 0;
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="
+      width:10px; height:10px; transform: rotate(${cog}deg);
+      display:flex; align-items:center; justify-content:center;
+    ">
+      <div style="
+        width:0; height:0;
+        border-left:4px solid transparent;
+        border-right:4px solid transparent;
+        border-bottom:9px solid ${c.fill};
+        filter: drop-shadow(0 0 3px ${c.fill}99);
+      "></div>
+    </div>`,
+    iconSize: [10, 10],
+    iconAnchor: [5, 5],
+  });
+  return L.marker([vessel.lat, vessel.lon], { icon, zIndexOffset: 50 });
+}
+
 // ── Map ───────────────────────────────────────────────────────────────────────
-function VayuMap({ onAreaDrawn, mapRef, drawGroupRef }) {
+function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef }) {
   const divRef = useRef(null);
   useEffect(() => {
     if (mapRef.current) return;
-    const map = L.map(divRef.current, { zoomControl:false, attributionControl:false }).setView([26.91,75.78],10);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{ subdomains:'abcd', maxZoom:20 }).addTo(map);
+    const map = L.map(divRef.current, {
+      zoomControl:false,
+      attributionControl:false,
+      worldCopyJump:false,
+      maxBounds: [[-85, -180], [85, 180]],
+      maxBoundsViscosity: 1.0,
+      minZoom: 2,
+    }).setView([26.91,75.78],5);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+      subdomains:'abcd', maxZoom:20, noWrap:true, bounds:[[-85,-180],[85,180]],
+    }).addTo(map);
     L.control.zoom({ position:'topright' }).addTo(map);
+
+    // Intel markers layer group
+    const ig = L.layerGroup().addTo(map);
+    intelLayerRef.current = ig;
+
+    // Vessel markers layer group (maritime/logistics tracking)
+    const vg = L.layerGroup().addTo(map);
+    vesselLayerRef.current = vg;
+
     const dg = new L.FeatureGroup(); map.addLayer(dg); drawGroupRef.current = dg;
     const dc = new L.Control.Draw({
       position:'topright',
       edit:{ featureGroup:dg, remove:true },
       draw:{
-        polygon:{ shapeOptions:{ color:'#00d4ff', weight:2, fillOpacity:0.08 } },
-        rectangle:{ shapeOptions:{ color:'#00d4ff', weight:2, fillOpacity:0.08 } },
+        polygon:{ shapeOptions:{ color:'#2a6abd', weight:1.5, fillOpacity:0.06 } },
+        rectangle:{ shapeOptions:{ color:'#2a6abd', weight:1.5, fillOpacity:0.06 } },
         polyline:false, circle:false, marker:false, circlemarker:false,
       },
     });
@@ -60,19 +150,19 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef }) {
     map.on(L.Draw.Event.DELETED, () => { if(dg.getLayers().length===0) onAreaDrawn(null); });
     mapRef.current = map;
   }, []);
-  return <div ref={divRef} className="w-full h-full" />;
+  return <div ref={divRef} style={{ width:'100%', height:'100%' }} />;
 }
 
 // ── Progress ──────────────────────────────────────────────────────────────────
 function ProgressBar({ pct, label }) {
   return (
-    <div className="space-y-1.5">
-      <div className="flex justify-between">
-        <span className="text-xs" style={{ color:'var(--text2)', fontFamily:'var(--mono)' }}>{label}</span>
-        <span className="text-xs font-bold" style={{ color:'var(--accent)', fontFamily:'var(--mono)' }}>{pct}%</span>
+    <div style={{ marginTop:8 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+        <span style={{ fontSize:15, color:S.text3, fontFamily:S.mono, letterSpacing:1 }}>{label}</span>
+        <span style={{ fontSize:15, color:S.accent, fontFamily:S.mono }}>{pct}%</span>
       </div>
-      <div className="h-0.5 rounded-full overflow-hidden" style={{ background:'var(--border)' }}>
-        <div className="progress-bar rounded-full" style={{ width:`${pct}%` }} />
+      <div style={{ height:2, background:S.border, borderRadius:1, overflow:'hidden' }}>
+        <div style={{ width:`${pct}%`, height:'100%', background:S.accent, transition:'width 0.4s ease' }} />
       </div>
     </div>
   );
@@ -82,14 +172,16 @@ function ProgressBar({ pct, label }) {
 function MetricSelector({ selected, onChange }) {
   return (
     <div>
-      <label className="block text-xs font-semibold uppercase tracking-widest mb-2" style={{ color:'var(--text3)', fontFamily:'var(--mono)' }}>Analysis Type</label>
-      <div className="grid grid-cols-3 gap-1.5">
+      <div style={{ fontSize:15, color:S.text3, fontFamily:S.mono, letterSpacing:2, marginBottom:8, textTransform:'uppercase' }}>Analysis Type</div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:4 }}>
         {Object.entries(METRICS_META).map(([id,m]) => (
           <button key={id} onClick={() => onChange(id===selected?null:id)} title={m.desc}
-            className="flex flex-col items-center gap-1 p-2 rounded-lg text-center transition-all duration-150"
-            style={{ background:selected===id?'rgba(0,212,255,0.1)':'var(--surface2)', border:`1px solid ${selected===id?m.color:'var(--border)'}`, color:selected===id?m.color:'var(--text2)', cursor:'pointer' }}>
-            <span className="text-lg leading-none">{m.icon}</span>
-            <span className="text-[9px] leading-tight font-medium" style={{ fontFamily:'var(--mono)' }}>{m.label.split(' ').slice(0,2).join(' ')}</span>
+            style={{ padding:'7px 4px', fontSize:14, fontFamily:S.mono, letterSpacing:0.5,
+              background: selected===id ? 'rgba(126,184,212,0.08)' : S.surface2,
+              border: `1px solid ${selected===id ? S.accent : S.border}`,
+              color: selected===id ? S.accent : S.text3, cursor:'pointer',
+              textAlign:'center', lineHeight:1.4, textTransform:'uppercase' }}>
+            {m.label.split(' ').slice(0,2).join(' ')}
           </button>
         ))}
       </div>
@@ -99,42 +191,41 @@ function MetricSelector({ selected, onChange }) {
 
 // ── Results ───────────────────────────────────────────────────────────────────
 function ResultsPanel({ result }) {
-  const m = METRICS_META[result.metric] || { icon:'📊', label:result.metric, color:'var(--accent)' };
+  const m = METRICS_META[result.metric] || { label:result.metric, color:S.accent };
   return (
-    <div className="space-y-3 animate-fade-up">
-      <div className="flex items-center gap-2 pb-2" style={{ borderBottom:'1px solid var(--border)' }}>
-        <span className="text-xl">{m.icon}</span>
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-widest" style={{ color:m.color, fontFamily:'var(--mono)' }}>{m.label}</div>
-          <div className="text-xs" style={{ color:'var(--text3)' }}>{result.start_date} → {result.end_date}{result.region&&` · ${result.region}`}</div>
-        </div>
+    <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+      <div style={{ borderBottom:`1px solid ${S.border}`, paddingBottom:8 }}>
+        <div style={{ fontSize:15, fontFamily:S.mono, letterSpacing:2, color:m.color, textTransform:'uppercase', marginBottom:3 }}>{m.label}</div>
+        <div style={{ fontSize:14, color:S.text3, fontFamily:S.mono }}>{result.start_date} -- {result.end_date}{result.region&&` · ${result.region}`}</div>
       </div>
-      <div className="p-3 rounded-lg" style={{ background:'var(--surface2)', border:'1px solid var(--border)' }}>
-        <div className="text-xs uppercase tracking-widest mb-1.5" style={{ color:'var(--text3)', fontFamily:'var(--mono)' }}>Finding</div>
-        <p className="text-sm leading-relaxed font-medium" style={{ color:'var(--text)' }}>{result.summary}</p>
+      <div style={{ background:S.surface2, border:`1px solid ${S.border}`, padding:'8px 10px' }}>
+        <div style={{ fontSize:14, color:S.text3, fontFamily:S.mono, letterSpacing:2, textTransform:'uppercase', marginBottom:5 }}>Finding</div>
+        <p style={{ fontSize:16, color:S.text, lineHeight:1.6, fontFamily:S.mono }}>{result.summary}</p>
       </div>
       {result.insight && (
-        <div className="p-3 rounded-lg" style={{ background:'rgba(0,212,255,0.05)', border:'1px solid rgba(0,212,255,0.2)' }}>
-          <div className="text-xs uppercase tracking-widest mb-1.5" style={{ color:'var(--accent)', fontFamily:'var(--mono)' }}>⚡ AI Insight</div>
-          <p className="text-xs leading-relaxed" style={{ color:'var(--text2)' }}>{result.insight}</p>
+        <div style={{ background:'rgba(126,184,212,0.04)', border:'1px solid rgba(126,184,212,0.15)', padding:'8px 10px' }}>
+          <div style={{ fontSize:14, color:S.accent, fontFamily:S.mono, letterSpacing:2, textTransform:'uppercase', marginBottom:5 }}>AI Analysis</div>
+          <p style={{ fontSize:15, color:S.text2, lineHeight:1.6 }}>{result.insight}</p>
         </div>
       )}
       <div>
-        <div className="text-xs uppercase tracking-widest mb-2" style={{ color:'var(--text3)', fontFamily:'var(--mono)' }}>Key Metrics</div>
-        <div className="grid grid-cols-2 gap-2">
+        <div style={{ fontSize:14, color:S.text3, fontFamily:S.mono, letterSpacing:2, textTransform:'uppercase', marginBottom:6 }}>Key Metrics</div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:4 }}>
           {Object.entries(result.metrics||{}).map(([k,v]) => (
-            <div key={k} className="metric-card p-2.5">
-              <div className="text-xs leading-tight mb-1" style={{ color:'var(--text3)' }}>{fmtKey(k)}</div>
-              <div className="text-sm font-bold" style={{ color:m.color, fontFamily:'var(--mono)' }}>{fmtVal(k,v)}</div>
+            <div key={k} style={{ background:S.surface2, border:`1px solid ${S.border}`, padding:'7px 8px' }}>
+              <div style={{ fontSize:14, color:S.text3, marginBottom:3 }}>{fmtKey(k)}</div>
+              <div style={{ fontSize:17, fontFamily:S.mono, color:m.color, fontWeight:600 }}>{fmtVal(k,v)}</div>
             </div>
           ))}
         </div>
       </div>
       {result.geojson_url && (
-        <a href={result.geojson_url} target="_blank" rel="noreferrer"
-          className="block text-center text-xs py-2 rounded-lg transition-colors"
-          style={{ background:'var(--surface2)', border:'1px solid var(--border)', color:'var(--text2)' }}>
-          ↓ Download GeoJSON
+        <a href={result.geojson_url.startsWith('http') ? result.geojson_url : `${API_URL}${result.geojson_url}`}
+          target="_blank" rel="noreferrer"
+          style={{ display:'block', textAlign:'center', fontSize:15, padding:'7px', fontFamily:S.mono,
+            background:S.surface2, border:`1px solid ${S.border}`, color:S.text2,
+            letterSpacing:1, textDecoration:'none', textTransform:'uppercase' }}>
+          Download GeoJSON
         </a>
       )}
     </div>
@@ -142,126 +233,158 @@ function ResultsPanel({ result }) {
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI, isLoading,error,result,jobStatus, onSubmit, history,onSelectHistory }) {
+function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI,
+  isLoading,error,result,jobStatus, onSubmit, history,onSelectHistory, vesselStats }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
-  const TABS = ['Analyze','History','Guide'];
-
+  const TABS = ['Analyze','History','Maritime','Guide'];
   return (
-    <div className="glass-panel flex flex-col h-full w-full" style={{ minWidth:0 }}>
-      {/* Logo */}
-      <div className="px-5 pt-5 pb-4 flex-shrink-0" style={{ borderBottom:'1px solid var(--border)' }}>
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-lg" style={{ background:'rgba(0,212,255,0.12)', border:'1px solid rgba(0,212,255,0.25)' }}>🌍</div>
+    <div style={{ background:S.surface, borderRight:`1px solid ${S.border}`, display:'flex', flexDirection:'column', height:'100%', width:'100%' }}>
+      <div style={{ padding:'12px 14px', borderBottom:`1px solid ${S.border}`, flexShrink:0 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div>
-            <h1 className="text-base font-bold tracking-tight" style={{ fontFamily:'var(--mono)', color:'var(--text)' }}>VAYU</h1>
-            <p className="text-[10px]" style={{ color:'var(--text3)', fontFamily:'var(--mono)' }}>GEOSPATIAL INTELLIGENCE</p>
+            <div style={{ fontFamily:S.mono, fontSize:18, fontWeight:700, letterSpacing:3, color:S.text }}>VAYU</div>
+            <div style={{ fontFamily:S.mono, fontSize:14, color:S.text3, letterSpacing:2 }}>GEOSPATIAL INTELLIGENCE</div>
           </div>
+          <div style={{ fontSize:14, fontFamily:S.mono, color:'#4a7c59', border:'1px solid #4a7c59', padding:'2px 7px', letterSpacing:1.5 }}>v2.0</div>
         </div>
       </div>
-
-      {/* Tabs */}
-      <div className="flex flex-shrink-0 px-3 pt-3 gap-1">
+      <div style={{ display:'flex', borderBottom:`1px solid ${S.border}`, flexShrink:0 }}>
         {TABS.map(t => (
-          <button key={t} onClick={() => setTab(t)} className="flex-1 py-1.5 text-xs rounded-md transition-all"
-            style={{ fontFamily:'var(--mono)', background:tab===t?'rgba(0,212,255,0.12)':'transparent', color:tab===t?'var(--accent)':'var(--text3)', border:`1px solid ${tab===t?'rgba(0,212,255,0.25)':'transparent'}`, cursor:'pointer' }}>
+          <button key={t} onClick={() => setTab(t)}
+            style={{ flex:1, padding:'9px 0', fontSize:15, fontFamily:S.mono, letterSpacing:1.5, textTransform:'uppercase',
+              background:'transparent', border:'none', borderBottom:`2px solid ${tab===t?S.accent:'transparent'}`,
+              color:tab===t?S.accent:S.text3, cursor:'pointer' }}>
             {t}
           </button>
         ))}
       </div>
-
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div style={{ flex:1, overflowY:'auto', padding:'14px', display:'flex', flexDirection:'column', gap:14 }}>
         {tab === 'Analyze' && (
           <>
             <MetricSelector selected={selMetric} onChange={setSelMetric} />
             <div>
-              <div className="flex justify-between items-center mb-2">
-                <label className="text-xs font-semibold uppercase tracking-widest" style={{ color:'var(--text3)', fontFamily:'var(--mono)' }}>Query</label>
-                <button onClick={cycleExample} className="text-[10px] transition-colors" style={{ color:'var(--text3)', cursor:'pointer', fontFamily:'var(--mono)' }}>example ↻</button>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:7 }}>
+                <span style={{ fontSize:15, color:S.text3, fontFamily:S.mono, letterSpacing:2, textTransform:'uppercase' }}>Query</span>
+                <button onClick={cycleExample} style={{ fontSize:14, color:S.text3, fontFamily:S.mono, background:'transparent', border:'none', cursor:'pointer', letterSpacing:1 }}>EXAMPLE</button>
               </div>
-              <textarea rows={3} className="vayu-input w-full rounded-lg px-3 py-2.5 text-sm resize-none"
-                placeholder="e.g. How much green cover did this area lose since 2020?"
+              <textarea rows={3}
+                style={{ width:'100%', background:S.bg, border:`1px solid ${S.border}`, color:S.text2,
+                  fontFamily:S.mono, fontSize:15, padding:'9px', resize:'none', outline:'none',
+                  letterSpacing:0.5, lineHeight:1.6, boxSizing:'border-box' }}
+                placeholder="e.g. how much deforestation happened here since 2016..."
                 value={queryText} onChange={e => setQueryText(e.target.value)} />
             </div>
-            <div className="flex items-center gap-2 text-xs rounded-lg px-3 py-2.5"
-              style={{ background:drawnAOI?'rgba(0,255,157,0.05)':'var(--surface2)', border:`1px solid ${drawnAOI?'rgba(0,255,157,0.2)':'var(--border)'}` }}>
-              <span style={{ color:drawnAOI?'var(--accent2)':'var(--text3)' }}>{drawnAOI?'✓':'○'}</span>
-              <span style={{ color:drawnAOI?'var(--accent2)':'var(--text3)', fontFamily:'var(--mono)' }}>{drawnAOI?'Area of Interest defined':'Draw AOI on map →'}</span>
+            <div style={{ fontSize:15, fontFamily:S.mono, padding:'7px 10px', letterSpacing:1,
+              background: drawnAOI ? 'rgba(74,124,89,0.08)' : S.surface2,
+              border: `1px solid ${drawnAOI ? '#4a7c59' : S.border}`,
+              color: drawnAOI ? '#4a7c59' : S.text3 }}>
+              {drawnAOI ? 'AOI DEFINED' : 'DRAW AOI ON MAP'}
             </div>
             <button onClick={onSubmit} disabled={isLoading||!queryText||!drawnAOI}
-              className="w-full py-3 rounded-lg text-sm font-semibold transition-all duration-200"
-              style={{ fontFamily:'var(--mono)', background:isLoading||!queryText||!drawnAOI?'var(--surface2)':'linear-gradient(135deg,rgba(0,212,255,0.18),rgba(0,255,157,0.12))', border:`1px solid ${isLoading||!queryText||!drawnAOI?'var(--border)':'rgba(0,212,255,0.35)'}`, color:isLoading||!queryText||!drawnAOI?'var(--text3)':'var(--accent)', cursor:isLoading||!queryText||!drawnAOI?'not-allowed':'pointer' }}>
-              {isLoading?'ANALYZING...':'RUN ANALYSIS'}
+              style={{ padding:'10px', fontSize:15, fontFamily:S.mono, letterSpacing:2, textTransform:'uppercase',
+                background: isLoading||!queryText||!drawnAOI ? S.surface2 : 'rgba(126,184,212,0.1)',
+                border: `1px solid ${isLoading||!queryText||!drawnAOI ? S.border : S.accent}`,
+                color: isLoading||!queryText||!drawnAOI ? S.text3 : S.accent,
+                cursor: isLoading||!queryText||!drawnAOI ? 'not-allowed' : 'pointer' }}>
+              {isLoading ? 'ANALYZING...' : 'RUN ANALYSIS'}
             </button>
             {isLoading && jobStatus && <ProgressBar pct={jobStatus.progress_pct||0} label={jobStatus.stage_label||jobStatus.stage||'Processing...'} />}
             {error && (
-              <div className="p-3 rounded-lg text-xs animate-fade-up" style={{ background:'rgba(255,65,54,0.07)', border:'1px solid rgba(255,65,54,0.25)', color:'#ff6b6b' }}>
-                <div className="font-bold mb-1" style={{ fontFamily:'var(--mono)' }}>⚠ ERROR</div>
-                <div style={{ color:'var(--text2)' }}>{error}</div>
+              <div style={{ background:'rgba(139,32,32,0.08)', border:'1px solid rgba(139,32,32,0.3)', padding:'9px 11px' }}>
+                <div style={{ fontSize:14, fontFamily:S.mono, color:'#8b2020', letterSpacing:2, marginBottom:4 }}>ERROR</div>
+                <div style={{ fontSize:15, color:S.text2 }}>{error}</div>
               </div>
             )}
             {result && <ResultsPanel result={result} />}
           </>
         )}
-
         {tab === 'History' && (
-          <div className="space-y-2">
-            <div className="text-xs uppercase tracking-widest mb-3" style={{ color:'var(--text3)', fontFamily:'var(--mono)' }}>{history.length} Analyses</div>
-            {history.length === 0 && (
-              <div className="text-center py-8 text-xs" style={{ color:'var(--text3)' }}>No analyses yet.<br/>Run your first query in the Analyze tab.</div>
-            )}
+          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            <div style={{ fontSize:15, color:S.text3, fontFamily:S.mono, letterSpacing:2, marginBottom:4 }}>{history.length} ANALYSES</div>
+            {history.length === 0 && <div style={{ textAlign:'center', padding:'24px 0', fontSize:15, color:S.text3, fontFamily:S.mono }}>NO ANALYSES YET</div>}
             {history.map((item,i) => {
-              const hm = METRICS_META[item.metric]||{ icon:'📊', label:item.metric, color:'var(--accent)' };
+              const hm = METRICS_META[item.metric]||{ label:item.metric, color:S.accent };
               return (
-                <button key={i} onClick={() => { setTab('Analyze'); onSelectHistory(item); }} className="w-full text-left p-2.5 rounded-lg transition-all"
-                  style={{ background:'var(--surface2)', border:'1px solid var(--border)', cursor:'pointer' }}>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm">{hm.icon}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium truncate" style={{ color:'var(--text)', fontFamily:'var(--mono)' }}>{hm.label}</div>
-                      <div className="text-xs truncate" style={{ color:'var(--text3)' }}>{item.summary?.slice(0,55)}…</div>
-                    </div>
-                  </div>
+                <button key={i} onClick={() => { setTab('Analyze'); onSelectHistory(item); }}
+                  style={{ textAlign:'left', padding:'9px 11px', background:S.surface2, border:`1px solid ${S.border}`, cursor:'pointer', width:'100%' }}>
+                  <div style={{ fontSize:15, fontFamily:S.mono, color:hm.color, letterSpacing:1, marginBottom:4, textTransform:'uppercase' }}>{hm.label}</div>
+                  <div style={{ fontSize:14, color:S.text3 }}>{item.summary?.slice(0,60)}...</div>
                 </button>
               );
             })}
           </div>
         )}
-
-        {tab === 'Guide' && (
-          <div className="space-y-4 text-xs" style={{ color:'var(--text2)' }}>
+        {tab === 'Maritime' && (
+          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
             <div>
-              <div className="font-bold mb-2 uppercase tracking-widest" style={{ color:'var(--accent)', fontFamily:'var(--mono)' }}>How to use</div>
-              {[['1','Select an analysis type or just type your question'],['2','Draw a polygon or rectangle on the map'],['3','Click Run Analysis and wait for results'],['4','View metrics, AI insights, and map overlays']].map(([n,t]) => (
-                <div key={n} className="flex gap-3 mb-2.5">
-                  <span className="w-5 h-5 rounded flex-shrink-0 font-bold flex items-center justify-center" style={{ background:'rgba(0,212,255,0.12)', color:'var(--accent)', fontFamily:'var(--mono)', fontSize:'10px' }}>{n}</span>
-                  <span>{t}</span>
+              <div style={{ fontSize:15, color:S.text3, fontFamily:S.mono, letterSpacing:2, marginBottom:8, textTransform:'uppercase' }}>
+                Active Vessels — {vesselStats?.active_vessels ?? 0}
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
+                {Object.entries(VESSEL_COLORS).map(([cat, c]) => {
+                  const count = vesselStats?.by_category?.[cat] || 0;
+                  return (
+                    <div key={cat} style={{ background:S.surface2, border:`1px solid ${S.border}`, padding:'8px 10px' }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4 }}>
+                        <div style={{ width:8, height:8, background:c.fill, borderRadius:2 }} />
+                        <span style={{ fontSize:13, color:S.text3, letterSpacing:0.5 }}>{c.label}</span>
+                      </div>
+                      <div style={{ fontSize:18, fontFamily:S.mono, color:'#ffffff', fontWeight:700 }}>{count}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:12 }}>
+              <div style={{ fontSize:15, fontFamily:S.mono, color:S.accent, letterSpacing:2, marginBottom:8, textTransform:'uppercase' }}>
+                Monitored Chokepoints
+              </div>
+              {['Strait of Hormuz','Strait of Malacca','Bab-el-Mandeb','Suez Canal','Strait of Gibraltar','Panama Canal','English Channel'].map(name => (
+                <div key={name} style={{ fontSize:14, color:S.text3, fontFamily:S.mono, marginBottom:5 }}>-- {name}</div>
+              ))}
+            </div>
+
+            {(!vesselStats || vesselStats.active_vessels === 0) && (
+              <div style={{ background:'rgba(201,147,58,0.06)', border:'1px solid rgba(201,147,58,0.25)', padding:'10px 12px', fontSize:13, color:S.text2, lineHeight:1.6 }}>
+                No live vessel data. Maritime tracking requires an AISSTREAM_API_KEY
+                (free at aisstream.io) configured on the backend.
+              </div>
+            )}
+          </div>
+        )}
+        {tab === 'Guide' && (
+          <div style={{ display:'flex', flexDirection:'column', gap:14, fontSize:15, color:S.text2 }}>
+            <div>
+              <div style={{ fontSize:15, fontFamily:S.mono, color:S.accent, letterSpacing:2, marginBottom:10, textTransform:'uppercase' }}>How to use</div>
+              {[['1','Select an analysis type'],['2','Draw a polygon on the map'],['3','Enter a natural language query'],['4','Click Run Analysis']].map(([n,t]) => (
+                <div key={n} style={{ display:'flex', gap:10, marginBottom:8, alignItems:'flex-start' }}>
+                  <span style={{ fontSize:14, fontFamily:S.mono, color:S.accent, border:`1px solid ${S.border}`, padding:'2px 6px', flexShrink:0 }}>{n}</span>
+                  <span style={{ fontSize:15, color:S.text2 }}>{t}</span>
                 </div>
               ))}
             </div>
-            <div style={{ borderTop:'1px solid var(--border)', paddingTop:'12px' }}>
-              <div className="font-bold mb-2 uppercase tracking-widest" style={{ color:'var(--accent)', fontFamily:'var(--mono)' }}>Analysis Types</div>
-              {Object.entries(METRICS_META).map(([id,m]) => (
-                <div key={id} className="flex items-start gap-2 mb-2">
-                  <span>{m.icon}</span>
-                  <div><span className="font-medium" style={{ color:'var(--text)' }}>{m.label}</span><span className="ml-1" style={{ color:'var(--text3)' }}>— {m.desc}</span></div>
+            <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:12 }}>
+              <div style={{ fontSize:15, fontFamily:S.mono, color:S.accent, letterSpacing:2, marginBottom:10, textTransform:'uppercase' }}>Live Intel Sources</div>
+              {[
+                ['USGS','Earthquakes M3.5+, global, every 5 min'],
+                ['NASA FIRMS','Active fire hotspots, every 15 min'],
+                ['GDELT','Geolocated news events, every 10 min'],
+                ['ACLED','Armed conflict events (key required)'],
+              ].map(([src,desc]) => (
+                <div key={src} style={{ marginBottom:8 }}>
+                  <div style={{ fontSize:15, fontFamily:S.mono, color:INTEL_COLORS[src]?.border||S.accent, marginBottom:2 }}>{src}</div>
+                  <div style={{ fontSize:14, color:S.text3 }}>{desc}</div>
                 </div>
-              ))}
-            </div>
-            <div style={{ borderTop:'1px solid var(--border)', paddingTop:'12px' }}>
-              <div className="font-bold mb-2 uppercase tracking-widest" style={{ color:'var(--accent)', fontFamily:'var(--mono)' }}>Data Sources</div>
-              {['Sentinel-2 SR Harmonized (ESA)','Sentinel-1 SAR GRD (ESA)','Landsat 8/9 Collection 2 (USGS)','MODIS MCD64A1 / MOD14A1 (NASA)','Dynamic World V1 (Google/WRI)','Hansen GFC 2023 (UMD)','JRC GSW Monthly History (EC)','SMAP 10km Soil Moisture (NASA)'].map(d => (
-                <div key={d} className="mb-1 flex gap-2"><span style={{ color:'var(--border2)' }}>▸</span><span>{d}</span></div>
               ))}
             </div>
           </div>
         )}
       </div>
-
-      <div className="flex-shrink-0 px-4 py-3" style={{ borderTop:'1px solid var(--border)' }}>
-        <div className="text-[10px] flex items-center justify-between" style={{ color:'var(--text3)', fontFamily:'var(--mono)' }}>
-          <span>VAYU v1.0.0</span>
-          <span style={{ color:'var(--border2)' }}>GEE · GROQ · FASTAPI</span>
+      <div style={{ flexShrink:0, padding:'7px 14px', borderTop:`1px solid ${S.border}` }}>
+        <div style={{ display:'flex', justifyContent:'space-between', fontSize:14, fontFamily:S.mono, color:S.text3, letterSpacing:1 }}>
+          <span>VAYU v2.0.0</span><span>GEE · GROQ · FASTAPI</span>
         </div>
       </div>
     </div>
@@ -271,25 +394,25 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
 // ── Map overlay ───────────────────────────────────────────────────────────────
 function MapOverlay({ result, isLoading, drawnAOI }) {
   if (!isLoading && !result && !drawnAOI) return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none">
-      <div className="px-4 py-2 rounded-full text-xs" style={{ background:'rgba(13,24,33,0.88)', border:'1px solid var(--border2)', color:'var(--text2)', fontFamily:'var(--mono)' }}>
-        Use the draw tools (top-right) to define your Area of Interest
+    <div style={{ position:'absolute', bottom:16, left:'50%', transform:'translateX(-50%)', zIndex:1000, pointerEvents:'none' }}>
+      <div style={{ padding:'7px 16px', fontSize:15, fontFamily:"'Courier New',monospace", letterSpacing:1, background:'rgba(13,17,23,0.92)', border:'1px solid #3a4250', color:'#ffffff' }}>
+        USE DRAW TOOLS (TOP-RIGHT) TO DEFINE AREA OF INTEREST
       </div>
     </div>
   );
   if (isLoading) return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] pointer-events-none">
-      <div className="px-4 py-2 rounded-full text-xs flex items-center gap-2 animate-glow" style={{ background:'rgba(0,212,255,0.1)', border:'1px solid rgba(0,212,255,0.35)', color:'var(--accent)', fontFamily:'var(--mono)' }}>
-        <span className="animate-spin">⟳</span> ANALYZING SATELLITE DATA
+    <div style={{ position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', zIndex:1000, pointerEvents:'none' }}>
+      <div style={{ padding:'6px 16px', fontSize:15, fontFamily:"'Courier New',monospace", letterSpacing:1.5, background:'rgba(13,17,23,0.92)', border:'1px solid #7eb8d4', color:'#7eb8d4' }}>
+        ANALYZING SATELLITE DATA
       </div>
     </div>
   );
   if (result) {
-    const m = METRICS_META[result.metric]||{ icon:'📊', label:result.metric };
+    const m = METRICS_META[result.metric]||{ label:result.metric };
     return (
-      <div className="absolute top-4 right-4 z-[1000] pointer-events-none">
-        <div className="px-3 py-1.5 rounded-lg text-xs" style={{ background:'rgba(13,24,33,0.88)', border:'1px solid var(--border2)', color:'var(--text2)', fontFamily:'var(--mono)' }}>
-          {m.icon} {m.label} · {result.start_date?.slice(0,4)}–{result.end_date?.slice(0,4)}
+      <div style={{ position:'absolute', top:12, right:12, zIndex:1000, pointerEvents:'none' }}>
+        <div style={{ padding:'6px 12px', fontSize:15, fontFamily:"'Courier New',monospace", letterSpacing:1, background:'rgba(13,17,23,0.92)', border:'1px solid #3a4250', color:'#ffffff' }}>
+          {m.label.toUpperCase()} · {result.start_date?.slice(0,4)}--{result.end_date?.slice(0,4)}
         </div>
       </div>
     );
@@ -299,25 +422,115 @@ function MapOverlay({ result, isLoading, drawnAOI }) {
 
 // ── Root App ──────────────────────────────────────────────────────────────────
 export default function App() {
-  const [tab, setTab] = useState('Analyze');
+  const [tab, setTab]             = useState('Analyze');
   const [queryText, setQueryText] = useState('');
   const [selMetric, setSelMetric] = useState(null);
-  const [drawnAOI, setDrawnAOI] = useState(null);
-  const [result, setResult] = useState(null);
+  const [drawnAOI, setDrawnAOI]   = useState(null);
+  const [result, setResult]       = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError]         = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [history, setHistory]     = useState([]);
 
-  const mapRef = useRef(null);
-  const drawGroupRef = useRef(null);
-  const layersRef = useRef([]);
-  const pollRef = useRef(null);
-  const aoiBoundsRef = useRef(null);
+  const mapRef          = useRef(null);
+  const drawGroupRef    = useRef(null);
+  const layersRef       = useRef([]);
+  const pollRef         = useRef(null);
+  const aoiBoundsRef    = useRef(null);
+  const intelLayerRef   = useRef(null);   // LayerGroup for intel markers
+  const intelMarkersRef = useRef({});     // id -> marker, for dedup
+  const vesselLayerRef  = useRef(null);   // LayerGroup for vessel markers
+  const vesselMarkersRef = useRef({});    // mmsi -> marker
+
+  // Live maritime vessel tracking (AIS via aisstream.io)
+  const { vessels, stats: vesselStats } = useVesselTracker(API_URL, true);
 
   const clearLayers = useCallback(() => {
     layersRef.current.forEach(l => { if (mapRef.current?.hasLayer(l)) mapRef.current.removeLayer(l); });
     layersRef.current = [];
+  }, []);
+
+  // ── Add intel event as a map marker ────────────────────────────────────────
+  const addIntelMarker = useCallback((event) => {
+    if (!intelLayerRef.current) return;
+    if (intelMarkersRef.current[event.id]) return; // already on map
+
+    try {
+      const marker = createIntelMarker(event);
+      const c = INTEL_COLORS[event.source] || { border: '#6b7a8d' };
+      marker.bindTooltip(
+        `<div style="font-family:monospace;font-size:14px;background:#0d1117;border:1px solid ${c.border};padding:8px 10px;color:#ffffff;max-width:240px;line-height:1.6">
+          <div style="color:${c.border};font-size:13px;letter-spacing:1px;margin-bottom:4px;font-weight:700">${event.tag}</div>
+          <div>${event.title}</div>
+          <div style="color:#ffffff;font-size:13px;margin-top:4px;opacity:0.6">${event.lat.toFixed(2)}N ${event.lon.toFixed(2)}E</div>
+        </div>`,
+        { permanent:false, direction:'top', opacity:1, className:'vayu-tooltip' }
+      );
+      intelLayerRef.current.addLayer(marker);
+      intelMarkersRef.current[event.id] = marker;
+    } catch(e) {}
+  }, []);
+
+  // ── Render/update vessel markers whenever the polled snapshot changes ──────
+  useEffect(() => {
+    if (!vesselLayerRef.current) return;
+    const seen = new Set();
+    vessels.forEach(v => {
+      if (typeof v.lat !== 'number' || typeof v.lon !== 'number') return;
+      seen.add(v.mmsi);
+      const existing = vesselMarkersRef.current[v.mmsi];
+      if (existing) {
+        existing.setLatLng([v.lat, v.lon]);
+      } else {
+        try {
+          const marker = createVesselMarker(v);
+          const c = VESSEL_COLORS[v.category] || VESSEL_COLORS.OTHER;
+          marker.bindTooltip(
+            `<div style="font-family:monospace;font-size:14px;background:#0d1117;border:1px solid ${c.border};padding:8px 10px;color:#ffffff;max-width:240px;line-height:1.6">
+              <div style="color:${c.border};font-size:13px;letter-spacing:1px;margin-bottom:4px;font-weight:700">${c.label.toUpperCase()}</div>
+              <div>${v.name || ('MMSI ' + v.mmsi)}</div>
+              ${v.destination ? `<div style="opacity:0.7;margin-top:2px">→ ${v.destination}</div>` : ''}
+              <div style="color:#ffffff;font-size:13px;margin-top:4px;opacity:0.6">${v.sog?.toFixed(1) || 0} kn · ${v.lat.toFixed(2)}N ${v.lon.toFixed(2)}E</div>
+            </div>`,
+            { permanent:false, direction:'top', opacity:1 }
+          );
+          vesselLayerRef.current.addLayer(marker);
+          vesselMarkersRef.current[v.mmsi] = marker;
+        } catch(e) {}
+      }
+    });
+    // Remove markers for vessels no longer in the snapshot (pruned as stale)
+    Object.keys(vesselMarkersRef.current).forEach(mmsi => {
+      if (!seen.has(Number(mmsi))) {
+        try { vesselLayerRef.current.removeLayer(vesselMarkersRef.current[mmsi]); } catch(e) {}
+        delete vesselMarkersRef.current[mmsi];
+      }
+    });
+  }, [vessels]);
+
+  // ── Handle click on feed item: fly map + highlight marker ──────────────────
+  const handleEventClick = useCallback((event) => {
+    if (!mapRef.current) return;
+    mapRef.current.flyTo([event.lat, event.lon], 7, { duration: 1.2 });
+
+    // Flash the marker
+    const marker = intelMarkersRef.current[event.id];
+    if (marker) {
+      const el = marker.getElement();
+      if (el) {
+        const dot = el.querySelector('div');
+        if (dot) {
+          const orig = dot.style.boxShadow;
+          dot.style.boxShadow = '0 0 16px 4px #fff';
+          dot.style.transform = 'scale(2)';
+          dot.style.transition = 'all 0.2s';
+          setTimeout(() => {
+            dot.style.boxShadow = orig;
+            dot.style.transform = 'scale(1)';
+          }, 600);
+        }
+      }
+    }
   }, []);
 
   const handleSubmit = useCallback(async () => {
@@ -331,7 +544,6 @@ export default function App() {
     setIsLoading(true); setError(null); setResult(null); setJobStatus(null);
     const savedAOI = drawnAOI;
     setDrawnAOI(null);
-
     const text = selMetric ? `[Metric: ${selMetric}] ${queryText}` : queryText;
     try {
       const res = await fetch(`${API_URL}/api/v1/query`, {
@@ -365,7 +577,6 @@ export default function App() {
     if (result.tile_url) {
       const tl = L.tileLayer(result.tile_url, { opacity:0.75 }).addTo(mapRef.current);
       layersRef.current.push(tl);
-      // Zoom to AOI if no geojson available
       if (!result.geojson_url && aoiBoundsRef.current) {
         try { mapRef.current.fitBounds(aoiBoundsRef.current, { padding:[40,40] }); } catch(e) {}
       }
@@ -373,30 +584,42 @@ export default function App() {
     if (result.geojson_url) {
       const gjUrl = result.geojson_url.startsWith('http') ? result.geojson_url : `${API_URL}${result.geojson_url}`;
       fetch(gjUrl).then(r=>r.json()).then(gj => {
-        const layer = L.geoJSON(gj, { style:{ color:METRICS_META[result.metric]?.color||'#00d4ff', weight:2, opacity:0.9, fillOpacity:0.15 } }).addTo(mapRef.current);
+        const layer = L.geoJSON(gj, { style:{ color:METRICS_META[result.metric]?.color||'#7eb8d4', weight:2, opacity:0.9, fillOpacity:0.12 } }).addTo(mapRef.current);
         if (layer.getBounds().isValid()) mapRef.current.fitBounds(layer.getBounds(), { padding:[40,40] });
         else if (aoiBoundsRef.current) mapRef.current.fitBounds(aoiBoundsRef.current, { padding:[40,40] });
         layersRef.current.push(layer);
-      }).catch(()=>{
-        if (aoiBoundsRef.current) mapRef.current.fitBounds(aoiBoundsRef.current, { padding:[40,40] });
-      });
+      }).catch(()=>{ if (aoiBoundsRef.current) mapRef.current.fitBounds(aoiBoundsRef.current, { padding:[40,40] }); });
     }
   }, [result]);
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   return (
-    <div className="w-screen h-screen flex overflow-hidden" style={{ background:'var(--bg)' }}>
-      <div className="w-80 flex-shrink-0 h-full z-10">
+    <div style={{ width:'100vw', height:'100vh', display:'flex', overflow:'hidden', background:'#0a0c0f' }}>
+      {/* Left sidebar */}
+      <div style={{ width:270, flexShrink:0, height:'100%', zIndex:10 }}>
         <Sidebar tab={tab} setTab={setTab} queryText={queryText} setQueryText={setQueryText}
           selMetric={selMetric} setSelMetric={setSelMetric} drawnAOI={drawnAOI}
           isLoading={isLoading} error={error} result={result} jobStatus={jobStatus}
           onSubmit={handleSubmit} history={history}
-          onSelectHistory={r => { setResult(r); clearLayers(); }} />
+          onSelectHistory={r => { setResult(r); clearLayers(); }}
+          vesselStats={vesselStats} />
       </div>
-      <div className="flex-1 h-full relative scan-overlay">
-        <VayuMap onAreaDrawn={setDrawnAOI} mapRef={mapRef} drawGroupRef={drawGroupRef} />
+
+      {/* Map */}
+      <div style={{ flex:1, height:'100%', position:'relative' }}>
+        <VayuMap onAreaDrawn={setDrawnAOI} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} />
         <MapOverlay result={result} isLoading={isLoading} drawnAOI={drawnAOI} />
+      </div>
+
+      {/* Right intel panel */}
+      <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>
+        <IntelPanel
+          apiUrl={API_URL}
+          aoi={drawnAOI}
+          onEventClick={handleEventClick}
+          onNewEvent={addIntelMarker}
+        />
       </div>
     </div>
   );

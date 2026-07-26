@@ -8,8 +8,11 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     LOG_LEVEL: str = "INFO"
 
-    # CORS - stored as comma-separated string, parsed into list
-    ALLOWED_ORIGINS_STR: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://localhost:4173,https://vayu-p16d.vercel.app/,https://vayu-geop.vercel.app/"
+    # CORS
+    ALLOWED_ORIGINS_STR: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:3000,http://localhost:4173"
+    )
 
     # Rate limiting
     RATE_LIMIT_PER_MINUTE: int = 20
@@ -18,8 +21,18 @@ class Settings(BaseSettings):
     GCP_PROJECT_ID: str = ""
     GCS_BUCKET_NAME: str = ""
 
+    # GEE service account (for Render deployment)
+    GOOGLE_APPLICATION_CREDENTIALS_JSON: str = ""
+
     # Groq
     GROQ_API_KEY: str = ""
+
+    # ACLED conflict data (free — register at acleddata.com, uses OAuth)
+    ACLED_EMAIL: str = ""
+    ACLED_PASSWORD: str = ""
+
+    # AISStream.io maritime vessel tracking (free — register at aisstream.io)
+    AISSTREAM_API_KEY: str = ""
 
     # Job TTL
     JOB_TTL_SECONDS: int = 3600
