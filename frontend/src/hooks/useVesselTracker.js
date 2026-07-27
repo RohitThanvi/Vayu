@@ -24,7 +24,9 @@ export function useVesselTracker(apiUrl, enabled = true) {
   const mountedRef = useRef(true);
 
   const fetchVessels = useCallback(async () => {
-    if (!apiUrl) return;
+    // Allow apiUrl === "" (same-origin relative paths, e.g. single-container
+    // nginx-proxy deployments) — only skip if truly not provided.
+    if (apiUrl === undefined || apiUrl === null) return;
     try {
       const res = await fetch(`${apiUrl}/api/v1/intel/vessels?limit=2000`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

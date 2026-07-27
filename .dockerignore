@@ -1,0 +1,28 @@
+# ── Heavy / regeneratable — never needed inside the image ────────────────────
+**/node_modules/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+backend/.venv/
+backend/venv/
+frontend/dist/
+frontend/node_modules/
+
+# ── VCS / IDE / OS junk ────────────────────────────────────────────────────────
+.git/
+.gitignore
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ── Local dev artifacts ────────────────────────────────────────────────────────
+*.log
+geojson_outputs/
+
+# ── IMPORTANT ──────────────────────────────────────────────────────────────────
+# backend/.env is INTENTIONALLY NOT excluded here — Dockerfile.allinone needs
+# to COPY it in so the image is fully self-contained for sharing. Make sure
+# backend/.env exists and is filled in with real values before building.
+# (frontend/.env is irrelevant for the all-in-one build since VITE_API_URL
+# is set explicitly in the Dockerfile instead.)

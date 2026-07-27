@@ -10,10 +10,15 @@ import ee
 logger = logging.getLogger(__name__)
 
 # ── GEE Initialization ────────────────────────────────────────────────────────
+# Non-fatal by design: if GEE fails to initialize (bad/missing credentials),
+# we log it clearly but let the app keep running. The intel feed and vessel
+# tracking features don't depend on GEE, so a broken GEE credential
+# shouldn't take down the whole container — only satellite analysis queries
+# will fail (with a clear error) until the credential is fixed.
 def _initialize_gee():
     creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     if creds_json:
-        # Server/Render deployment — use service account from env var
+        # Server/Docker/Render deployment — use service account from env var
         try:
             creds_dict = json.loads(creds_json)
             credentials = ee.ServiceAccountCredentials(
@@ -24,17 +29,19 @@ def _initialize_gee():
             logger.info("GEE initialized with service account.")
             return
         except Exception as e:
-            logger.error(f"GEE service account init failed: {e}")
-            raise
+            logger.error(
+                f"GEE service account init failed: {e}. Satellite analysis "
+                f"will be unavailable until GOOGLE_APPLICATION_CREDENTIALS_JSON "
+                f"is fixed. Other features (intel feed, vessels) are unaffected."
+            )
+            return
 
     # Local development — use earthengine authenticate credentials
     try:
         project = os.environ.get("GCP_PROJECT_ID", "")
-        # Always pass project explicitly — GEE now requires it since early 2025
         if project:
             ee.Initialize(project=project)
         else:
-            # Fallback: try without project (works if earthengine set_project was run)
             try:
                 ee.Initialize()
             except ee.EEException:
@@ -44,8 +51,11 @@ def _initialize_gee():
                 )
         logger.info("GEE initialized with local credentials.")
     except Exception as e:
-        logger.error(f"GEE init error: {e}. Run earthengine authenticate.")
-        raise
+        logger.error(
+            f"GEE init error: {e}. Run 'earthengine authenticate' locally, or set "
+            f"GOOGLE_APPLICATION_CREDENTIALS_JSON for server/Docker deployments. "
+            f"Satellite analysis will be unavailable until this is fixed."
+        )
 
 _initialize_gee()
 

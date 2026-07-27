@@ -89,66 +89,109 @@ async def fetch_usgs(client: httpx.AsyncClient, since_minutes: int = 60) -> list
 
 
 # ── NASA FIRMS Active Fire Feed ───────────────────────────────────────────────
-# FIRMS world fire CSV — no API key needed for this public endpoint
-# Returns VIIRS SNPP detections from the last 24h
-FIRMS_URL = (
-    "https://firms.modaps.eosdis.nasa.gov/data/active_fire/suomi-npp-viirs-c2/"
-    "csv/SUOMI_VIIRS_C2_Global_24h.csv"
-)
+# Suomi NPP (S-NPP) VIIRS experienced a sensor anomaly in March 2026 and its
+# data is unreliable or absent. We now try sources in priority order:
+#   1. NOAA-20 VIIRS C2  — operational, best quality
+#   2. NOAA-21 VIIRS C2  — also operational, secondary
+#   3. MODIS C6.1         — lower resolution (1km) but robust long-term record
+# All are free public CSV files, no API key required.
 
-async def fetch_firms(client: httpx.AsyncClient) -> list[dict]:
-    try:
-        resp = await client.get(FIRMS_URL, timeout=20)
-        resp.raise_for_status()
-        lines = resp.text.strip().split("\n")
-        if len(lines) < 2:
-            return []
+FIRMS_SOURCES = [
+    {
+        "id": "NOAA-20",
+        "url": (
+            "https://firms.modaps.eosdis.nasa.gov/data/active_fire/"
+            "noaa-20-viirs-c2/csv/J1_VIIRS_C2_Global_24h.csv"
+        ),
+    },
+    {
+        "id": "NOAA-21",
+        "url": (
+            "https://firms.modaps.eosdis.nasa.gov/data/active_fire/"
+            "noaa-21-viirs-c2/csv/J2_VIIRS_C2_Global_24h.csv"
+        ),
+    },
+    {
+        "id": "MODIS",
+        "url": (
+            "https://firms.modaps.eosdis.nasa.gov/data/active_fire/"
+            "c6.1/csv/MODIS_C6_1_Global_24h.csv"
+        ),
+    },
+]
 
-        header = [h.strip() for h in lines[0].split(",")]
-        events = []
-        # Sample every Nth fire to avoid flooding — take max 80 hotspots
-        raw_rows = lines[1:]
-        step = max(1, len(raw_rows) // 80)
-        sampled = raw_rows[::step][:80]
 
-        for line in sampled:
+def _parse_firms_csv(text: str, source_id: str, max_events: int = 80) -> list[dict]:
+    """Parse a FIRMS active-fire CSV and return a list of IntelEvent dicts."""
+    lines = text.strip().split("\n")
+    if len(lines) < 2:
+        return []
+
+    header = [h.strip() for h in lines[0].split(",")]
+    raw_rows = lines[1:]
+    step = max(1, len(raw_rows) // max_events)
+    sampled = raw_rows[::step][:max_events]
+    events = []
+
+    for line in sampled:
+        try:
+            vals = line.split(",")
+            row = dict(zip(header, vals))
+            lat = float(row.get("latitude", 0))
+            lon = float(row.get("longitude", 0))
+            frp = float(row.get("frp", 0) or 0)
+            confidence = row.get("confidence", "n").strip().lower()
+            acq_date = row.get("acq_date", "")
+            acq_time = row.get("acq_time", "")
+
+            # MODIS uses numeric confidence (0-100), VIIRS uses h/n/l
             try:
-                vals = line.split(",")
-                row = dict(zip(header, vals))
-                lat = float(row.get("latitude", 0))
-                lon = float(row.get("longitude", 0))
-                frp = float(row.get("frp", 0))        # fire radiative power (MW)
-                confidence = row.get("confidence", "n").strip().lower()
-                acq_date = row.get("acq_date", "")
-                acq_time = row.get("acq_time", "")
-
+                conf_num = float(confidence)
+                conf_label = "HIGH" if conf_num >= 80 else "NOMINAL" if conf_num >= 50 else "LOW"
+            except ValueError:
                 conf_label = {"h": "HIGH", "n": "NOMINAL", "l": "LOW"}.get(
                     confidence, confidence.upper()
                 )
-                severity = "critical" if frp > 500 else "warn" if frp > 100 else "info"
 
-                events.append(_event(
-                    source="NASA FIRMS",
-                    tag="ACTIVE FIRE",
-                    title=f"Fire hotspot — FRP {frp:.0f} MW",
-                    detail=(
-                        f"Active fire detected. Fire Radiative Power: {frp:.0f} MW. "
-                        f"Confidence: {conf_label}. Acquired {acq_date} {acq_time}Z."
-                    ),
-                    lat=lat,
-                    lon=lon,
-                    severity=severity,
-                    meta={"frp_mw": frp, "confidence": conf_label,
-                          "acq_date": acq_date, "acq_time": acq_time},
-                ))
-            except (ValueError, KeyError):
-                continue
+            severity = "critical" if frp > 500 else "warn" if frp > 100 else "info"
+            events.append(_event(
+                source="NASA FIRMS",
+                tag=f"ACTIVE FIRE · {source_id}",
+                title=f"Fire hotspot — FRP {frp:.0f} MW",
+                detail=(
+                    f"Active fire detected ({source_id} VIIRS). "
+                    f"Fire Radiative Power: {frp:.0f} MW. "
+                    f"Confidence: {conf_label}. Acquired {acq_date} {acq_time}Z."
+                ),
+                lat=lat,
+                lon=lon,
+                severity=severity,
+                meta={"frp_mw": frp, "confidence": conf_label,
+                      "acq_date": acq_date, "acq_time": acq_time,
+                      "satellite": source_id},
+            ))
+        except (ValueError, KeyError, ZeroDivisionError):
+            continue
+    return events
 
-        logger.info(f"NASA FIRMS: fetched {len(events)} fire hotspots")
-        return events
-    except Exception as e:
-        logger.error(f"NASA FIRMS fetch error: {e}")
-        return []
+
+async def fetch_firms(client: httpx.AsyncClient) -> list[dict]:
+    """Try FIRMS sources in priority order, return first successful result."""
+    for source in FIRMS_SOURCES:
+        try:
+            resp = await client.get(source["url"], timeout=25)
+            resp.raise_for_status()
+            events = _parse_firms_csv(resp.text, source["id"])
+            logger.info(
+                f"NASA FIRMS: fetched {len(events)} fire hotspots "
+                f"from {source['id']}"
+            )
+            return events
+        except Exception as e:
+            logger.warning(f"NASA FIRMS {source['id']} failed: {e} — trying next source")
+
+    logger.error("NASA FIRMS: all sources failed")
+    return []
 
 
 # ── GDELT News Event Feed (via raw GKG 15-min files) ─────────────────────────
@@ -344,54 +387,95 @@ async def fetch_acled(
 
     since = (datetime.utcnow() - timedelta(days=days_back)).strftime("%Y-%m-%d")
     until = datetime.utcnow().strftime("%Y-%m-%d")
+    headers = {"Authorization": f"Bearer {token}"}
 
-    params = {
+    full_params = {
         "event_date": since,
         "event_date_where": "BETWEEN",
         "event_date_end": until,
         "fields": "event_date|event_type|sub_event_type|actor1|location|latitude|longitude|fatalities|notes",
         "limit": 100,
     }
+
+    rows = None
     try:
-        resp = await client.get(
-            ACLED_READ_URL,
-            params=params,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=15,
-        )
+        resp = await client.get(ACLED_READ_URL, params=full_params, headers=headers, timeout=15)
         resp.raise_for_status()
         rows = resp.json().get("data", [])
-        events = []
-        for row in rows:
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 403:
+            # "Open"/public-tier myACLED accounts (common with personal Gmail
+            # sign-ups) can be denied the full disaggregated field set even
+            # though the OAuth token itself is valid. Retry with a bare
+            # request (no `fields` restriction) to see if base read access
+            # works at all — this tells us whether it's a fields-permission
+            # issue vs a full account block.
+            logger.warning(
+                "ACLED: 403 on full-field request — likely an Open/public "
+                "myACLED access-tier restriction (common for personal email "
+                "sign-ups). Retrying with a minimal field set..."
+            )
             try:
-                lat = float(row.get("latitude", 0))
-                lon = float(row.get("longitude", 0))
-                fatalities = int(row.get("fatalities", 0))
-                event_type = row.get("event_type", "Unknown")
-                location = row.get("location", "")
-                actor = row.get("actor1", "")
-                notes = row.get("notes", "")[:200]
-                date = row.get("event_date", "")
-
-                severity = "critical" if fatalities > 10 else "warn" if fatalities > 0 else "info"
-                events.append(_event(
-                    source="ACLED",
-                    tag=f"CONFLICT · {event_type.upper()}",
-                    title=f"{event_type} — {location}",
-                    detail=f"{actor}. {notes} Fatalities: {fatalities}. Date: {date}.",
-                    lat=lat,
-                    lon=lon,
-                    severity=severity,
-                    meta={"fatalities": fatalities, "event_type": event_type,
-                          "actor": actor, "location": location, "date": date},
-                ))
-            except (ValueError, KeyError):
-                continue
-        logger.info(f"ACLED: fetched {len(events)} conflict events")
-        return events
+                bare_params = {
+                    "event_date": since,
+                    "event_date_where": "BETWEEN",
+                    "event_date_end": until,
+                    "limit": 100,
+                }
+                resp2 = await client.get(ACLED_READ_URL, params=bare_params, headers=headers, timeout=15)
+                resp2.raise_for_status()
+                rows = resp2.json().get("data", [])
+                logger.info("ACLED: bare request succeeded — your account's access "
+                            "tier restricts some fields, not all data.")
+            except httpx.HTTPStatusError:
+                logger.error(
+                    "ACLED: 403 persists even on a bare request. Your myACLED "
+                    "account is likely on the 'Open' public tier, which restricts "
+                    "API read access entirely until ACLED's Access Team reviews "
+                    "your account (this can take time after sign-up). Registering "
+                    "with an organizational email instead of a personal Gmail "
+                    "address typically gets faster/broader access. Skipping ACLED "
+                    "this cycle — other intel sources are unaffected."
+                )
+                return []
+        else:
+            logger.error(f"ACLED fetch error: {e}")
+            return []
     except Exception as e:
         logger.error(f"ACLED fetch error: {e}")
         return []
+
+    if rows is None:
+        return []
+
+    events = []
+    for row in rows:
+        try:
+            lat = float(row.get("latitude", 0))
+            lon = float(row.get("longitude", 0))
+            fatalities = int(row.get("fatalities", 0) or 0)
+            event_type = row.get("event_type", "Unknown")
+            location = row.get("location", "")
+            actor = row.get("actor1", "")
+            notes = (row.get("notes") or "")[:200]
+            date = row.get("event_date", "")
+
+            severity = "critical" if fatalities > 10 else "warn" if fatalities > 0 else "info"
+            events.append(_event(
+                source="ACLED",
+                tag=f"CONFLICT · {event_type.upper()}",
+                title=f"{event_type} — {location}",
+                detail=f"{actor}. {notes} Fatalities: {fatalities}. Date: {date}.",
+                lat=lat,
+                lon=lon,
+                severity=severity,
+                meta={"fatalities": fatalities, "event_type": event_type,
+                      "actor": actor, "location": location, "date": date},
+            ))
+        except (ValueError, KeyError, TypeError):
+            continue
+    logger.info(f"ACLED: fetched {len(events)} conflict events")
+    return events
 
 
 # ── Unified fetch runner ──────────────────────────────────────────────────────

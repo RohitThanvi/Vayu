@@ -10,7 +10,6 @@ class Settings(BaseSettings):
 
     # CORS
     ALLOWED_ORIGINS_STR: str = (
-        "vayu-geop.vercel.app",
         "http://localhost:5173,http://127.0.0.1:5173,"
         "http://localhost:3000,http://localhost:4173"
     )
