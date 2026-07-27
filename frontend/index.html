@@ -13,6 +13,38 @@
     <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap" rel="stylesheet" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <style>
+      /* leaflet-div-icon adds background:#fff + border by default —
+         this makes our SVG icon markers invisible on a dark map. Kill it. */
+      .leaflet-div-icon {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+      /* Dark tooltip theme consistent with the terminal UI */
+      .leaflet-tooltip {
+        background: #0d1117 !important;
+        border: 1px solid #2a3040 !important;
+        color: #ffffff !important;
+        border-radius: 2px !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.7) !important;
+        padding: 0 !important;
+        font-family: 'JetBrains Mono','Courier New',monospace !important;
+      }
+      .leaflet-tooltip::before {
+        display: none !important;
+      }
+      /* Leaflet draw toolbar matches dark theme */
+      .leaflet-draw-toolbar a {
+        background-color: #0d1117 !important;
+        border-color: #2a3040 !important;
+      }
+      .leaflet-draw-toolbar a:hover {
+        background-color: #1a2230 !important;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

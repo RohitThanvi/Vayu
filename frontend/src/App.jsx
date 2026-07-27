@@ -2,7 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import IntelPanel from './components/IntelPanel';
 import { useVesselTracker } from './hooks/useVesselTracker';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_URL = import.meta.env.VITE_API_URL !== undefined
+  ? import.meta.env.VITE_API_URL
+  : 'http://127.0.0.1:8000';
 const POLL_MS = 2500;
 
 const METRICS_META = {
@@ -17,11 +19,87 @@ const METRICS_META = {
   soil_moisture:            { label: 'Soil Moisture',           color: '#6a5a30', desc: 'Soil & crop stress' },
 };
 
-const INTEL_COLORS = {
-  'USGS':       { fill: '#b09020', border: '#d4b030' },
-  'NASA FIRMS': { fill: '#8b2020', border: '#c03030' },
-  'GDELT':      { fill: '#3a3a8a', border: '#5a5abd' },
-  'ACLED':      { fill: '#6b2020', border: '#9b3030' },
+// ── Icon library — minimal line-art SVGs, one per intel/vessel type ──────────
+const ICONS = {
+  // USGS — seismic epicenter rings
+  QUAKE: (fill, border) => `
+    <svg viewBox="0 0 16 16" width="16" height="16">
+      <circle cx="8" cy="8" r="1.6" fill="${fill}"/>
+      <circle cx="8" cy="8" r="4.2" fill="none" stroke="${border}" stroke-width="0.9" opacity="0.75"/>
+      <circle cx="8" cy="8" r="6.6" fill="none" stroke="${border}" stroke-width="0.7" opacity="0.4"/>
+    </svg>`,
+  // NASA FIRMS — flame
+  FLAME: (fill, border) => `
+    <svg viewBox="0 0 16 16" width="16" height="16">
+      <path d="M8 1.2C5.3 4 4.2 6.8 5 9.6 5.5 11.4 6.8 12.6 8 12.6 9.2 12.6 10.5 11.4 11 9.6 11.8 6.8 10.7 4 8 1.2Z"
+        fill="${fill}" stroke="${border}" stroke-width="0.6"/>
+      <path d="M8 5.2C7 6.8 6.6 8.1 7 9.4 7.2 10.1 7.7 10.6 8 10.6 8.3 10.6 8.8 10.1 9 9.4 9.4 8.1 9 6.8 8 5.2Z"
+        fill="${border}" opacity="0.6"/>
+    </svg>`,
+  // GDELT — news / document
+  NEWS: (fill, border) => `
+    <svg viewBox="0 0 16 16" width="16" height="16">
+      <rect x="3" y="2" width="10" height="12" rx="1" fill="${fill}" opacity="0.92" stroke="${border}" stroke-width="0.6"/>
+      <line x1="5" y1="5"  x2="11" y2="5"  stroke="${border}" stroke-width="0.9"/>
+      <line x1="5" y1="8"  x2="11" y2="8"  stroke="${border}" stroke-width="0.9"/>
+      <line x1="5" y1="11" x2="9"  y2="11" stroke="${border}" stroke-width="0.9"/>
+    </svg>`,
+  // ACLED — conflict / clash marker
+  CONFLICT: (fill, border) => `
+    <svg viewBox="0 0 16 16" width="16" height="16">
+      <circle cx="8" cy="8" r="6.2" fill="${fill}" opacity="0.18" stroke="${border}" stroke-width="0.8"/>
+      <line x1="5" y1="5" x2="11" y2="11" stroke="${border}" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="11" y1="5" x2="5" y2="11" stroke="${border}" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>`,
+  // Generic dot fallback
+  DOT: (fill, border) => `
+    <svg viewBox="0 0 16 16" width="10" height="10">
+      <circle cx="8" cy="8" r="5" fill="${fill}" stroke="${border}" stroke-width="1.2"/>
+    </svg>`,
+  // CARGO vessel — bow-forward hull silhouette
+  SHIP_CARGO: (fill, border) => `
+    <svg viewBox="0 0 16 16" width="15" height="15">
+      <path d="M8 1.4 L11 9.4 L11 12.4 L5 12.4 L5 9.4 Z" fill="${fill}" stroke="${border}" stroke-width="0.6"/>
+      <rect x="6.4" y="9.6" width="3.2" height="1.6" fill="${border}" opacity="0.5"/>
+    </svg>`,
+  // TANKER vessel — oil barrel
+  BARREL: (fill, border) => `
+    <svg viewBox="0 0 16 16" width="14" height="14">
+      <ellipse cx="8" cy="3.4" rx="4" ry="1.4" fill="none" stroke="${border}" stroke-width="1"/>
+      <rect x="4" y="3.4" width="8" height="8.6" fill="${fill}" opacity="0.9"/>
+      <ellipse cx="8" cy="12" rx="4" ry="1.4" fill="none" stroke="${border}" stroke-width="1"/>
+      <line x1="4" y1="6.4" x2="12" y2="6.4" stroke="${border}" stroke-width="0.6" opacity="0.7"/>
+      <line x1="4" y1="9.4" x2="12" y2="9.4" stroke="${border}" stroke-width="0.6" opacity="0.7"/>
+    </svg>`,
+  // PASSENGER vessel — ferry with cabin
+  FERRY: (fill, border) => `
+    <svg viewBox="0 0 16 16" width="15" height="15">
+      <path d="M3 11 L13 11 L11 14 L5 14 Z" fill="${fill}" stroke="${border}" stroke-width="0.5"/>
+      <rect x="6" y="6.2" width="4" height="4.8" fill="${fill}" stroke="${border}" stroke-width="0.5"/>
+      <rect x="7.1" y="2.8" width="1.8" height="3.4" fill="${border}"/>
+    </svg>`,
+  // FISHING vessel — small boat with pole
+  FISHBOAT: (fill, border) => `
+    <svg viewBox="0 0 16 16" width="14" height="14">
+      <path d="M3 10.4 L13 10.4 L11 13.4 L5 13.4 Z" fill="${fill}" stroke="${border}" stroke-width="0.5"/>
+      <line x1="8" y1="10.4" x2="8" y2="2.6" stroke="${border}" stroke-width="1"/>
+      <line x1="8" y1="3.6" x2="12" y2="5.6" stroke="${border}" stroke-width="0.8"/>
+    </svg>`,
+};
+
+const INTEL_ICON_FOR_SOURCE = {
+  'USGS':       'QUAKE',
+  'NASA FIRMS': 'FLAME',
+  'GDELT':      'NEWS',
+  'ACLED':      'CONFLICT',
+};
+
+const VESSEL_ICON_FOR_CATEGORY = {
+  TANKER:    'BARREL',
+  CARGO:     'SHIP_CARGO',
+  PASSENGER: 'FERRY',
+  FISHING:   'FISHBOAT',
+  OTHER:     'SHIP_CARGO',
 };
 
 const VESSEL_COLORS = {
@@ -66,44 +144,42 @@ function fmtVal(k, v) {
   return v.toFixed(3);
 }
 
-// ── Intel marker layer on Leaflet map ─────────────────────────────────────────
+// ── Intel marker — type-specific icon (flame, quake rings, news, conflict) ───
 function createIntelMarker(event) {
   const c = INTEL_COLORS[event.source] || { fill: '#4a5568', border: '#6b7a8d' };
-  const size = event.severity === 'critical' ? 10 : event.severity === 'warn' ? 8 : 6;
+  const iconKey = INTEL_ICON_FOR_SOURCE[event.source] || 'DOT';
+  const svg = ICONS[iconKey](c.fill, c.border);
+  const sizeBoost = event.severity === 'critical' ? 1.25 : event.severity === 'warn' ? 1.05 : 1;
   const icon = L.divIcon({
     className: '',
     html: `<div style="
-      width:${size}px; height:${size}px; border-radius:50%;
-      background:${c.fill}; border:1.5px solid ${c.border};
-      box-shadow:0 0 6px ${c.fill}88;
+      transform: scale(${sizeBoost});
+      filter: drop-shadow(0 0 4px ${c.fill}aa);
       cursor:pointer;
-    "></div>`,
-    iconSize: [size, size],
-    iconAnchor: [size/2, size/2],
+    ">${svg}</div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
   });
   return L.marker([event.lat, event.lon], { icon, zIndexOffset: 100 });
 }
 
-// ── Vessel marker — small rotated diamond pointing along course-over-ground ──
+// ── Vessel marker — type-specific hull/barrel/ferry icon, rotated to course ──
 function createVesselMarker(vessel) {
   const c = VESSEL_COLORS[vessel.category] || VESSEL_COLORS.OTHER;
+  const iconKey = VESSEL_ICON_FOR_CATEGORY[vessel.category] || 'SHIP_CARGO';
+  const svg = ICONS[iconKey](c.fill, c.border);
   const cog = typeof vessel.cog === 'number' ? vessel.cog : 0;
+  // Barrels have no directional bow — skip rotation for tankers to avoid implying false heading
+  const rotation = vessel.category === 'TANKER' ? 0 : cog;
   const icon = L.divIcon({
     className: '',
     html: `<div style="
-      width:10px; height:10px; transform: rotate(${cog}deg);
+      transform: rotate(${rotation}deg);
+      filter: drop-shadow(0 0 3px ${c.fill}99);
       display:flex; align-items:center; justify-content:center;
-    ">
-      <div style="
-        width:0; height:0;
-        border-left:4px solid transparent;
-        border-right:4px solid transparent;
-        border-bottom:9px solid ${c.fill};
-        filter: drop-shadow(0 0 3px ${c.fill}99);
-      "></div>
-    </div>`,
-    iconSize: [10, 10],
-    iconAnchor: [5, 5],
+    ">${svg}</div>`,
+    iconSize: [15, 15],
+    iconAnchor: [7.5, 7.5],
   });
   return L.marker([vessel.lat, vessel.lon], { icon, zIndexOffset: 50 });
 }
@@ -441,6 +517,7 @@ export default function App() {
   const intelMarkersRef = useRef({});     // id -> marker, for dedup
   const vesselLayerRef  = useRef(null);   // LayerGroup for vessel markers
   const vesselMarkersRef = useRef({});    // mmsi -> marker
+  const vesselTrailsRef = useRef({});     // mmsi -> { points:[[lat,lon],...], polyline }
 
   // Live maritime vessel tracking (AIS via aisstream.io)
   const { vessels, stats: vesselStats } = useVesselTracker(API_URL, true);
@@ -471,16 +548,23 @@ export default function App() {
     } catch(e) {}
   }, []);
 
-  // ── Render/update vessel markers whenever the polled snapshot changes ──────
+  // ── Render/update vessel markers + route trails whenever snapshot changes ──
+  const MAX_TRAIL_POINTS = 18;
+  const TRAIL_MIN_DELTA = 0.01; // degrees — skip near-duplicate points
+
   useEffect(() => {
     if (!vesselLayerRef.current) return;
     const seen = new Set();
+
     vessels.forEach(v => {
       if (typeof v.lat !== 'number' || typeof v.lon !== 'number') return;
       seen.add(v.mmsi);
+
+      // ── Marker: update position+rotation, or create new ──────────────────
       const existing = vesselMarkersRef.current[v.mmsi];
       if (existing) {
         existing.setLatLng([v.lat, v.lon]);
+        try { existing.setIcon(createVesselMarker(v).options.icon); } catch(e) {}
       } else {
         try {
           const marker = createVesselMarker(v);
@@ -498,12 +582,47 @@ export default function App() {
           vesselMarkersRef.current[v.mmsi] = marker;
         } catch(e) {}
       }
+
+      // ── Route trail: append point, redraw polyline ────────────────────────
+      try {
+        let trail = vesselTrailsRef.current[v.mmsi];
+        if (!trail) {
+          trail = { points: [], polyline: null };
+          vesselTrailsRef.current[v.mmsi] = trail;
+        }
+        const last = trail.points[trail.points.length - 1];
+        const moved = !last || Math.abs(last[0]-v.lat) > TRAIL_MIN_DELTA || Math.abs(last[1]-v.lon) > TRAIL_MIN_DELTA;
+        if (moved) {
+          trail.points.push([v.lat, v.lon]);
+          if (trail.points.length > MAX_TRAIL_POINTS) trail.points.shift();
+        }
+        const c = VESSEL_COLORS[v.category] || VESSEL_COLORS.OTHER;
+        if (trail.points.length >= 2) {
+          if (trail.polyline) {
+            trail.polyline.setLatLngs(trail.points);
+          } else {
+            trail.polyline = L.polyline(trail.points, {
+              color: c.border,     // use border color (brighter than fill)
+              weight: 2,           // thicker than before
+              opacity: 0.75,       // more visible
+              dashArray: '4,6',    // longer dashes, easier to see
+              lineJoin: 'round',
+            }).addTo(vesselLayerRef.current);
+          }
+        }
+      } catch(e) {}
     });
-    // Remove markers for vessels no longer in the snapshot (pruned as stale)
+
+    // ── Remove markers + trails for vessels no longer in the snapshot ───────
     Object.keys(vesselMarkersRef.current).forEach(mmsi => {
       if (!seen.has(Number(mmsi))) {
         try { vesselLayerRef.current.removeLayer(vesselMarkersRef.current[mmsi]); } catch(e) {}
         delete vesselMarkersRef.current[mmsi];
+        const trail = vesselTrailsRef.current[mmsi];
+        if (trail?.polyline) {
+          try { vesselLayerRef.current.removeLayer(trail.polyline); } catch(e) {}
+        }
+        delete vesselTrailsRef.current[mmsi];
       }
     });
   }, [vessels]);
@@ -513,22 +632,21 @@ export default function App() {
     if (!mapRef.current) return;
     mapRef.current.flyTo([event.lat, event.lon], 7, { duration: 1.2 });
 
-    // Flash the marker
+    // Flash the marker — target the icon wrapper div (contains the SVG)
     const marker = intelMarkersRef.current[event.id];
     if (marker) {
       const el = marker.getElement();
-      if (el) {
-        const dot = el.querySelector('div');
-        if (dot) {
-          const orig = dot.style.boxShadow;
-          dot.style.boxShadow = '0 0 16px 4px #fff';
-          dot.style.transform = 'scale(2)';
-          dot.style.transition = 'all 0.2s';
-          setTimeout(() => {
-            dot.style.boxShadow = orig;
-            dot.style.transform = 'scale(1)';
-          }, 600);
-        }
+      const wrapper = el?.querySelector('div');
+      if (wrapper) {
+        const origFilter = wrapper.style.filter;
+        const origScale = wrapper.style.transform;
+        wrapper.style.filter = 'drop-shadow(0 0 10px #ffffff) brightness(1.6)';
+        wrapper.style.transform = (origScale || '') + ' scale(1.8)';
+        wrapper.style.transition = 'all 0.25s ease';
+        setTimeout(() => {
+          wrapper.style.filter = origFilter;
+          wrapper.style.transform = origScale;
+        }, 700);
       }
     }
   }, []);

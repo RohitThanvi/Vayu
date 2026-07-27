@@ -1,0 +1,75 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# VAYU — All-in-One Image
+#
+# Builds the frontend as static assets and bundles it with the backend API
+# into a SINGLE container. nginx serves the frontend and reverse-proxies
+# /api and the WebSocket route to uvicorn, both managed by supervisord.
+#
+# This means anyone you share the built image with needs only:
+#   docker pull <your-registry>/vayu:latest
+#   docker run -d -p 8080:80 --name vayu <your-registry>/vayu:latest
+# and opens http://localhost:8080 — nothing else to configure.
+#
+# IMPORTANT — READ BEFORE BUILDING:
+# This Dockerfile bakes backend/.env (your GROQ_API_KEY, GCP service account
+# JSON, etc.) directly into the image. Anyone who pulls the image can extract
+# those secrets (`docker history`, `docker save` + inspect layers, etc).
+# Only do this for sharing with someone you trust, and consider:
+#   - Using a GCP service account scoped to ONLY Earth Engine read access
+#   - Setting a spend cap on your Groq API key
+#   - Rotating keys after you're done sharing
+# For anything public-facing, use the separate backend/frontend Dockerfiles
+# + docker-compose.yml instead, with secrets injected at deploy time.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── Stage 1: build the frontend static assets ────────────────────────────────
+FROM node:20-alpine AS frontend-builder
+WORKDIR /build
+
+COPY frontend/package*.json ./
+RUN npm install
+
+COPY frontend/ ./
+
+# VITE_API_URL is intentionally EMPTY — this makes the frontend call
+# relative paths like /api/v1/query, which nginx then proxies to the
+# backend running in the same container. Do not set this to a URL here.
+ENV VITE_API_URL=""
+RUN npm run build
+
+# ── Stage 2: the combined runtime image ──────────────────────────────────────
+FROM python:3.12-slim
+
+# nginx + supervisord + curl (for healthcheck) + gcc (for any source builds)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nginx supervisor curl gcc \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/log/supervisor
+
+WORKDIR /app
+
+# ── Backend ───────────────────────────────────────────────────────────────────
+COPY backend/requirements.txt ./backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt
+
+COPY backend/app/ ./backend/app/
+
+# Bake in your filled-in .env (see warning above). Build will fail loudly
+# with a clear message if you forgot to create it, rather than silently
+# shipping an image with no credentials.
+COPY backend/.env ./backend/.env
+
+# ── Frontend static build ────────────────────────────────────────────────────
+COPY --from=frontend-builder /build/dist /usr/share/nginx/html
+
+# ── nginx + supervisord config ───────────────────────────────────────────────
+COPY nginx.allinone.conf /etc/nginx/conf.d/default.conf
+RUN rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD curl -f http://localhost/health || exit 1
+
+CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

@@ -19,9 +19,11 @@ const MAX_LOCAL_EVENTS = 500;
 const RECONNECT_DELAY_MS = 3000;
 
 export function useIntelFeed(apiUrl, onNewEvent) {
+  // apiUrl truthy  -> absolute backend URL (multi-container/Render setups)
+  // apiUrl ""/falsy -> same-origin relative (single-container nginx-proxy setups)
   const wsUrl = apiUrl
     ? apiUrl.replace(/^http/, "ws") + "/api/v1/intel/ws"
-    : `ws://${window.location.hostname}:8000/api/v1/intel/ws`;
+    : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/v1/intel/ws`;
 
   const [events, setEvents] = useState([]);
   const [connected, setConnected] = useState(false);
