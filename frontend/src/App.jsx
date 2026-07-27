@@ -2,6 +2,21 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import IntelPanel from './components/IntelPanel';
 import { useVesselTracker } from './hooks/useVesselTracker';
 
+const MOBILE_BREAKPOINT = 860;
+
+/** Tracks whether the viewport is narrow enough to need the mobile layout. */
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT
+  );
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return isMobile;
+}
+
 const API_URL = import.meta.env.VITE_API_URL !== undefined
   ? import.meta.env.VITE_API_URL
   : 'http://127.0.0.1:8000';
@@ -51,6 +66,11 @@ const ICONS = {
       <line x1="5" y1="5" x2="11" y2="11" stroke="${border}" stroke-width="1.5" stroke-linecap="round"/>
       <line x1="11" y1="5" x2="5" y2="11" stroke="${border}" stroke-width="1.5" stroke-linecap="round"/>
     </svg>`,
+  // Predicted-path tip — small open chevron pointing along the forecast bearing
+  FORECAST_TIP: (fill, border) => `
+    <svg viewBox="0 0 16 16" width="11" height="11">
+      <path d="M8 1.5 L13.5 12 L8 9.3 L2.5 12 Z" fill="${fill}" opacity="0.85" stroke="${border}" stroke-width="0.6"/>
+    </svg>`,
   // Generic dot fallback
   DOT: (fill, border) => `
     <svg viewBox="0 0 16 16" width="10" height="10">
@@ -62,14 +82,14 @@ const ICONS = {
       <path d="M8 1.4 L11 9.4 L11 12.4 L5 12.4 L5 9.4 Z" fill="${fill}" stroke="${border}" stroke-width="0.6"/>
       <rect x="6.4" y="9.6" width="3.2" height="1.6" fill="${border}" opacity="0.5"/>
     </svg>`,
-  // TANKER vessel — oil barrel
-  BARREL: (fill, border) => `
-    <svg viewBox="0 0 16 16" width="14" height="14">
-      <ellipse cx="8" cy="3.4" rx="4" ry="1.4" fill="none" stroke="${border}" stroke-width="1"/>
-      <rect x="4" y="3.4" width="8" height="8.6" fill="${fill}" opacity="0.9"/>
-      <ellipse cx="8" cy="12" rx="4" ry="1.4" fill="none" stroke="${border}" stroke-width="1"/>
-      <line x1="4" y1="6.4" x2="12" y2="6.4" stroke="${border}" stroke-width="0.6" opacity="0.7"/>
-      <line x1="4" y1="9.4" x2="12" y2="9.4" stroke="${border}" stroke-width="0.6" opacity="0.7"/>
+  // TANKER vessel — top-down hull, rounded bow, deck pipeline manifolds, stern house
+  TANKER: (fill, border) => `
+    <svg viewBox="0 0 16 16" width="15" height="15">
+      <path d="M8 1.3C9.7 3.1 10.7 5.2 10.7 7.8L10.7 12C10.7 12.9 9.9 13.6 8.9 13.6L7.1 13.6C6.1 13.6 5.3 12.9 5.3 12L5.3 7.8C5.3 5.2 6.3 3.1 8 1.3Z"
+        fill="${fill}" stroke="${border}" stroke-width="0.6"/>
+      <line x1="6.1" y1="6.4" x2="9.9" y2="6.4" stroke="${border}" stroke-width="0.55" opacity="0.65"/>
+      <line x1="6.1" y1="9" x2="9.9" y2="9" stroke="${border}" stroke-width="0.55" opacity="0.65"/>
+      <rect x="6.9" y="11.4" width="2.2" height="1.7" fill="${border}" opacity="0.65"/>
     </svg>`,
   // PASSENGER vessel — ferry with cabin
   FERRY: (fill, border) => `
@@ -95,11 +115,18 @@ const INTEL_ICON_FOR_SOURCE = {
 };
 
 const VESSEL_ICON_FOR_CATEGORY = {
-  TANKER:    'BARREL',
+  TANKER:    'TANKER',
   CARGO:     'SHIP_CARGO',
   PASSENGER: 'FERRY',
   FISHING:   'FISHBOAT',
   OTHER:     'SHIP_CARGO',
+};
+
+const INTEL_COLORS = {
+  'USGS':       { fill: '#c9603a', border: '#e08050' },
+  'NASA FIRMS': { fill: '#d4622a', border: '#f0803a' },
+  'GDELT':      { fill: '#3a6ab0', border: '#5a8ad0' },
+  'ACLED':      { fill: '#a03a4a', border: '#c05a6a' },
 };
 
 const VESSEL_COLORS = {
@@ -144,6 +171,72 @@ function fmtVal(k, v) {
   return v.toFixed(3);
 }
 
+// ── Dead-reckoning projection — where a vessel is headed, not just where it's been ──
+const EARTH_R_M = 6371000;
+const KNOTS_TO_MS = 0.514444;
+
+/** Great-circle destination point given a start coord, bearing (deg), and distance (m). */
+function destinationPoint(lat, lon, bearingDeg, distanceM) {
+  const rad = Math.PI / 180;
+  const dR = distanceM / EARTH_R_M;
+  const brng = bearingDeg * rad;
+  const lat1 = lat * rad, lon1 = lon * rad;
+  const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dR) + Math.cos(lat1) * Math.sin(dR) * Math.cos(brng));
+  const lon2 = lon1 + Math.atan2(
+    Math.sin(brng) * Math.sin(dR) * Math.cos(lat1),
+    Math.cos(dR) - Math.sin(lat1) * Math.sin(lat2)
+  );
+  return [lat2 / rad, ((lon2 / rad) + 540) % 360 - 180];
+}
+
+const PREDICT_HOURS = [1, 2, 4, 8];        // forecast checkpoints
+const MIN_SOG_FOR_PREDICTION = 0.8;        // knots — skip stationary/anchored vessels
+
+/** Build a forecast track (dead reckoning) from a vessel's current course + speed. */
+function buildPredictedPath(vessel) {
+  const sog = typeof vessel.sog === 'number' ? vessel.sog : 0;
+  const cog = typeof vessel.cog === 'number' ? vessel.cog : null;
+  if (cog === null || sog < MIN_SOG_FOR_PREDICTION) return null;
+  const speedMs = sog * KNOTS_TO_MS;
+  const points = [[vessel.lat, vessel.lon]];
+  for (const hrs of PREDICT_HOURS) {
+    points.push(destinationPoint(vessel.lat, vessel.lon, cog, speedMs * hrs * 3600));
+  }
+  return points;
+}
+
+// ── UI line-icon set — metric types, nav tabs, and chrome controls ───────────
+function Icon({ name, size = 16, style }) {
+  const p = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', style };
+  switch (name) {
+    case 'leaf':       return <svg {...p}><path d="M5 20C5 11 11 4 20 4c0 9-7 15-15 16Z"/><path d="M6.5 17.5 15 9"/></svg>;
+    case 'building':   return <svg {...p}><rect x="5" y="3" width="9" height="18"/><rect x="14" y="9" width="5" height="12"/><path d="M8 7h2M8 11h2M8 15h2"/></svg>;
+    case 'droplet':    return <svg {...p}><path d="M12 3s6.5 7.2 6.5 11.5A6.5 6.5 0 1 1 5.5 14.5C5.5 10.2 12 3 12 3Z"/></svg>;
+    case 'wave':       return <svg {...p}><path d="M2 17c1.5 1.6 3 1.6 4.5 0s3-1.6 4.5 0 3 1.6 4.5 0 3-1.6 4.5 0"/><path d="M2 11c1.5 1.6 3 1.6 4.5 0s3-1.6 4.5 0 3 1.6 4.5 0 3-1.6 4.5 0"/></svg>;
+    case 'flame':      return <svg {...p}><path d="M12 2c1 4-4 5-4 10a4 4 0 0 0 8 0c0-1.6-1-2.6-1-2.6 1.5 1 2 3 2 4.6a5 5 0 0 1-10 0C7 8 12 6 12 2Z"/></svg>;
+    case 'drought':    return <svg {...p}><circle cx="12" cy="7" r="3"/><path d="M4 20l4-5M10 20l3-6M16 20l4-5"/></svg>;
+    case 'thermo':      return <svg {...p}><path d="M12 3a2 2 0 0 0-2 2v9.5a4 4 0 1 0 4 0V5a2 2 0 0 0-2-2Z"/><path d="M12 8v6"/></svg>;
+    case 'tree':       return <svg {...p}><path d="M12 2 6 12h3l-4 8h14l-4-8h3z"/><path d="M12 20v2"/></svg>;
+    case 'sprout':     return <svg {...p}><path d="M12 21v-8"/><path d="M12 13C7 13 5 9 5 5c4 0 7 2 7 8Z"/><path d="M12 13c5 0 7-4 7-8-4 0-7 2-7 8Z"/></svg>;
+    case 'target':     return <svg {...p}><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/></svg>;
+    case 'clock':      return <svg {...p}><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>;
+    case 'anchor':     return <svg {...p}><circle cx="12" cy="5" r="2"/><path d="M12 7v14M6 13a6 6 0 0 0 12 0M4 13h4M16 13h4"/></svg>;
+    case 'book':       return <svg {...p}><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H12v18H5.5A1.5 1.5 0 0 1 4 19.5Z"/><path d="M20 4.5A1.5 1.5 0 0 0 18.5 3H12v18h6.5a1.5 1.5 0 0 0 1.5-1.5Z"/></svg>;
+    case 'map':        return <svg {...p}><path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><path d="M9 4v14M15 6v14"/></svg>;
+    case 'sliders':    return <svg {...p}><path d="M4 6h9M17 6h3M4 18h3M11 18h9"/><circle cx="14" cy="6" r="2.2"/><circle cx="8" cy="18" r="2.2"/></svg>;
+    case 'radio':      return <svg {...p}><circle cx="12" cy="12" r="2.2"/><path d="M8.3 15.7a5.5 5.5 0 0 1 0-7.4M15.7 8.3a5.5 5.5 0 0 1 0 7.4M5.5 18.5a10 10 0 0 1 0-13M18.5 5.5a10 10 0 0 1 0 13"/></svg>;
+    case 'close':      return <svg {...p}><path d="M6 6l12 12M18 6 6 18"/></svg>;
+    case 'ship':       return <svg {...p}><path d="M4 15h16l-2 4H6Z"/><path d="M6 15V8h8l3 7M9 8V4h2v4"/></svg>;
+    default:           return null;
+  }
+}
+
+const METRIC_ICON_FOR = {
+  vegetation_change: 'leaf', builtup_change: 'building', water_change: 'droplet',
+  flood_detection: 'wave', fire_detection: 'flame', drought_index: 'drought',
+  land_surface_temperature: 'thermo', deforestation: 'tree', soil_moisture: 'sprout',
+};
+
 // ── Intel marker — type-specific icon (flame, quake rings, news, conflict) ───
 function createIntelMarker(event) {
   const c = INTEL_COLORS[event.source] || { fill: '#4a5568', border: '#6b7a8d' };
@@ -169,8 +262,7 @@ function createVesselMarker(vessel) {
   const iconKey = VESSEL_ICON_FOR_CATEGORY[vessel.category] || 'SHIP_CARGO';
   const svg = ICONS[iconKey](c.fill, c.border);
   const cog = typeof vessel.cog === 'number' ? vessel.cog : 0;
-  // Barrels have no directional bow — skip rotation for tankers to avoid implying false heading
-  const rotation = vessel.category === 'TANKER' ? 0 : cog;
+  const rotation = cog;
   const icon = L.divIcon({
     className: '',
     html: `<div style="
@@ -225,6 +317,13 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     map.on(L.Draw.Event.EDITED, e => { e.layers.eachLayer(l => onAreaDrawn(l.toGeoJSON().geometry)); });
     map.on(L.Draw.Event.DELETED, () => { if(dg.getLayers().length===0) onAreaDrawn(null); });
     mapRef.current = map;
+
+    // Keep Leaflet's internal size in sync — container width changes when
+    // switching between the desktop 3-column layout and the mobile full-screen
+    // layout, which Leaflet won't detect on its own.
+    const ro = new ResizeObserver(() => map.invalidateSize());
+    ro.observe(divRef.current);
+    return () => ro.disconnect();
   }, []);
   return <div ref={divRef} style={{ width:'100%', height:'100%' }} />;
 }
@@ -248,18 +347,24 @@ function ProgressBar({ pct, label }) {
 function MetricSelector({ selected, onChange }) {
   return (
     <div>
-      <div style={{ fontSize:15, color:S.text3, fontFamily:S.mono, letterSpacing:2, marginBottom:8, textTransform:'uppercase' }}>Analysis Type</div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:4 }}>
-        {Object.entries(METRICS_META).map(([id,m]) => (
-          <button key={id} onClick={() => onChange(id===selected?null:id)} title={m.desc}
-            style={{ padding:'7px 4px', fontSize:14, fontFamily:S.mono, letterSpacing:0.5,
-              background: selected===id ? 'rgba(126,184,212,0.08)' : S.surface2,
-              border: `1px solid ${selected===id ? S.accent : S.border}`,
-              color: selected===id ? S.accent : S.text3, cursor:'pointer',
-              textAlign:'center', lineHeight:1.4, textTransform:'uppercase' }}>
-            {m.label.split(' ').slice(0,2).join(' ')}
-          </button>
-        ))}
+      <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, marginBottom:9, textTransform:'uppercase' }}>Analysis type</div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7 }}>
+        {Object.entries(METRICS_META).map(([id,m]) => {
+          const active = id === selected;
+          return (
+            <button key={id} onClick={() => onChange(active ? null : id)} title={m.desc}
+              style={{ display:'flex', alignItems:'center', gap:9, padding:'10px 10px', minHeight:52,
+                fontFamily:S.mono, letterSpacing:0.3,
+                background: active ? 'rgba(126,184,212,0.10)' : S.surface2,
+                border: `1px solid ${active ? S.accent : S.border}`,
+                borderRadius:3,
+                color: active ? S.accent : S.text2, cursor:'pointer',
+                textAlign:'left', transition:'border-color 0.15s, background 0.15s' }}>
+              <Icon name={METRIC_ICON_FOR[id]} size={18} style={{ flexShrink:0, opacity: active ? 1 : 0.75 }} />
+              <span style={{ fontSize:13, lineHeight:1.3 }}>{m.label}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -310,27 +415,43 @@ function ResultsPanel({ result }) {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI,
-  isLoading,error,result,jobStatus, onSubmit, history,onSelectHistory, vesselStats }) {
+  isLoading,error,result,jobStatus, onSubmit, history,onSelectHistory, vesselStats, onClose, isMobile }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
-  const TABS = ['Analyze','History','Maritime','Guide'];
+  const TABS = [
+    { id:'Analyze',  icon:'target' },
+    { id:'History',  icon:'clock' },
+    { id:'Maritime', icon:'anchor' },
+    { id:'Guide',    icon:'book' },
+  ];
   return (
     <div style={{ background:S.surface, borderRight:`1px solid ${S.border}`, display:'flex', flexDirection:'column', height:'100%', width:'100%' }}>
       <div style={{ padding:'12px 14px', borderBottom:`1px solid ${S.border}`, flexShrink:0 }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div>
             <div style={{ fontFamily:S.mono, fontSize:18, fontWeight:700, letterSpacing:3, color:S.text }}>VAYU</div>
-            <div style={{ fontFamily:S.mono, fontSize:14, color:S.text3, letterSpacing:2 }}>GEOSPATIAL INTELLIGENCE</div>
+            <div style={{ fontFamily:S.mono, fontSize:12, color:S.text3, letterSpacing:1.5 }}>GEOSPATIAL INTELLIGENCE</div>
           </div>
-          <div style={{ fontSize:14, fontFamily:S.mono, color:'#4a7c59', border:'1px solid #4a7c59', padding:'2px 7px', letterSpacing:1.5 }}>v2.0</div>
+          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <div style={{ fontSize:12, fontFamily:S.mono, color:'#4a7c59', border:'1px solid #4a7c59', padding:'2px 7px', letterSpacing:1 }}>v2.0</div>
+            {isMobile && (
+              <button onClick={onClose} aria-label="Close panel"
+                style={{ display:'flex', padding:6, background:S.surface2, border:`1px solid ${S.border}`, borderRadius:4, color:S.text2, cursor:'pointer' }}>
+                <Icon name="close" size={16} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
-      <div style={{ display:'flex', borderBottom:`1px solid ${S.border}`, flexShrink:0 }}>
-        {TABS.map(t => (
+      <div style={{ display:'flex', borderBottom:`1px solid ${S.border}`, flexShrink:0, padding:'6px 6px 0' }}>
+        {TABS.map(({ id:t, icon }) => (
           <button key={t} onClick={() => setTab(t)}
-            style={{ flex:1, padding:'9px 0', fontSize:15, fontFamily:S.mono, letterSpacing:1.5, textTransform:'uppercase',
-              background:'transparent', border:'none', borderBottom:`2px solid ${tab===t?S.accent:'transparent'}`,
+            style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:3, padding:'7px 2px 8px',
+              fontSize:11, fontFamily:S.mono, letterSpacing:0.8, textTransform:'uppercase',
+              background: tab===t ? 'rgba(126,184,212,0.08)' : 'transparent',
+              border:'none', borderRadius:'4px 4px 0 0',
               color:tab===t?S.accent:S.text3, cursor:'pointer' }}>
+            <Icon name={icon} size={17} />
             {t}
           </button>
         ))}
@@ -394,19 +515,21 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
         {tab === 'Maritime' && (
           <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
             <div>
-              <div style={{ fontSize:15, color:S.text3, fontFamily:S.mono, letterSpacing:2, marginBottom:8, textTransform:'uppercase' }}>
-                Active Vessels — {vesselStats?.active_vessels ?? 0}
+              <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, marginBottom:9, textTransform:'uppercase' }}>
+                Active vessels — {vesselStats?.active_vessels ?? 0}
               </div>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7 }}>
                 {Object.entries(VESSEL_COLORS).map(([cat, c]) => {
                   const count = vesselStats?.by_category?.[cat] || 0;
+                  const iconKey = VESSEL_ICON_FOR_CATEGORY[cat] || 'SHIP_CARGO';
                   return (
-                    <div key={cat} style={{ background:S.surface2, border:`1px solid ${S.border}`, padding:'8px 10px' }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4 }}>
-                        <div style={{ width:8, height:8, background:c.fill, borderRadius:2 }} />
-                        <span style={{ fontSize:13, color:S.text3, letterSpacing:0.5 }}>{c.label}</span>
+                    <div key={cat} style={{ display:'flex', alignItems:'center', gap:9, background:S.surface2, border:`1px solid ${S.border}`, borderRadius:3, padding:'9px 10px' }}>
+                      <span style={{ flexShrink:0, filter:`drop-shadow(0 0 2px ${c.fill}88)` }}
+                        dangerouslySetInnerHTML={{ __html: ICONS[iconKey](c.fill, c.border) }} />
+                      <div style={{ minWidth:0 }}>
+                        <div style={{ fontSize:12, color:S.text3, letterSpacing:0.3, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{c.label}</div>
+                        <div style={{ fontSize:17, fontFamily:S.mono, color:'#ffffff', fontWeight:700 }}>{count}</div>
                       </div>
-                      <div style={{ fontSize:18, fontFamily:S.mono, color:'#ffffff', fontWeight:700 }}>{count}</div>
                     </div>
                   );
                 })}
@@ -414,12 +537,30 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             </div>
 
             <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:12 }}>
-              <div style={{ fontSize:15, fontFamily:S.mono, color:S.accent, letterSpacing:2, marginBottom:8, textTransform:'uppercase' }}>
-                Monitored Chokepoints
+              <div style={{ fontSize:13, fontFamily:S.mono, color:S.accent, letterSpacing:1.5, marginBottom:8, textTransform:'uppercase' }}>
+                Map legend
               </div>
-              {['Strait of Hormuz','Strait of Malacca','Bab-el-Mandeb','Suez Canal','Strait of Gibraltar','Panama Canal','English Channel'].map(name => (
-                <div key={name} style={{ fontSize:14, color:S.text3, fontFamily:S.mono, marginBottom:5 }}>-- {name}</div>
-              ))}
+              <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                <svg width="28" height="10"><line x1="0" y1="5" x2="28" y2="5" stroke={S.accent} strokeWidth="2" strokeDasharray="4,4"/></svg>
+                <span style={{ fontSize:13, color:S.text2 }}>Track sailed (recent positions)</span>
+              </div>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <svg width="28" height="10"><line x1="0" y1="5" x2="28" y2="5" stroke={S.accent} strokeWidth="1.5" strokeDasharray="1,4"/></svg>
+                <span style={{ fontSize:13, color:S.text2 }}>Forecast track (course + speed projection)</span>
+              </div>
+            </div>
+
+            <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:12 }}>
+              <div style={{ fontSize:13, fontFamily:S.mono, color:S.accent, letterSpacing:1.5, marginBottom:8, textTransform:'uppercase' }}>
+                Monitored chokepoints
+              </div>
+              <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
+                {['Strait of Hormuz','Strait of Malacca','Bab-el-Mandeb','Suez Canal','Strait of Gibraltar','Panama Canal','English Channel'].map(name => (
+                  <div key={name} style={{ display:'flex', alignItems:'center', gap:7, fontSize:13, color:S.text3, fontFamily:S.mono }}>
+                    <Icon name="anchor" size={13} style={{ flexShrink:0, opacity:0.6 }} />{name}
+                  </div>
+                ))}
+              </div>
             </div>
 
             {(!vesselStats || vesselStats.active_vessels === 0) && (
@@ -468,11 +609,11 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
 }
 
 // ── Map overlay ───────────────────────────────────────────────────────────────
-function MapOverlay({ result, isLoading, drawnAOI }) {
+function MapOverlay({ result, isLoading, drawnAOI, isMobile }) {
   if (!isLoading && !result && !drawnAOI) return (
-    <div style={{ position:'absolute', bottom:16, left:'50%', transform:'translateX(-50%)', zIndex:1000, pointerEvents:'none' }}>
-      <div style={{ padding:'7px 16px', fontSize:15, fontFamily:"'Courier New',monospace", letterSpacing:1, background:'rgba(13,17,23,0.92)', border:'1px solid #3a4250', color:'#ffffff' }}>
-        USE DRAW TOOLS (TOP-RIGHT) TO DEFINE AREA OF INTEREST
+    <div style={{ position:'absolute', bottom: isMobile ? 72 : 16, left:'50%', transform:'translateX(-50%)', zIndex:1000, pointerEvents:'none', width: isMobile ? '90%' : 'auto', textAlign:'center' }}>
+      <div style={{ padding:'7px 14px', fontSize: isMobile ? 12 : 15, fontFamily:"'Courier New',monospace", letterSpacing:0.5, background:'rgba(13,17,23,0.92)', border:'1px solid #3a4250', color:'#ffffff' }}>
+        {isMobile ? 'TAP THE DRAW TOOL (TOP-RIGHT) TO DEFINE AN AREA' : 'USE DRAW TOOLS (TOP-RIGHT) TO DEFINE AREA OF INTEREST'}
       </div>
     </div>
   );
@@ -498,6 +639,8 @@ function MapOverlay({ result, isLoading, drawnAOI }) {
 
 // ── Root App ──────────────────────────────────────────────────────────────────
 export default function App() {
+  const isMobile = useIsMobile();
+  const [mobilePanel, setMobilePanel] = useState('map'); // 'map' | 'analyze' | 'intel'
   const [tab, setTab]             = useState('Analyze');
   const [queryText, setQueryText] = useState('');
   const [selMetric, setSelMetric] = useState(null);
@@ -518,6 +661,7 @@ export default function App() {
   const vesselLayerRef  = useRef(null);   // LayerGroup for vessel markers
   const vesselMarkersRef = useRef({});    // mmsi -> marker
   const vesselTrailsRef = useRef({});     // mmsi -> { points:[[lat,lon],...], polyline }
+  const vesselPredictedRef = useRef({});  // mmsi -> { polyline, tipMarker } — forecast dead-reckoning track
 
   // Live maritime vessel tracking (AIS via aisstream.io)
   const { vessels, stats: vesselStats } = useVesselTracker(API_URL, true);
@@ -575,6 +719,7 @@ export default function App() {
               <div>${v.name || ('MMSI ' + v.mmsi)}</div>
               ${v.destination ? `<div style="opacity:0.7;margin-top:2px">→ ${v.destination}</div>` : ''}
               <div style="color:#ffffff;font-size:13px;margin-top:4px;opacity:0.6">${v.sog?.toFixed(1) || 0} kn · ${v.lat.toFixed(2)}N ${v.lon.toFixed(2)}E</div>
+              <div style="color:${c.border};font-size:11px;margin-top:5px;opacity:0.75">— track sailed &nbsp; ⋯ forecast (dead reckoning)</div>
             </div>`,
             { permanent:false, direction:'top', opacity:1 }
           );
@@ -611,6 +756,42 @@ export default function App() {
           }
         }
       } catch(e) {}
+
+      // ── Predicted path: where the vessel is headed, based on course + speed ──
+      try {
+        const forecast = buildPredictedPath(v);
+        const existingForecast = vesselPredictedRef.current[v.mmsi];
+        if (forecast) {
+          const c = VESSEL_COLORS[v.category] || VESSEL_COLORS.OTHER;
+          if (existingForecast) {
+            existingForecast.polyline.setLatLngs(forecast);
+            existingForecast.tipMarker.setLatLng(forecast[forecast.length - 1]);
+          } else {
+            const polyline = L.polyline(forecast, {
+              color: c.fill,
+              weight: 1.6,
+              opacity: 0.55,
+              dashArray: '1,6',       // fine dotted — visually distinct from the solid-dashed past trail
+              lineCap: 'round',
+            }).addTo(vesselLayerRef.current);
+            const bearingIcon = L.divIcon({
+              className: '',
+              html: `<div style="transform:rotate(${v.cog}deg); opacity:0.8;">${ICONS.FORECAST_TIP(c.fill, c.border)}</div>`,
+              iconSize: [11, 11],
+              iconAnchor: [5.5, 5.5],
+            });
+            const tipMarker = L.marker(forecast[forecast.length - 1], {
+              icon: bearingIcon, interactive: false, zIndexOffset: 40,
+            }).addTo(vesselLayerRef.current);
+            vesselPredictedRef.current[v.mmsi] = { polyline, tipMarker };
+          }
+        } else if (existingForecast) {
+          // Vessel stopped/slowed below threshold — drop its forecast track
+          try { vesselLayerRef.current.removeLayer(existingForecast.polyline); } catch(e) {}
+          try { vesselLayerRef.current.removeLayer(existingForecast.tipMarker); } catch(e) {}
+          delete vesselPredictedRef.current[v.mmsi];
+        }
+      } catch(e) {}
     });
 
     // ── Remove markers + trails for vessels no longer in the snapshot ───────
@@ -623,6 +804,12 @@ export default function App() {
           try { vesselLayerRef.current.removeLayer(trail.polyline); } catch(e) {}
         }
         delete vesselTrailsRef.current[mmsi];
+        const forecast = vesselPredictedRef.current[mmsi];
+        if (forecast) {
+          try { vesselLayerRef.current.removeLayer(forecast.polyline); } catch(e) {}
+          try { vesselLayerRef.current.removeLayer(forecast.tipMarker); } catch(e) {}
+          delete vesselPredictedRef.current[mmsi];
+        }
       }
     });
   }, [vessels]);
@@ -630,6 +817,7 @@ export default function App() {
   // ── Handle click on feed item: fly map + highlight marker ──────────────────
   const handleEventClick = useCallback((event) => {
     if (!mapRef.current) return;
+    setMobilePanel('map');
     mapRef.current.flyTo([event.lat, event.lon], 7, { duration: 1.2 });
 
     // Flash the marker — target the icon wrapper div (contains the SVG)
@@ -712,33 +900,83 @@ export default function App() {
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
+  const sidebarEl = (
+    <Sidebar tab={tab} setTab={setTab} queryText={queryText} setQueryText={setQueryText}
+      selMetric={selMetric} setSelMetric={setSelMetric} drawnAOI={drawnAOI}
+      isLoading={isLoading} error={error} result={result} jobStatus={jobStatus}
+      onSubmit={handleSubmit} history={history}
+      onSelectHistory={r => { setResult(r); clearLayers(); }}
+      vesselStats={vesselStats}
+      isMobile={isMobile} onClose={() => setMobilePanel('map')} />
+  );
+
+  const intelPanelEl = (
+    <IntelPanel
+      apiUrl={API_URL}
+      aoi={drawnAOI}
+      onEventClick={handleEventClick}
+      onNewEvent={addIntelMarker}
+      isMobile={isMobile}
+      onClose={() => setMobilePanel('map')}
+    />
+  );
+
+  const mapEl = (
+    <VayuMap onAreaDrawn={setDrawnAOI} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} />
+  );
+
+  // Single tree for both layouts — the map element's position/type never changes
+  // between mobile and desktop, so resizing across the breakpoint never remounts
+  // (and thus never destroys) the underlying Leaflet map instance.
   return (
-    <div style={{ width:'100vw', height:'100vh', display:'flex', overflow:'hidden', background:'#0a0c0f' }}>
-      {/* Left sidebar */}
-      <div style={{ width:270, flexShrink:0, height:'100%', zIndex:10 }}>
-        <Sidebar tab={tab} setTab={setTab} queryText={queryText} setQueryText={setQueryText}
-          selMetric={selMetric} setSelMetric={setSelMetric} drawnAOI={drawnAOI}
-          isLoading={isLoading} error={error} result={result} jobStatus={jobStatus}
-          onSubmit={handleSubmit} history={history}
-          onSelectHistory={r => { setResult(r); clearLayers(); }}
-          vesselStats={vesselStats} />
+    <div style={{ width:'100vw', height:'100vh', position:'relative', display: isMobile ? 'block' : 'flex', overflow:'hidden', background:'#0a0c0f' }}>
+      {!isMobile && <div style={{ width:270, flexShrink:0, height:'100%', zIndex:10 }}>{sidebarEl}</div>}
+
+      <div style={ isMobile ? { position:'absolute', inset:0 } : { flex:1, height:'100%', position:'relative' } }>
+        {mapEl}
+        <MapOverlay result={result} isLoading={isLoading} drawnAOI={drawnAOI} isMobile={isMobile} />
       </div>
 
-      {/* Map */}
-      <div style={{ flex:1, height:'100%', position:'relative' }}>
-        <VayuMap onAreaDrawn={setDrawnAOI} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} />
-        <MapOverlay result={result} isLoading={isLoading} drawnAOI={drawnAOI} />
-      </div>
+      {!isMobile && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{intelPanelEl}</div>}
 
-      {/* Right intel panel */}
-      <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>
-        <IntelPanel
-          apiUrl={API_URL}
-          aoi={drawnAOI}
-          onEventClick={handleEventClick}
-          onNewEvent={addIntelMarker}
-        />
-      </div>
+      {isMobile && mobilePanel === 'analyze' && (
+        <div style={{ position:'absolute', inset:0, bottom:56, zIndex:2000, background:S.surface }}>
+          {sidebarEl}
+        </div>
+      )}
+      {isMobile && mobilePanel === 'intel' && (
+        <div style={{ position:'absolute', inset:0, bottom:56, zIndex:2000 }}>
+          {intelPanelEl}
+        </div>
+      )}
+
+      {isMobile && <MobileBottomNav active={mobilePanel} onChange={setMobilePanel} />}
+    </div>
+  );
+}
+
+// ── Mobile bottom navigation — switches between map / analyze / intel feed ──
+function MobileBottomNav({ active, onChange }) {
+  const ITEMS = [
+    { id:'map',     label:'Map',     icon:'map' },
+    { id:'analyze', label:'Analyze', icon:'sliders' },
+    { id:'intel',   label:'Intel',   icon:'radio' },
+  ];
+  return (
+    <div style={{
+      position:'absolute', left:0, right:0, bottom:0, height:56, zIndex:2100,
+      display:'flex', background:S.surface, borderTop:`1px solid ${S.border}`,
+      paddingBottom:'env(safe-area-inset-bottom)',
+    }}>
+      {ITEMS.map(({ id, label, icon }) => (
+        <button key={id} onClick={() => onChange(id)}
+          style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:2,
+            background:'transparent', border:'none', color: active===id ? S.accent : S.text3,
+            fontFamily:S.mono, fontSize:11, letterSpacing:0.8, textTransform:'uppercase', cursor:'pointer' }}>
+          <Icon name={icon} size={19} />
+          {label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -19,7 +19,13 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+html, body, #root { height: 100%; margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--sans); overscroll-behavior: none; }
+body { position: fixed; width: 100%; touch-action: pan-x pan-y; }
+
+@media (max-width: 860px) {
+  .leaflet-touch .leaflet-bar a,
+  .leaflet-touch .leaflet-draw-toolbar a { width: 36px; height: 36px; line-height: 36px; }
+}
 
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: var(--surface); }

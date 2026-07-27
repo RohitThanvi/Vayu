@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # CORS
     ALLOWED_ORIGINS_STR: str = (
         "http://localhost:5173,http://127.0.0.1:5173,"
-        "http://localhost:3000,https://vayu-geop.vercel.app/"
+        "http://localhost:3000,https://vayu-geop.vercel.app"
     )
 
     # Rate limiting
