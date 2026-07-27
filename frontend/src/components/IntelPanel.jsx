@@ -43,7 +43,7 @@ function formatCoord(lat, lon) {
   return `${la} ${lo}`;
 }
 
-export default function IntelPanel({ apiUrl, aoi, onEventClick, onNewEvent }) {
+export default function IntelPanel({ apiUrl, aoi, onEventClick, onNewEvent, isMobile, onClose }) {
   const { events, connected, stats, setFilter, clear } = useIntelFeed(apiUrl, onNewEvent);
 
   const [activeSources, setActiveSources]     = useState(new Set(ALL_SOURCES));
@@ -79,7 +79,7 @@ export default function IntelPanel({ apiUrl, aoi, onEventClick, onNewEvent }) {
   };
 
   return (
-    <div style={styles.panel}>
+    <div style={{ ...styles.panel, ...(isMobile ? { minWidth: 0, maxWidth: "none", width: "100%" } : {}) }}>
       {/* Header */}
       <div style={styles.header}>
         <div style={styles.headerLeft}>
@@ -95,6 +95,9 @@ export default function IntelPanel({ apiUrl, aoi, onEventClick, onNewEvent }) {
         <div style={styles.headerRight}>
           <span style={styles.countBadge}>{filtered.length} EVENTS</span>
           <button style={styles.clearBtn} onClick={clear}>CLR</button>
+          {isMobile && (
+            <button style={styles.closeBtn} onClick={onClose} aria-label="Close panel">✕</button>
+          )}
         </div>
       </div>
 
@@ -247,6 +250,12 @@ const styles = {
     background: "transparent", border: "1px solid #3a4250",
     padding: "2px 8px", cursor: "pointer",
     fontFamily: "inherit",
+  },
+  closeBtn: {
+    fontSize: 14, color: "#ffffff",
+    background: "transparent", border: "1px solid #3a4250",
+    padding: "3px 8px", cursor: "pointer",
+    fontFamily: "inherit", borderRadius: 4,
   },
   filterRow: {
     display: "flex", flexWrap: "wrap", gap: 5,
