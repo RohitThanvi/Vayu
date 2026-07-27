@@ -932,7 +932,9 @@ export default function App() {
     <div style={{ width:'100vw', height:'100vh', position:'relative', display: isMobile ? 'block' : 'flex', overflow:'hidden', background:'#0a0c0f' }}>
       {!isMobile && <div style={{ width:270, flexShrink:0, height:'100%', zIndex:10 }}>{sidebarEl}</div>}
 
-      <div style={ isMobile ? { position:'absolute', inset:0 } : { flex:1, height:'100%', position:'relative' } }>
+      <div style={ isMobile
+        ? { position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1, overflow:'hidden' }
+        : { flex:1, height:'100%', position:'relative' } }>
         {mapEl}
         <MapOverlay result={result} isLoading={isLoading} drawnAOI={drawnAOI} isMobile={isMobile} />
       </div>
@@ -940,12 +942,12 @@ export default function App() {
       {!isMobile && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{intelPanelEl}</div>}
 
       {isMobile && mobilePanel === 'analyze' && (
-        <div style={{ position:'absolute', inset:0, bottom:56, zIndex:2000, background:S.surface }}>
+        <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:S.surface, overflow:'hidden' }}>
           {sidebarEl}
         </div>
       )}
       {isMobile && mobilePanel === 'intel' && (
-        <div style={{ position:'absolute', inset:0, bottom:56, zIndex:2000 }}>
+        <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:'#0a0c0f', overflow:'hidden' }}>
           {intelPanelEl}
         </div>
       )}
