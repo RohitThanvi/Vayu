@@ -47,6 +47,30 @@ CHOKEPOINTS = {
 
 RECONNECT_DELAY_S = 10
 MAX_RECONNECT_DELAY_S = 120
+RATE_LIMIT_MIN_DELAY_S = 60    # floor when we get a 429 with no Retry-After header
+RATE_LIMIT_MAX_DELAY_S = 600   # ceiling, in case the server asks for something huge
+
+
+def _retry_after_seconds(exc: Exception) -> Optional[int]:
+    """If `exc` is a 429 rejection carrying a Retry-After header, return the
+    number of seconds to wait. Returns None for anything else (falls back to
+    the normal exponential backoff)."""
+    response = getattr(exc, "response", None)
+    if response is None or getattr(response, "status_code", None) != 429:
+        return None
+    retry_after = None
+    try:
+        retry_after = response.headers.get("Retry-After")
+    except Exception:
+        pass
+    if retry_after:
+        try:
+            return max(RATE_LIMIT_MIN_DELAY_S, min(int(retry_after), RATE_LIMIT_MAX_DELAY_S))
+        except (TypeError, ValueError):
+            pass
+    # 429 with no usable Retry-After — still treat it as a real rate limit,
+    # not a transient blip, and back off further than our normal schedule.
+    return RATE_LIMIT_MIN_DELAY_S
 
 
 class AISStreamClient:
@@ -84,8 +108,11 @@ class AISStreamClient:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"AISStream: connection error: {e}, retrying in {delay}s")
-                await asyncio.sleep(delay)
+                rate_limit_delay = _retry_after_seconds(e)
+                wait_s = rate_limit_delay if rate_limit_delay is not None else delay
+                reason = "rate limited" if rate_limit_delay is not None else "connection error"
+                logger.error(f"AISStream: {reason}: {e}, retrying in {wait_s}s")
+                await asyncio.sleep(wait_s)
                 delay = min(delay * 2, MAX_RECONNECT_DELAY_S)
 
     async def _connect_and_stream(self):
