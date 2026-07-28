@@ -8,3 +8,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <App />
   </React.StrictMode>,
 )
+
+// Hide the native splash screen once the app has mounted (no-op on web).
+import('@capacitor/splash-screen')
+  .then(({ SplashScreen }) => SplashScreen.hide())
+  .catch(() => {});
