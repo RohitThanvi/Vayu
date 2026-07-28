@@ -428,9 +428,12 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
     <div style={{ background:S.surface, borderRight:`1px solid ${S.border}`, display:'flex', flexDirection:'column', height:'100%', width:'100%' }}>
       <div style={{ padding:'12px 14px', borderBottom:`1px solid ${S.border}`, flexShrink:0 }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-          <div>
-            <div style={{ fontFamily:S.mono, fontSize:18, fontWeight:700, letterSpacing:3, color:S.text }}>VAYU</div>
-            <div style={{ fontFamily:S.mono, fontSize:12, color:S.text3, letterSpacing:1.5 }}>GEOSPATIAL INTELLIGENCE</div>
+          <div style={{ display:'flex', alignItems:'center', gap:9 }}>
+            <img src="/logo.png" alt="" width="26" height="26" style={{ flexShrink:0, filter:'drop-shadow(0 0 3px rgba(201,147,58,0.35))' }} />
+            <div>
+              <div style={{ fontFamily:S.mono, fontSize:18, fontWeight:700, letterSpacing:3, color:S.text }}>VAYU</div>
+              <div style={{ fontFamily:S.mono, fontSize:12, color:S.text3, letterSpacing:1.5 }}>GEOSPATIAL INTELLIGENCE</div>
+            </div>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <div style={{ fontSize:12, fontFamily:S.mono, color:'#4a7c59', border:'1px solid #4a7c59', padding:'2px 7px', letterSpacing:1 }}>v2.0</div>

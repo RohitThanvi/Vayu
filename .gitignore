@@ -16,6 +16,17 @@ node_modules/
 frontend/dist/
 frontend/node_modules/
 
+# Android (Capacitor) — keep android/ project source, ignore build outputs
+frontend/android/app/build/
+frontend/android/build/
+frontend/android/.gradle/
+frontend/android/local.properties
+frontend/android/*.iml
+frontend/android/app/*.iml
+frontend/android/captures/
+frontend/android/app/release/
+frontend/android/app/debug/
+
 # GEE auth
 .config/
 credentials.json

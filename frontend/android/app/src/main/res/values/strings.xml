@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">VAYU</string>
+    <string name="title_activity_main">VAYU</string>
+    <string name="package_name">com.rohitthanvi.vayu</string>
+    <string name="custom_url_scheme">com.rohitthanvi.vayu</string>
+</resources>
