@@ -54,13 +54,27 @@ RATE_LIMIT_MAX_DELAY_S = 600   # ceiling, in case the server asks for something 
 def _retry_after_seconds(exc: Exception) -> Optional[int]:
     """If `exc` is a 429 rejection carrying a Retry-After header, return the
     number of seconds to wait. Returns None for anything else (falls back to
-    the normal exponential backoff)."""
-    response = getattr(exc, "response", None)
-    if response is None or getattr(response, "status_code", None) != 429:
+    the normal exponential backoff).
+
+    `websockets.connect` (the plain top-level import used below) resolves to
+    the *legacy* client, which raises `InvalidStatusCode` with the status
+    code and headers directly on the exception (`exc.status_code`,
+    `exc.headers`) — not wrapped in a `.response` object like the newer
+    `websockets.asyncio.client.connect` / `InvalidStatus`. Handle both
+    shapes so this actually fires regardless of which client raised it.
+    """
+    status_code = getattr(exc, "status_code", None)
+    headers = getattr(exc, "headers", None)
+    if status_code is None:
+        response = getattr(exc, "response", None)
+        if response is not None:
+            status_code = getattr(response, "status_code", None)
+            headers = getattr(response, "headers", None)
+    if status_code != 429:
         return None
     retry_after = None
     try:
-        retry_after = response.headers.get("Retry-After")
+        retry_after = headers.get("Retry-After") if headers is not None else None
     except Exception:
         pass
     if retry_after:
