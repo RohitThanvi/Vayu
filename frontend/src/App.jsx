@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import IntelPanel from './components/IntelPanel';
 import { useVesselTracker } from './hooks/useVesselTracker';
 
@@ -956,6 +957,7 @@ export default function App() {
       )}
 
       {isMobile && <MobileBottomNav active={mobilePanel} onChange={setMobilePanel} />}
+      <Analytics />
     </div>
   );
 }
