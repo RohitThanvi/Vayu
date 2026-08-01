@@ -255,7 +255,7 @@ async def get_vessel_stats():
 
 @router.get("/vessels/chokepoints", summary="Monitored maritime chokepoint regions")
 async def get_chokepoints():
-    from ..services.intel.ais_stream import CHOKEPOINTS
+    from ..services.intel.vessel_store import CHOKEPOINTS
     return {
         "chokepoints": [
             {"id": name, "bbox": bbox}

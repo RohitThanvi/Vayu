@@ -24,7 +24,8 @@ GCS_BUCKET_NAME=your-bucket-name
 GOOGLE_APPLICATION_CREDENTIALS_JSON={"type":"service_account",...}
 ACLED_EMAIL=you@example.com
 ACLED_PASSWORD=your-acled-password
-AISSTREAM_API_KEY=your-aisstream-key
+AIS_BRIDGE_URL=https://your-ais-bridge.fly.dev
+AIS_BRIDGE_API_KEY=your-bridge-shared-secret
 ALLOWED_ORIGINS_STR=http://localhost:8080
 ```
 

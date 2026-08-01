@@ -25,6 +25,19 @@ logger = logging.getLogger(__name__)
 STALE_MINUTES = 30
 MAX_VESSELS = 5000
 
+# Maritime chokepoints the AIS bridge (see /ais-bridge) subscribes to.
+# Kept here as the single source of truth for the /vessels/chokepoints
+# endpoint; must match CHOKEPOINTS in ais-bridge/app.py if you change it.
+CHOKEPOINTS = {
+    "strait_of_hormuz":    [[24.5, 54.5], [27.5, 57.0]],
+    "strait_of_malacca":   [[1.0, 100.0], [6.5, 104.5]],
+    "bab_el_mandeb":       [[11.5, 42.5], [15.0, 44.5]],
+    "suez_canal":          [[29.5, 32.0], [31.5, 33.0]],
+    "strait_of_gibraltar": [[35.7, -6.0], [36.3, -5.0]],
+    "panama_canal":        [[8.8, -80.2], [9.4, -79.4]],
+    "english_channel":     [[49.8, -2.0], [51.2, 2.0]],
+}
+
 
 def classify_ship_type(type_code: Optional[int]) -> str:
     if type_code is None:
@@ -109,6 +122,14 @@ class VesselStore:
     async def prune_stale(self):
         async with self._lock:
             await self._prune_locked()
+
+    async def load_snapshot(self, vessels: list[dict]):
+        """Replace the whole store with a fresh snapshot. Used by the AIS
+        bridge poller: the bridge already holds latest-state-per-MMSI and
+        prunes staleness itself, so each poll is a full authoritative
+        snapshot rather than something to merge incrementally."""
+        async with self._lock:
+            self._vessels = {v["mmsi"]: v for v in vessels if "mmsi" in v}
 
     def query(
         self,

@@ -8,6 +8,9 @@ Poll intervals (sensible defaults):
   NASA FIRMS  every 15 min (fire data updates ~hourly on their end)
   GDELT       every 10 min (matches GDELT's own 15-min GKG publish cadence)
   ACLED       every 60 min (conflict data is not real-time)
+  AIS bridge  every 60 sec (vessel positions; see services/intel/README or
+              ais-bridge/README.md for why this is a REST poll against our
+              own bridge service instead of a direct AISStream connection)
   Purge       every 30 min (TTL cleanup)
 """
 
@@ -17,6 +20,7 @@ from datetime import datetime
 
 from .fetchers import fetch_all_intel, fetch_usgs, fetch_firms, fetch_gdelt, fetch_acled
 from .store import intel_store
+from .vessel_store import vessel_store
 
 import httpx
 
@@ -27,13 +31,22 @@ INTERVAL_USGS   = 5  * 60
 INTERVAL_FIRMS  = 15 * 60
 INTERVAL_GDELT  = 10 * 60
 INTERVAL_ACLED  = 60 * 60
+INTERVAL_AIS    = 60
 INTERVAL_PURGE  = 30 * 60
 
 
 class IntelScheduler:
-    def __init__(self, acled_email: str = "", acled_password: str = ""):
+    def __init__(
+        self,
+        acled_email: str = "",
+        acled_password: str = "",
+        ais_bridge_url: str = "",
+        ais_bridge_api_key: str = "",
+    ):
         self.acled_email = acled_email
         self.acled_password = acled_password
+        self.ais_bridge_url = ais_bridge_url.rstrip("/")
+        self.ais_bridge_api_key = ais_bridge_api_key
         self._tasks: list[asyncio.Task] = []
         self._running = False
 
@@ -62,6 +75,7 @@ class IntelScheduler:
             asyncio.create_task(self._poll_firms(),  name="poll-firms"),
             asyncio.create_task(self._poll_gdelt(),  name="poll-gdelt"),
             asyncio.create_task(self._poll_acled(),  name="poll-acled"),
+            asyncio.create_task(self._poll_ais(),    name="poll-ais"),
             asyncio.create_task(self._purge_loop(),  name="purge-loop"),
         ]
         logger.info(f"Intel scheduler: {len(self._tasks)} polling tasks started")
@@ -130,6 +144,24 @@ class IntelScheduler:
                 logger.error(f"ACLED poll error: {e}")
             await asyncio.sleep(INTERVAL_ACLED)
 
+    async def _poll_ais(self):
+        if not self.ais_bridge_url:
+            logger.info("AIS poll: no AIS_BRIDGE_URL configured, skipping vessel tracking")
+            return
+        await asyncio.sleep(30)   # small offset so not all fire at once
+        headers = {"X-Bridge-Key": self.ais_bridge_api_key} if self.ais_bridge_api_key else {}
+        while self._running:
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.get(f"{self.ais_bridge_url}/vessels", headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+                await vessel_store.load_snapshot(data.get("vessels", []))
+                logger.debug(f"AIS poll: {data.get('count', 0)} vessels")
+            except Exception as e:
+                logger.error(f"AIS poll error: {e}")
+            await asyncio.sleep(INTERVAL_AIS)
+
     async def _purge_loop(self):
         while self._running:
             await asyncio.sleep(INTERVAL_PURGE)
@@ -143,8 +175,18 @@ class IntelScheduler:
 _scheduler: IntelScheduler | None = None
 
 
-def get_scheduler(acled_email: str = "", acled_password: str = "") -> IntelScheduler:
+def get_scheduler(
+    acled_email: str = "",
+    acled_password: str = "",
+    ais_bridge_url: str = "",
+    ais_bridge_api_key: str = "",
+) -> IntelScheduler:
     global _scheduler
     if _scheduler is None:
-        _scheduler = IntelScheduler(acled_email=acled_email, acled_password=acled_password)
+        _scheduler = IntelScheduler(
+            acled_email=acled_email,
+            acled_password=acled_password,
+            ais_bridge_url=ais_bridge_url,
+            ais_bridge_api_key=ais_bridge_api_key,
+        )
     return _scheduler

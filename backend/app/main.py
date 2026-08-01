@@ -16,7 +16,6 @@ from .core.logging_config import setup_logging as configure_logging
 from .api import endpoints
 from .api.intel_endpoints import router as intel_router
 from .services.intel.scheduler import get_scheduler
-from .services.intel.ais_stream import get_ais_client
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -27,23 +26,20 @@ async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────────────
     logger.info("VAYU Intelligence Terminal starting up")
 
-    # Start intel polling scheduler (USGS, FIRMS, GDELT, ACLED)
+    # Start intel polling scheduler (USGS, FIRMS, GDELT, ACLED, AIS bridge)
     scheduler = get_scheduler(
         acled_email=getattr(settings, "ACLED_EMAIL", ""),
         acled_password=getattr(settings, "ACLED_PASSWORD", ""),
+        ais_bridge_url=getattr(settings, "AIS_BRIDGE_URL", ""),
+        ais_bridge_api_key=getattr(settings, "AIS_BRIDGE_API_KEY", ""),
     )
     await scheduler.start()
     logger.info("Intel scheduler started")
-
-    # Start AIS maritime vessel tracking (no-op if no API key configured)
-    ais_client = get_ais_client(api_key=getattr(settings, "AISSTREAM_API_KEY", ""))
-    await ais_client.start()
 
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     await scheduler.stop()
-    await ais_client.stop()
     logger.info("VAYU Intelligence Terminal shutdown complete")
 
 
