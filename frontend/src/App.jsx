@@ -23,6 +23,18 @@ const API_URL = import.meta.env.VITE_API_URL !== undefined
   : 'http://127.0.0.1:8000';
 const POLL_MS = 2500;
 
+// Free OpenWeatherMap key (openweathermap.org/api, no card required — the
+// Weather Maps 1.0 tile endpoint is covered by their free Weather API tier).
+// Tiles are fetched straight from the browser, so this only needs a
+// build-time frontend env var, no backend involvement.
+const OWM_API_KEY = import.meta.env.VITE_OWM_API_KEY || '';
+
+const WEATHER_LAYERS = {
+  temp:     { owmLayer: 'temp_new',     label: 'Temperature', icon: 'thermo', opacity: 0.55 },
+  wind:     { owmLayer: 'wind_new',     label: 'Wind Speed',  icon: 'wave',   opacity: 0.55 },
+  pressure: { owmLayer: 'pressure_new', label: 'Air Pressure', icon: 'target', opacity: 0.55 },
+};
+
 const METRICS_META = {
   vegetation_change:        { label: 'Vegetation Change',       color: '#4a7c59', desc: 'NDVI green cover loss/gain' },
   builtup_change:           { label: 'Built-up Change',         color: '#c9933a', desc: 'Urban expansion analysis' },
@@ -77,20 +89,26 @@ const ICONS = {
     <svg viewBox="0 0 16 16" width="10" height="10">
       <circle cx="8" cy="8" r="5" fill="${fill}" stroke="${border}" stroke-width="1.2"/>
     </svg>`,
-  // CARGO vessel — bow-forward hull silhouette
+  // CARGO / OTHER vessel — top-down hull: pointed bow, parallel sides, flat
+  // stern, distinct deckhouse block near the stern so it reads as a boat
+  // rather than a plain triangle even at small sizes.
   SHIP_CARGO: (fill, border) => `
-    <svg viewBox="0 0 16 16" width="15" height="15">
-      <path d="M8 1.4 L11 9.4 L11 12.4 L5 12.4 L5 9.4 Z" fill="${fill}" stroke="${border}" stroke-width="0.6"/>
-      <rect x="6.4" y="9.6" width="3.2" height="1.6" fill="${border}" opacity="0.5"/>
+    <svg viewBox="0 0 18 18" width="18" height="18">
+      <path d="M9 1.3 L12.6 9 L12.6 13.2C12.6 14 12 14.6 11.2 14.6L6.8 14.6C6 14.6 5.4 14 5.4 13.2L5.4 9Z"
+        fill="${fill}" stroke="${border}" stroke-width="0.7"/>
+      <rect x="7.1" y="10" width="3.8" height="3.4" rx="0.4" fill="${border}" opacity="0.55"/>
+      <line x1="9" y1="1.3" x2="9" y2="9" stroke="${border}" stroke-width="0.4" opacity="0.4"/>
     </svg>`,
-  // TANKER vessel — top-down hull, rounded bow, deck pipeline manifolds, stern house
-  TANKER: (fill, border) => `
-    <svg viewBox="0 0 16 16" width="15" height="15">
-      <path d="M8 1.3C9.7 3.1 10.7 5.2 10.7 7.8L10.7 12C10.7 12.9 9.9 13.6 8.9 13.6L7.1 13.6C6.1 13.6 5.3 12.9 5.3 12L5.3 7.8C5.3 5.2 6.3 3.1 8 1.3Z"
-        fill="${fill}" stroke="${border}" stroke-width="0.6"/>
-      <line x1="6.1" y1="6.4" x2="9.9" y2="6.4" stroke="${border}" stroke-width="0.55" opacity="0.65"/>
-      <line x1="6.1" y1="9" x2="9.9" y2="9" stroke="${border}" stroke-width="0.55" opacity="0.65"/>
-      <rect x="6.9" y="11.4" width="2.2" height="1.7" fill="${border}" opacity="0.65"/>
+  // TANKER vessel — a literal oil barrel/drum. Deliberately not shaped like a
+  // hull: this is the one category the person specifically wants to read as
+  // "tanker" at a glance, distinct from every other ship silhouette.
+  // Non-directional on purpose (see createVesselMarker) — a barrel has no bow.
+  BARREL: (fill, border) => `
+    <svg viewBox="0 0 18 18" width="17" height="17">
+      <rect x="5.2" y="2.2" width="7.6" height="13.6" rx="2" fill="${fill}" stroke="${border}" stroke-width="0.8"/>
+      <path d="M5.2 4.4C5.2 3.6 6.8 3 9 3s3.8 0.6 3.8 1.4-1.6 1.4-3.8 1.4-3.8-0.6-3.8-1.4Z" fill="${border}" opacity="0.35"/>
+      <line x1="5.2" y1="5.6" x2="12.8" y2="5.6" stroke="${border}" stroke-width="1" opacity="0.7"/>
+      <line x1="5.2" y1="12.4" x2="12.8" y2="12.4" stroke="${border}" stroke-width="1" opacity="0.7"/>
     </svg>`,
   // PASSENGER vessel — ferry with cabin
   FERRY: (fill, border) => `
@@ -116,7 +134,7 @@ const INTEL_ICON_FOR_SOURCE = {
 };
 
 const VESSEL_ICON_FOR_CATEGORY = {
-  TANKER:    'TANKER',
+  TANKER:    'BARREL',
   CARGO:     'SHIP_CARGO',
   PASSENGER: 'FERRY',
   FISHING:   'FISHBOAT',
@@ -188,6 +206,17 @@ function destinationPoint(lat, lon, bearingDeg, distanceM) {
     Math.cos(dR) - Math.sin(lat1) * Math.sin(lat2)
   );
   return [lat2 / rad, ((lon2 / rad) + 540) % 360 - 180];
+}
+
+/** Great-circle distance between two points, in nautical miles. */
+function haversineNm(lat1, lon1, lat2, lon2) {
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return (EARTH_R_M * c) / 1852; // meters → nautical miles
 }
 
 const PREDICT_HOURS = [1, 2, 4, 8];        // forecast checkpoints
@@ -263,7 +292,9 @@ function createVesselMarker(vessel) {
   const iconKey = VESSEL_ICON_FOR_CATEGORY[vessel.category] || 'SHIP_CARGO';
   const svg = ICONS[iconKey](c.fill, c.border);
   const cog = typeof vessel.cog === 'number' ? vessel.cog : 0;
-  const rotation = cog;
+  // A barrel has no bow — rotating it with course would be misleading, not
+  // informative, so only heading-shaped hull icons rotate.
+  const rotation = iconKey === 'BARREL' ? 0 : cog;
   const icon = L.divIcon({
     className: '',
     html: `<div style="
@@ -271,10 +302,38 @@ function createVesselMarker(vessel) {
       filter: drop-shadow(0 0 3px ${c.fill}99);
       display:flex; align-items:center; justify-content:center;
     ">${svg}</div>`,
-    iconSize: [15, 15],
-    iconAnchor: [7.5, 7.5],
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
   });
   return L.marker([vessel.lat, vessel.lon], { icon, zIndexOffset: 50 });
+}
+
+// ── Weather overlay toggles — click a button, that layer switches on/off ────
+function WeatherLayerToggles({ active, onToggle }) {
+  return (
+    <div>
+      <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, marginBottom:9, textTransform:'uppercase' }}>Overlay layers</div>
+      <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
+        {Object.entries(WEATHER_LAYERS).map(([key, meta]) => {
+          const on = !!active[key];
+          return (
+            <button key={key} onClick={() => onToggle(key)}
+              style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44,
+                fontFamily:S.mono, letterSpacing:0.3,
+                background: on ? 'rgba(126,184,212,0.10)' : S.surface2,
+                border: `1px solid ${on ? S.accent : S.border}`,
+                borderRadius:3,
+                color: on ? S.accent : S.text2, cursor:'pointer',
+                textAlign:'left', transition:'border-color 0.15s, background 0.15s' }}>
+              <Icon name={meta.icon} size={18} style={{ flexShrink:0, opacity: on ? 1 : 0.75 }} />
+              <span style={{ fontSize:14, flex:1 }}>{meta.label}</span>
+              <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{on ? 'ON' : 'OFF'}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────────
@@ -416,13 +475,15 @@ function ResultsPanel({ result }) {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI,
-  isLoading,error,result,jobStatus, onSubmit, history,onSelectHistory, vesselStats, onClose, isMobile }) {
+  isLoading,error,result,jobStatus, onSubmit, history,onSelectHistory, vesselStats, onClose, isMobile,
+  weatherLayers, onToggleWeather }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const TABS = [
     { id:'Analyze',  icon:'target' },
     { id:'History',  icon:'clock' },
     { id:'Maritime', icon:'anchor' },
+    { id:'Weather',  icon:'thermo' },
     { id:'Guide',    icon:'book' },
   ];
   return (
@@ -575,6 +636,20 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             )}
           </div>
         )}
+        {tab === 'Weather' && (
+          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+            <WeatherLayerToggles active={weatherLayers} onToggle={onToggleWeather} />
+            <div style={{ fontSize:13, color:S.text3, lineHeight:1.6 }}>
+              Each layer can be switched on independently — click a button to toggle it on the map, click again to remove it.
+            </div>
+            {!OWM_API_KEY && (
+              <div style={{ background:'rgba(201,147,58,0.06)', border:'1px solid rgba(201,147,58,0.25)', padding:'10px 12px', fontSize:13, color:S.text2, lineHeight:1.6 }}>
+                No weather overlay key configured. Get a free key at openweathermap.org
+                (no credit card required) and set VITE_OWM_API_KEY on the frontend.
+              </div>
+            )}
+          </div>
+        )}
         {tab === 'Guide' && (
           <div style={{ display:'flex', flexDirection:'column', gap:14, fontSize:15, color:S.text2 }}>
             <div>
@@ -654,10 +729,12 @@ export default function App() {
   const [error, setError]         = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
   const [history, setHistory]     = useState([]);
+  const [weatherLayers, setWeatherLayers] = useState({ temp:false, wind:false, pressure:false });
 
   const mapRef          = useRef(null);
   const drawGroupRef    = useRef(null);
   const layersRef       = useRef([]);
+  const weatherTileRefs = useRef({});     // 'temp'|'wind'|'pressure' -> L.tileLayer instance
   const pollRef         = useRef(null);
   const aoiBoundsRef    = useRef(null);
   const intelLayerRef   = useRef(null);   // LayerGroup for intel markers
@@ -699,6 +776,12 @@ export default function App() {
   // ── Render/update vessel markers + route trails whenever snapshot changes ──
   const MAX_TRAIL_POINTS = 18;
   const TRAIL_MIN_DELTA = 0.01; // degrees — skip near-duplicate points
+  // If the implied speed between two consecutive fixes exceeds this, the fix
+  // is almost certainly bad data (MMSI reuse/spoofing, GPS glitch, a stale
+  // record jumping to a fresh one) rather than a real ship — even a fast
+  // naval vessel tops out well under this. Break the trail instead of
+  // drawing a straight "teleport" line across land/ocean between them.
+  const MAX_PLAUSIBLE_KN = 60;
 
   useEffect(() => {
     if (!vesselLayerRef.current) return;
@@ -732,18 +815,34 @@ export default function App() {
         } catch(e) {}
       }
 
-      // ── Route trail: append point, redraw polyline ────────────────────────
+      // ── Route trail: append point (or break on an implausible jump) ───────
       try {
         let trail = vesselTrailsRef.current[v.mmsi];
         if (!trail) {
-          trail = { points: [], polyline: null };
+          trail = { points: [], times: [], polyline: null };
           vesselTrailsRef.current[v.mmsi] = trail;
         }
         const last = trail.points[trail.points.length - 1];
+        const lastT = trail.times[trail.times.length - 1];
         const moved = !last || Math.abs(last[0]-v.lat) > TRAIL_MIN_DELTA || Math.abs(last[1]-v.lon) > TRAIL_MIN_DELTA;
         if (moved) {
-          trail.points.push([v.lat, v.lon]);
-          if (trail.points.length > MAX_TRAIL_POINTS) trail.points.shift();
+          const nowT = v.last_update ? Date.parse(v.last_update) : Date.now();
+          let implausible = false;
+          if (last && lastT && Number.isFinite(nowT) && nowT > lastT) {
+            const distNm = haversineNm(last[0], last[1], v.lat, v.lon);
+            const hours = (nowT - lastT) / 3600000;
+            if (distNm / hours > MAX_PLAUSIBLE_KN) implausible = true;
+          }
+          if (implausible) {
+            // Discontinuity, not a real transit — start a fresh segment
+            // rather than connecting across the impossible gap.
+            trail.points = [[v.lat, v.lon]];
+            trail.times = [nowT];
+          } else {
+            trail.points.push([v.lat, v.lon]);
+            trail.times.push(nowT);
+            if (trail.points.length > MAX_TRAIL_POINTS) { trail.points.shift(); trail.times.shift(); }
+          }
         }
         const c = VESSEL_COLORS[v.category] || VESSEL_COLORS.OTHER;
         if (trail.points.length >= 2) {
@@ -819,6 +918,27 @@ export default function App() {
   }, [vessels]);
 
   // ── Handle click on feed item: fly map + highlight marker ──────────────────
+  // ── Toggle a weather overlay on/off — each layer is independent ────────────
+  const handleToggleWeather = useCallback((key) => {
+    if (!mapRef.current || !OWM_API_KEY) return;
+    setWeatherLayers(prev => {
+      const turningOn = !prev[key];
+      if (turningOn) {
+        const meta = WEATHER_LAYERS[key];
+        const tl = L.tileLayer(
+          `https://tile.openweathermap.org/map/${meta.owmLayer}/{z}/{x}/{y}.png?appid=${OWM_API_KEY}`,
+          { opacity: meta.opacity, noWrap:true, bounds:[[-85,-180],[85,180]], zIndex: 5 }
+        ).addTo(mapRef.current);
+        weatherTileRefs.current[key] = tl;
+      } else {
+        const tl = weatherTileRefs.current[key];
+        if (tl) { try { mapRef.current.removeLayer(tl); } catch(e) {} }
+        delete weatherTileRefs.current[key];
+      }
+      return { ...prev, [key]: turningOn };
+    });
+  }, []);
+
   const handleEventClick = useCallback((event) => {
     if (!mapRef.current) return;
     setMobilePanel('map');
@@ -911,6 +1031,7 @@ export default function App() {
       onSubmit={handleSubmit} history={history}
       onSelectHistory={r => { setResult(r); clearLayers(); }}
       vesselStats={vesselStats}
+      weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
       isMobile={isMobile} onClose={() => setMobilePanel('map')} />
   );
 
