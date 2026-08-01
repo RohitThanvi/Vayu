@@ -89,40 +89,38 @@ const ICONS = {
     <svg viewBox="0 0 16 16" width="10" height="10">
       <circle cx="8" cy="8" r="5" fill="${fill}" stroke="${border}" stroke-width="1.2"/>
     </svg>`,
-  // CARGO / OTHER vessel — top-down hull: pointed bow, parallel sides, flat
-  // stern, distinct deckhouse block near the stern so it reads as a boat
-  // rather than a plain triangle even at small sizes.
+  // CARGO / OTHER vessel — bold filled hull silhouette with a bright white
+  // outline (so it stays crisp against the dark basemap at small sizes) and
+  // a light deckhouse block near the stern, so it reads as "boat" at a
+  // glance instead of a thin triangle sliver.
   SHIP_CARGO: (fill, border) => `
-    <svg viewBox="0 0 18 18" width="18" height="18">
-      <path d="M9 1.3 L12.6 9 L12.6 13.2C12.6 14 12 14.6 11.2 14.6L6.8 14.6C6 14.6 5.4 14 5.4 13.2L5.4 9Z"
-        fill="${fill}" stroke="${border}" stroke-width="0.7"/>
-      <rect x="7.1" y="10" width="3.8" height="3.4" rx="0.4" fill="${border}" opacity="0.55"/>
-      <line x1="9" y1="1.3" x2="9" y2="9" stroke="${border}" stroke-width="0.4" opacity="0.4"/>
+    <svg viewBox="0 0 18 18" width="22" height="22">
+      <path d="M9 1C11.4 4.6 12.6 7.8 12.6 10.8L12.6 13.6C12.6 15 11.4 16.1 10 16.1L8 16.1C6.6 16.1 5.4 15 5.4 13.6L5.4 10.8C5.4 7.8 6.6 4.6 9 1Z"
+        fill="${fill}" stroke="#ffffff" stroke-width="1.1"/>
+      <rect x="7" y="11.4" width="4" height="3.2" rx="0.5" fill="#ffffff" opacity="0.85"/>
     </svg>`,
-  // TANKER vessel — a literal oil barrel/drum. Deliberately not shaped like a
-  // hull: this is the one category the person specifically wants to read as
-  // "tanker" at a glance, distinct from every other ship silhouette.
+  // TANKER vessel — a literal oil barrel/drum, bold and filled with a white
+  // outline + banding so it's unmistakably "not a ship" at a glance.
   // Non-directional on purpose (see createVesselMarker) — a barrel has no bow.
   BARREL: (fill, border) => `
-    <svg viewBox="0 0 18 18" width="17" height="17">
-      <rect x="5.2" y="2.2" width="7.6" height="13.6" rx="2" fill="${fill}" stroke="${border}" stroke-width="0.8"/>
-      <path d="M5.2 4.4C5.2 3.6 6.8 3 9 3s3.8 0.6 3.8 1.4-1.6 1.4-3.8 1.4-3.8-0.6-3.8-1.4Z" fill="${border}" opacity="0.35"/>
-      <line x1="5.2" y1="5.6" x2="12.8" y2="5.6" stroke="${border}" stroke-width="1" opacity="0.7"/>
-      <line x1="5.2" y1="12.4" x2="12.8" y2="12.4" stroke="${border}" stroke-width="1" opacity="0.7"/>
+    <svg viewBox="0 0 18 18" width="22" height="22">
+      <rect x="4.6" y="1.8" width="8.8" height="14.4" rx="2.6" fill="${fill}" stroke="#ffffff" stroke-width="1.2"/>
+      <line x1="4.6" y1="6" x2="13.4" y2="6" stroke="#ffffff" stroke-width="1.2" opacity="0.9"/>
+      <line x1="4.6" y1="12" x2="13.4" y2="12" stroke="#ffffff" stroke-width="1.2" opacity="0.9"/>
     </svg>`,
   // PASSENGER vessel — ferry with cabin
   FERRY: (fill, border) => `
-    <svg viewBox="0 0 16 16" width="15" height="15">
-      <path d="M3 11 L13 11 L11 14 L5 14 Z" fill="${fill}" stroke="${border}" stroke-width="0.5"/>
-      <rect x="6" y="6.2" width="4" height="4.8" fill="${fill}" stroke="${border}" stroke-width="0.5"/>
-      <rect x="7.1" y="2.8" width="1.8" height="3.4" fill="${border}"/>
+    <svg viewBox="0 0 18 18" width="22" height="22">
+      <path d="M3.4 12.4 L14.6 12.4 L12.2 16 L5.8 16 Z" fill="${fill}" stroke="#ffffff" stroke-width="1"/>
+      <rect x="6.6" y="6.8" width="4.8" height="5.6" rx="0.6" fill="${fill}" stroke="#ffffff" stroke-width="1"/>
+      <rect x="8" y="2.6" width="2" height="4.2" fill="#ffffff" opacity="0.9"/>
     </svg>`,
   // FISHING vessel — small boat with pole
   FISHBOAT: (fill, border) => `
-    <svg viewBox="0 0 16 16" width="14" height="14">
-      <path d="M3 10.4 L13 10.4 L11 13.4 L5 13.4 Z" fill="${fill}" stroke="${border}" stroke-width="0.5"/>
-      <line x1="8" y1="10.4" x2="8" y2="2.6" stroke="${border}" stroke-width="1"/>
-      <line x1="8" y1="3.6" x2="12" y2="5.6" stroke="${border}" stroke-width="0.8"/>
+    <svg viewBox="0 0 18 18" width="20" height="20">
+      <path d="M3.4 11.6 L14.6 11.6 L12.2 15.2 L5.8 15.2 Z" fill="${fill}" stroke="#ffffff" stroke-width="1"/>
+      <line x1="9" y1="11.6" x2="9" y2="2.4" stroke="#ffffff" stroke-width="1.3"/>
+      <line x1="9" y1="3.6" x2="13.4" y2="5.8" stroke="#ffffff" stroke-width="1"/>
     </svg>`,
 };
 
@@ -299,11 +297,11 @@ function createVesselMarker(vessel) {
     className: '',
     html: `<div style="
       transform: rotate(${rotation}deg);
-      filter: drop-shadow(0 0 3px ${c.fill}99);
+      filter: drop-shadow(0 0 4px ${c.fill}cc) drop-shadow(0 0 1px #000000aa);
       display:flex; align-items:center; justify-content:center;
     ">${svg}</div>`,
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
   });
   return L.marker([vessel.lat, vessel.lon], { icon, zIndexOffset: 50 });
 }
