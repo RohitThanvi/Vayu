@@ -35,6 +35,55 @@ const WEATHER_LAYERS = {
   pressure: { owmLayer: 'pressure_new', label: 'Air Pressure', icon: 'target', opacity: 0.55 },
 };
 
+// Official OpenWeatherMap Weather Maps 1.0 color stops (openweathermap.org/map_legend),
+// so the legend shown in the app matches exactly what the tiles are actually
+// drawing rather than an approximation. Pressure converted Pa -> hPa.
+// Note purple/magenta on the temperature scale is the COLD end (below -40°C),
+// not hot -- that's why Antarctica renders in that color, correctly.
+const WEATHER_LEGENDS = {
+  temp: {
+    unit: '°C',
+    stops: [
+      { v:-40, c:'rgb(130,22,146)' },
+      { v:-20, c:'rgb(32,140,236)' },
+      { v:0,   c:'rgb(35,221,221)' },
+      { v:10,  c:'rgb(194,255,40)' },
+      { v:20,  c:'rgb(255,240,40)' },
+      { v:30,  c:'rgb(252,128,20)' },
+    ],
+  },
+  wind: {
+    unit: 'm/s',
+    stops: [
+      { v:1,   c:'rgb(255,255,255)' },
+      { v:15,  c:'rgb(179,100,188)' },
+      { v:25,  c:'rgb(63,33,59)' },
+      { v:50,  c:'rgb(116,76,172)' },
+      { v:100, c:'rgb(70,0,175)' },
+      { v:200, c:'rgb(13,17,38)' },
+    ],
+  },
+  pressure: {
+    unit: 'hPa',
+    stops: [
+      { v:940,  c:'rgb(0,115,255)' },
+      { v:980,  c:'rgb(75,208,214)' },
+      { v:1010, c:'rgb(176,247,32)' },
+      { v:1040, c:'rgb(251,85,21)' },
+      { v:1080, c:'rgb(198,0,0)' },
+    ],
+  },
+};
+
+/** Build a CSS linear-gradient string whose stop *positions* are proportional
+ * to the real values, not evenly spaced, so the gradient's visual shape
+ * matches OWM's actual (non-linear) color ramp. */
+function legendGradient(stops) {
+  const min = stops[0].v, max = stops[stops.length - 1].v;
+  const parts = stops.map(s => `${s.c} ${((s.v - min) / (max - min) * 100).toFixed(1)}%`);
+  return `linear-gradient(to right, ${parts.join(', ')})`;
+}
+
 const METRICS_META = {
   vegetation_change:        { label: 'Vegetation Change',       color: '#4a7c59', desc: 'NDVI green cover loss/gain' },
   builtup_change:           { label: 'Built-up Change',         color: '#c9933a', desc: 'Urban expansion analysis' },
@@ -314,19 +363,31 @@ function WeatherLayerToggles({ active, onToggle }) {
       <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
         {Object.entries(WEATHER_LAYERS).map(([key, meta]) => {
           const on = !!active[key];
+          const legend = WEATHER_LEGENDS[key];
           return (
-            <button key={key} onClick={() => onToggle(key)}
-              style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44,
-                fontFamily:S.mono, letterSpacing:0.3,
-                background: on ? 'rgba(126,184,212,0.10)' : S.surface2,
-                border: `1px solid ${on ? S.accent : S.border}`,
-                borderRadius:3,
-                color: on ? S.accent : S.text2, cursor:'pointer',
-                textAlign:'left', transition:'border-color 0.15s, background 0.15s' }}>
-              <Icon name={meta.icon} size={18} style={{ flexShrink:0, opacity: on ? 1 : 0.75 }} />
-              <span style={{ fontSize:14, flex:1 }}>{meta.label}</span>
-              <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{on ? 'ON' : 'OFF'}</span>
-            </button>
+            <div key={key}>
+              <button onClick={() => onToggle(key)}
+                style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44, width:'100%',
+                  fontFamily:S.mono, letterSpacing:0.3,
+                  background: on ? 'rgba(126,184,212,0.10)' : S.surface2,
+                  border: `1px solid ${on ? S.accent : S.border}`,
+                  borderRadius: on ? '3px 3px 0 0' : 3,
+                  color: on ? S.accent : S.text2, cursor:'pointer',
+                  textAlign:'left', transition:'border-color 0.15s, background 0.15s' }}>
+                <Icon name={meta.icon} size={18} style={{ flexShrink:0, opacity: on ? 1 : 0.75 }} />
+                <span style={{ fontSize:14, flex:1 }}>{meta.label}</span>
+                <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{on ? 'ON' : 'OFF'}</span>
+              </button>
+              {on && legend && (
+                <div style={{ border:`1px solid ${S.accent}`, borderTop:'none', borderRadius:'0 0 3px 3px', padding:'8px 12px 9px', background:'rgba(126,184,212,0.04)' }}>
+                  <div style={{ height:8, borderRadius:2, background: legendGradient(legend.stops) }} />
+                  <div style={{ display:'flex', justifyContent:'space-between', marginTop:4 }}>
+                    <span style={{ fontSize:11, color:S.text3, fontFamily:S.mono }}>{legend.stops[0].v}{legend.unit}</span>
+                    <span style={{ fontSize:11, color:S.text3, fontFamily:S.mono }}>{legend.stops[legend.stops.length-1].v}{legend.unit}</span>
+                  </div>
+                </div>
+              )}
+            </div>
           );
         })}
       </div>
@@ -638,7 +699,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
           <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
             <WeatherLayerToggles active={weatherLayers} onToggle={onToggleWeather} />
             <div style={{ fontSize:13, color:S.text3, lineHeight:1.6 }}>
-              Each layer can be switched on independently — click a button to toggle it on the map, click again to remove it.
+              Each layer can be switched on independently — click a button to toggle it on the map, click again to remove it. The gradient bar under an active layer is its real color-to-value key. Note: on the temperature scale, purple is the <em>cold</em> end (below −40°C) — Antarctica showing purple is correct, not a bug.
             </div>
             {!OWM_API_KEY && (
               <div style={{ background:'rgba(201,147,58,0.06)', border:'1px solid rgba(201,147,58,0.25)', padding:'10px 12px', fontSize:13, color:S.text2, lineHeight:1.6 }}>
