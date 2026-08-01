@@ -31,8 +31,12 @@ class Settings(BaseSettings):
     ACLED_EMAIL: str = ""
     ACLED_PASSWORD: str = ""
 
-    # AISStream.io maritime vessel tracking (free — register at aisstream.io)
-    AISSTREAM_API_KEY: str = ""
+    # AIS vessel tracking — via our own bridge service (see /ais-bridge),
+    # which holds the actual AISStream.io connection and is polled here as
+    # plain REST. AISSTREAM_API_KEY itself now lives only on the bridge,
+    # not here.
+    AIS_BRIDGE_URL: str = ""
+    AIS_BRIDGE_API_KEY: str = ""
 
     # Job TTL
     JOB_TTL_SECONDS: int = 3600

@@ -110,7 +110,8 @@ GOOGLE_APPLICATION_CREDENTIALS_JSON={"type": "service_account", ...}
 GROQ_API_KEY=gsk_secure_production_llm_key
 ACLED_EMAIL=intelligence@organization.org
 ACLED_PASSWORD=secure_operational_credential
-AISSTREAM_API_KEY=ais_stream_production_token
+AIS_BRIDGE_URL=https://vayu-ais-bridge.fly.dev
+AIS_BRIDGE_API_KEY=bridge_shared_secret_token
 
 ```
 
