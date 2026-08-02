@@ -34,7 +34,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import websockets
+from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
+
+load_dotenv()  # reads .env in this directory if present — no-op in prod
+                # (Fly.io/Render inject real env vars directly, .env is
+                # purely a local-dev convenience and is gitignored)
 
 logging.basicConfig(
     level=logging.INFO,

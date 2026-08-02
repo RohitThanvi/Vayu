@@ -12,6 +12,30 @@ regenerating the key didn't help. That points at Render's shared
 outbound IP pool getting blocked, not anything about the key or the
 code. This bridge runs somewhere with its own clean IP instead.
 
+## Local development
+
+```bash
+cd ais-bridge
+python3 -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+Edit `.env` and fill in both values:
+```
+AISSTREAM_API_KEY=your_aisstream_key
+BRIDGE_API_KEY=some_long_random_string_you_invent
+```
+`.env` is already covered by the repo's `.gitignore` — it won't get committed.
+Then run it:
+```bash
+uvicorn app:app --reload --port 8080
+```
+Check it's working:
+```bash
+curl http://127.0.0.1:8080/health
+curl -H "X-Bridge-Key: some_long_random_string_you_invent" http://127.0.0.1:8080/vessels
+```
+
 ## Deploy (Fly.io free tier)
 
 ```bash
