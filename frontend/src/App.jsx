@@ -737,8 +737,8 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
         )}
       </div>
       <div style={{ flexShrink:0, padding:'7px 14px', borderTop:`1px solid ${S.border}` }}>
-        <div style={{ display:'flex', justifyContent:'space-between', fontSize:14, fontFamily:S.mono, color:S.text3, letterSpacing:1 }}>
-          <span>VAYU v2.0.0</span><span>GEE · GROQ · FASTAPI</span>
+        <div style={{ fontSize:14, fontFamily:S.mono, color:S.text3, letterSpacing:1 }}>
+          VAYU v2.0.0
         </div>
       </div>
     </div>
