@@ -6,6 +6,7 @@ REST:
   GET  /api/v1/intel/events/aoi      — events within a bounding box
   GET  /api/v1/intel/stats           — store statistics
   GET  /api/v1/intel/sources         — available sources and status
+  GET  /api/v1/intel/wind-field      — animated wind vector grid (U/V components)
 
 WebSocket:
   WS   /api/v1/intel/ws              — real-time event stream
@@ -37,6 +38,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, HTTPExcept
 from ..services.intel.store import intel_store
 from ..services.intel.scheduler import get_scheduler
 from ..services.intel.vessel_store import vessel_store, CATEGORY_LABELS
+from ..services.weather.wind_field import wind_field_store
 
 logger = logging.getLogger(__name__)
 
@@ -262,3 +264,11 @@ async def get_chokepoints():
             for name, bbox in CHOKEPOINTS.items()
         ]
     }
+
+
+@router.get("/wind-field", summary="Animated wind vector grid (U/V components)")
+async def get_wind_field():
+    data = wind_field_store.get()
+    if data is None:
+        raise HTTPException(status_code=503, detail="wind field not yet available — refreshes shortly after startup")
+    return data
