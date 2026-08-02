@@ -30,9 +30,9 @@ const POLL_MS = 2500;
 const OWM_API_KEY = import.meta.env.VITE_OWM_API_KEY || '';
 
 const WEATHER_LAYERS = {
-  temp:     { owmLayer: 'temp_new',     label: 'Temperature', icon: 'thermo', opacity: 0.55 },
-  wind:     { owmLayer: 'wind_new',     label: 'Wind Speed',  icon: 'wave',   opacity: 0.55 },
-  pressure: { owmLayer: 'pressure_new', label: 'Air Pressure', icon: 'target', opacity: 0.55 },
+  temp:     { type:'tile',     owmLayer: 'temp_new',     label: 'Temperature', icon: 'thermo', opacity: 0.55 },
+  wind:     { type:'velocity',                            label: 'Wind Speed',  icon: 'wave',   opacity: 0.9 },
+  pressure: { type:'tile',     owmLayer: 'pressure_new', label: 'Air Pressure', icon: 'target', opacity: 0.55 },
 };
 
 // Official OpenWeatherMap Weather Maps 1.0 color stops (openweathermap.org/map_legend),
@@ -703,8 +703,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             </div>
             {!OWM_API_KEY && (
               <div style={{ background:'rgba(201,147,58,0.06)', border:'1px solid rgba(201,147,58,0.25)', padding:'10px 12px', fontSize:13, color:S.text2, lineHeight:1.6 }}>
-                No weather overlay key configured. Get a free key at openweathermap.org
-                (no credit card required) and set VITE_OWM_API_KEY on the frontend.
+                Temperature and Air Pressure need a free OpenWeatherMap key (openweathermap.org, no card required) set as VITE_OWM_API_KEY. Wind Speed doesn't need it — it's animated live from our own backend.
               </div>
             )}
           </div>
@@ -979,22 +978,62 @@ export default function App() {
   // ── Handle click on feed item: fly map + highlight marker ──────────────────
   // ── Toggle a weather overlay on/off — each layer is independent ────────────
   const handleToggleWeather = useCallback((key) => {
-    if (!mapRef.current || !OWM_API_KEY) return;
+    if (!mapRef.current) return;
+    const meta = WEATHER_LAYERS[key];
+
     setWeatherLayers(prev => {
       const turningOn = !prev[key];
-      if (turningOn) {
-        const meta = WEATHER_LAYERS[key];
+
+      if (!turningOn) {
+        const layer = weatherTileRefs.current[key];
+        if (layer) { try { mapRef.current.removeLayer(layer); } catch(e) {} }
+        delete weatherTileRefs.current[key];
+        return { ...prev, [key]: false };
+      }
+
+      if (meta.type === 'tile') {
+        if (!OWM_API_KEY) return prev; // can't turn on without a key — no-op
         const tl = L.tileLayer(
           `https://tile.openweathermap.org/map/${meta.owmLayer}/{z}/{x}/{y}.png?appid=${OWM_API_KEY}`,
           { opacity: meta.opacity, noWrap:true, bounds:[[-85,-180],[85,180]], zIndex: 5 }
         ).addTo(mapRef.current);
         weatherTileRefs.current[key] = tl;
-      } else {
-        const tl = weatherTileRefs.current[key];
-        if (tl) { try { mapRef.current.removeLayer(tl); } catch(e) {} }
-        delete weatherTileRefs.current[key];
+        return { ...prev, [key]: true };
       }
-      return { ...prev, [key]: turningOn };
+
+      if (meta.type === 'velocity') {
+        // Animated layer needs real vector data first — fetch, then add once
+        // it arrives. Optimistically flip the toggle on now; if the fetch
+        // fails, flip it back off rather than leaving a dead "ON" state.
+        fetch(`${API_URL}/api/v1/intel/wind-field`)
+          .then(r => { if (!r.ok) throw new Error(`wind-field ${r.status}`); return r.json(); })
+          .then(data => {
+            if (!mapRef.current) return;
+            const legend = WEATHER_LEGENDS.wind;
+            const vl = L.velocityLayer({
+              displayValues: false,
+              data,
+              velocityScale: 0.01,
+              particleAge: 90,
+              lineWidth: 1.5,
+              particleMultiplier: 1 / 300,
+              frameRate: 20,
+              minVelocity: legend.stops[0].v,
+              maxVelocity: legend.stops[legend.stops.length - 1].v,
+              colorScale: legend.stops.map(s => s.c),
+              opacity: meta.opacity,
+            });
+            vl.addTo(mapRef.current);
+            weatherTileRefs.current[key] = vl;
+          })
+          .catch(err => {
+            console.error('wind field load failed:', err);
+            setWeatherLayers(p => ({ ...p, [key]: false }));
+          });
+        return { ...prev, [key]: true };
+      }
+
+      return prev;
     });
   }, []);
 
@@ -1114,7 +1153,7 @@ export default function App() {
   // (and thus never destroys) the underlying Leaflet map instance.
   return (
     <div style={{ width:'100vw', height:'100vh', position:'relative', display: isMobile ? 'block' : 'flex', overflow:'hidden', background:'#0a0c0f' }}>
-      {!isMobile && <div style={{ width:270, flexShrink:0, height:'100%', zIndex:10 }}>{sidebarEl}</div>}
+      {!isMobile && <div style={{ width:330, flexShrink:0, height:'100%', zIndex:10 }}>{sidebarEl}</div>}
 
       <div style={ isMobile
         ? { position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1, overflow:'hidden' }

@@ -11,6 +11,9 @@ Poll intervals (sensible defaults):
   AIS bridge  every 60 sec (vessel positions; see services/intel/README or
               ais-bridge/README.md for why this is a REST poll against our
               own bridge service instead of a direct AISStream connection)
+  Wind field  every 45 min (animated wind vector grid from Open-Meteo,
+              refreshed roughly as often as their forecast models update —
+              see services/weather/wind_field.py)
   Purge       every 30 min (TTL cleanup)
 """
 
@@ -21,6 +24,7 @@ from datetime import datetime
 from .fetchers import fetch_all_intel, fetch_usgs, fetch_firms, fetch_gdelt, fetch_acled
 from .store import intel_store
 from .vessel_store import vessel_store
+from ..weather.wind_field import wind_field_store
 
 import httpx
 
@@ -32,6 +36,7 @@ INTERVAL_FIRMS  = 15 * 60
 INTERVAL_GDELT  = 10 * 60
 INTERVAL_ACLED  = 60 * 60
 INTERVAL_AIS    = 60
+INTERVAL_WIND   = 45 * 60
 INTERVAL_PURGE  = 30 * 60
 
 
@@ -76,6 +81,7 @@ class IntelScheduler:
             asyncio.create_task(self._poll_gdelt(),  name="poll-gdelt"),
             asyncio.create_task(self._poll_acled(),  name="poll-acled"),
             asyncio.create_task(self._poll_ais(),    name="poll-ais"),
+            asyncio.create_task(self._poll_wind(),   name="poll-wind"),
             asyncio.create_task(self._purge_loop(),  name="purge-loop"),
         ]
         logger.info(f"Intel scheduler: {len(self._tasks)} polling tasks started")
@@ -161,6 +167,15 @@ class IntelScheduler:
             except Exception as e:
                 logger.error(f"AIS poll error: {e}")
             await asyncio.sleep(INTERVAL_AIS)
+
+    async def _poll_wind(self):
+        await asyncio.sleep(15)   # small offset so not all fire at once
+        while self._running:
+            try:
+                await wind_field_store.refresh()
+            except Exception as e:
+                logger.error(f"wind field poll error: {e}")
+            await asyncio.sleep(INTERVAL_WIND)
 
     async def _purge_loop(self):
         while self._running:
