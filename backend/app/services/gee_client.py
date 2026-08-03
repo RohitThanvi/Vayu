@@ -251,7 +251,35 @@ def compute_water_change(aoi: Dict, start_date: str, end_date: str) -> Dict:
 
 
 def compute_flood_detection(aoi: Dict, start_date: str, end_date: str) -> Dict:
-    """SAR-based flood detection using Sentinel-1."""
+    """
+    SAR-based flood detection using Sentinel-1 VV backscatter, following the
+    standard UN-SPIDER Sentinel-1 flood-mapping recipe:
+
+      1. Pre-flood REFERENCE composite: the most recent available scenes in
+         the 30 days immediately before start_date (not a 3-month mean --
+         averaging that far back risked diluting the actual flood signal
+         and had confusing semantics relative to what the person asked for:
+         "did X flood between date A and date B" should compare a reference
+         just before A against the [A, B] window itself, not two arbitrary
+         3-month means).
+      2. FLOOD-PERIOD composite: scenes within [start_date, end_date] itself.
+      3. Speckle filtering (focal median) on both composites before
+         thresholding -- raw SAR backscatter is noisy pixel-to-pixel; without
+         this, a meaningful fraction of the "flood" mask is just speckle
+         noise, not real change.
+      4. Backscatter drop >3dB flags a pixel as *possible* new water.
+      5. Permanent water excluded via JRC Global Surface Water occurrence --
+         a river or lake that's simply water in both periods isn't new
+         flooding. Only previously-dry land that's now wet counts.
+      6. Steep terrain (>5 deg slope, SRTM) excluded -- radar shadow/layover
+         on slopes produces backscatter drops that look like flooding but
+         are a geometry artifact, not water.
+
+    Scene counts for both composites are surfaced in the metrics so the
+    result is auditable -- if either composite is a single noisy scene, the
+    person calling this should be able to see that rather than trust an
+    opaque number.
+    """
     logger.info(f"GEE: flood_detection {start_date} → {end_date}")
     _require_start_after(start_date, "2014-04-01", "Sentinel-1")
     end_ee = _cap_end_date(end_date)
@@ -266,18 +294,67 @@ def compute_flood_detection(aoi: Dict, start_date: str, end_date: str) -> Dict:
         .select("VV")
     )
 
-    before = s1.filterDate(start_ee, start_ee.advance(3, "month")).mean()
-    after = s1.filterDate(end_ee.advance(-3, "month"), end_ee).mean()
+    ref_start = start_ee.advance(-30, "day")
+    ref_col = s1.filterDate(ref_start, start_ee)
+    flood_col = s1.filterDate(start_ee, end_ee)
 
-    # Flood = significant decrease in backscatter
+    ref_count = ref_col.size().getInfo()
+    flood_count = flood_col.size().getInfo()
+    if ref_count == 0:
+        raise ValueError(
+            f"No Sentinel-1 imagery found in the 30 days before {start_date} "
+            f"to use as a pre-flood reference. Try a later start date."
+        )
+    if flood_count == 0:
+        raise ValueError(
+            f"No Sentinel-1 imagery found between {start_date} and {end_date}. "
+            f"Sentinel-1's revisit time is roughly 6-12 days depending on region -- "
+            f"try widening the date range."
+        )
+
+    # Speckle filter: focal median smooths pixel-to-pixel noise inherent to
+    # SAR before we threshold on it. 50m kernel ~= 5 GRD pixels (10m/px).
+    def _speckle_filter(img):
+        return img.focalMedian(50, "circle", "meters")
+
+    before = _speckle_filter(ref_col.mean())
+    after = _speckle_filter(flood_col.mean())
+
+    # Flood candidate = significant backscatter drop (smooth surface water
+    # reflects radar away from the sensor instead of scattering it back).
     diff = before.subtract(after)
-    flood_mask = diff.gt(3)  # >3 dB drop
+    raw_flood_mask = diff.gt(3)  # >3 dB drop
+
+    # Exclude permanent water (JRC occurrence >50% treated as "usually
+    # water") -- a lake/river isn't a new flood just because it's water in
+    # both composites.
+    permanent_water = (
+        ee.Image("JRC/GSW1_4/GlobalSurfaceWater")
+        .select("occurrence")
+        .gt(50)
+        .unmask(0)
+    )
+
+    # Exclude steep terrain -- radar shadow/layover on slopes mimics a
+    # backscatter drop without any actual flooding.
+    slope = ee.Terrain.slope(ee.Image("USGS/SRTMGL1_003"))
+    steep_terrain = slope.gt(5)
+
+    flood_mask = raw_flood_mask.And(permanent_water.Not()).And(steep_terrain.Not())
 
     flood_km2 = _calc_area_km2(flood_mask, region, scale=10)
+    raw_km2 = _calc_area_km2(raw_flood_mask, region, scale=10)
 
     return {
         "metrics": {
             "flood_area_km2": round(flood_km2, 4),
+            # Transparency: how much of the raw backscatter-drop signal got
+            # filtered out as permanent water / steep terrain, so this
+            # isn't an opaque number -- see the trust/verification
+            # discussion this was built to address.
+            "raw_backscatter_drop_km2": round(raw_km2, 4),
+            "reference_scenes_used": ref_count,
+            "flood_period_scenes_used": flood_count,
         },
         "ee_image": flood_mask,
         "ee_geometry": region,
