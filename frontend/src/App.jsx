@@ -448,6 +448,125 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
   return <div ref={divRef} style={{ width:'100%', height:'100%' }} />;
 }
 
+// ── Place search bar — geocode a place name straight to its boundary,
+// alongside (not replacing) manual polygon drawing. Uses Nominatim
+// (OpenStreetMap) which returns an actual boundary polygon for named
+// places (districts, cities, blocks) when one exists in OSM, not just a
+// point — falls back to a small box around the point if OSM only has a
+// point for that place. ─────────────────────────────────────────────────────
+function PlaceSearchBar({ mapRef, drawGroupRef, aoiBoundsRef, onAreaDrawn, isMobile }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const debounceRef = useRef(null);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (query.trim().length < 3) { setResults([]); return; }
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const resp = await fetch(
+          `https://nominatim.openstreetmap.org/search?` + new URLSearchParams({
+            q: query, format: 'geojson', polygon_geojson: '1', limit: '6', addressdetails: '1',
+          }),
+          { headers: { 'Accept-Language': 'en' } },
+        );
+        const data = await resp.json();
+        setResults(data.features || []);
+        setOpen(true);
+      } catch (e) {
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 400);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query]);
+
+  const selectPlace = (feature) => {
+    const map = mapRef.current;
+    const dg = drawGroupRef.current;
+    if (!map || !dg || !feature.geometry) return;
+
+    dg.clearLayers();
+    let geometry = feature.geometry;
+
+    // Nominatim sometimes only has a Point for smaller places — turn that
+    // into a small usable box rather than leaving no AOI at all, so the
+    // search bar still works for places without a mapped boundary.
+    if (geometry.type === 'Point') {
+      const [lon, lat] = geometry.coordinates;
+      const d = 0.05; // ~5km box
+      geometry = {
+        type: 'Polygon',
+        coordinates: [[[lon - d, lat - d], [lon + d, lat - d], [lon + d, lat + d], [lon - d, lat + d], [lon - d, lat - d]]],
+      };
+    }
+
+    const layer = L.geoJSON(geometry, { style: { color: '#2a6abd', weight: 1.5, fillOpacity: 0.06 } });
+    layer.eachLayer(l => dg.addLayer(l));
+
+    try {
+      const bounds = dg.getBounds();
+      aoiBoundsRef.current = bounds;
+      map.fitBounds(bounds, { padding: [40, 40] });
+    } catch (e) {}
+
+    onAreaDrawn(geometry);
+    setOpen(false);
+    setQuery(feature.properties?.display_name?.split(',')[0] || query);
+  };
+
+  return (
+    <div style={{
+      position: 'absolute', top: isMobile ? 10 : 14, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 1000, width: isMobile ? '88%' : 380, maxWidth: '92vw',
+    }}>
+      <div style={{ position: 'relative' }}>
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onFocus={() => { if (results.length) setOpen(true); }}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder="Search a place (e.g. Churu, Rajasthan)..."
+          style={{
+            width: '100%', boxSizing: 'border-box', padding: '9px 12px',
+            background: 'rgba(18,21,26,0.95)', border: '1px solid #262b33', borderRadius: 4,
+            color: '#e4e7eb', fontFamily: "'JetBrains Mono', 'Courier New', monospace",
+            fontSize: 13, letterSpacing: 0.4, outline: 'none',
+            boxShadow: '0 2px 10px rgba(0,0,0,0.4)',
+          }}
+        />
+        {loading && (
+          <div style={{ position: 'absolute', right: 10, top: 9, fontSize: 11, color: '#5c6673', fontFamily: 'monospace' }}>...</div>
+        )}
+        {open && results.length > 0 && (
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4,
+            background: 'rgba(18,21,26,0.98)', border: '1px solid #262b33', borderRadius: 4,
+            boxShadow: '0 4px 14px rgba(0,0,0,0.5)', maxHeight: 240, overflowY: 'auto',
+          }}>
+            {results.map((f, i) => (
+              <button key={i} onClick={() => selectPlace(f)}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+                  background: 'transparent', border: 'none', borderBottom: i < results.length - 1 ? '1px solid #1c2027' : 'none',
+                  color: '#a8b0bb', fontSize: 12.5, fontFamily: "'JetBrains Mono', monospace",
+                  cursor: 'pointer', lineHeight: 1.4,
+                }}>
+                {f.properties?.display_name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 // ── Progress ──────────────────────────────────────────────────────────────────
 function ProgressBar({ pct, label }) {
   return (
@@ -1162,6 +1281,7 @@ export default function App() {
         ? { position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1, overflow:'hidden' }
         : { flex:1, height:'100%', position:'relative' } }>
         {mapEl}
+        <PlaceSearchBar mapRef={mapRef} drawGroupRef={drawGroupRef} aoiBoundsRef={aoiBoundsRef} onAreaDrawn={setDrawnAOI} isMobile={isMobile} />
         <MapOverlay result={result} isLoading={isLoading} drawnAOI={drawnAOI} isMobile={isMobile} />
       </div>
 
