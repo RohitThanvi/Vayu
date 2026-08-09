@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Analytics } from '@vercel/analytics/react';
 import IntelPanel from './components/IntelPanel';
+import AgriPanel from './components/AgriPanel';
 import { useVesselTracker } from './hooks/useVesselTracker';
 
 const MOBILE_BREAKPOINT = 860;
@@ -535,7 +536,7 @@ function ResultsPanel({ result }) {
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI,
   isLoading,error,result,jobStatus, onSubmit, history,onSelectHistory, vesselStats, onClose, isMobile,
-  weatherLayers, onToggleWeather }) {
+  weatherLayers, onToggleWeather, apiUrl }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const TABS = [
@@ -543,6 +544,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
     { id:'History',  icon:'clock' },
     { id:'Maritime', icon:'anchor' },
     { id:'Weather',  icon:'thermo' },
+    { id:'Agri',     icon:'leaf' },
     { id:'Guide',    icon:'book' },
   ];
   return (
@@ -708,6 +710,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             )}
           </div>
         )}
+        {tab === 'Agri' && <AgriPanel drawnAOI={drawnAOI} apiUrl={apiUrl} />}
         {tab === 'Guide' && (
           <div style={{ display:'flex', flexDirection:'column', gap:14, fontSize:15, color:S.text2 }}>
             <div>
@@ -1130,7 +1133,7 @@ export default function App() {
       onSelectHistory={r => { setResult(r); clearLayers(); }}
       vesselStats={vesselStats}
       weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
-      isMobile={isMobile} onClose={() => setMobilePanel('map')} />
+      isMobile={isMobile} onClose={() => setMobilePanel('map')} apiUrl={API_URL} />
   );
 
   const intelPanelEl = (

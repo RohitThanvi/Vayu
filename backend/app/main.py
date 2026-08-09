@@ -15,7 +15,10 @@ from .core.config import settings
 from .core.logging_config import setup_logging as configure_logging
 from .api import endpoints
 from .api.intel_endpoints import router as intel_router
+from .api.agri_endpoints import router as agri_router
 from .services.intel.scheduler import get_scheduler
+from .services.agri.alert_engine import get_agri_engine
+from .services.agri.whatsapp import send_whatsapp_message
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -36,9 +39,15 @@ async def lifespan(app: FastAPI):
     await scheduler.start()
     logger.info("Intel scheduler started")
 
+    # Start agri alert engine (watchlist risk scanning + WhatsApp push)
+    agri_engine = get_agri_engine(whatsapp_notify=send_whatsapp_message)
+    await agri_engine.start()
+    logger.info("Agri alert engine started")
+
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
+    await agri_engine.stop()
     await scheduler.stop()
     logger.info("VAYU Intelligence Terminal shutdown complete")
 
@@ -65,6 +74,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(endpoints.router, prefix="/api/v1")
 app.include_router(intel_router,     prefix="/api/v1")
+app.include_router(agri_router,      prefix="/api/v1")
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
