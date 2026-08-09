@@ -71,6 +71,7 @@ class VesselStore:
         self._vessels: dict[int, dict] = {}   # mmsi -> vessel dict
         self._lock = asyncio.Lock()
         self._stats = {"total_position_updates": 0, "total_static_updates": 0}
+        self._consecutive_shrinks = 0
 
     async def update_position(
         self, mmsi: int, lat: float, lon: float,
@@ -126,9 +127,39 @@ class VesselStore:
     async def load_snapshot(self, vessels: list[dict]):
         """Replace the whole store with a fresh snapshot. Used by the AIS
         bridge poller: the bridge already holds latest-state-per-MMSI and
-        prunes staleness itself, so each poll is a full authoritative
-        snapshot rather than something to merge incrementally."""
+        prunes staleness itself, so each poll is normally a full
+        authoritative snapshot rather than something to merge incrementally.
+
+        Guarded against a single bad poll wiping the map: if the bridge is
+        mid-reconnect (e.g. the WS 'keepalive ping timeout' case) or cold-
+        starting after a Render free-tier sleep, /vessels can briefly come
+        back empty or much smaller than before even though nothing is
+        actually wrong. A single anomalous shrink is treated as a skipped
+        cycle (keep showing last-known-good) rather than authoritative —
+        only accepted once it's been confirmed on consecutive polls, so a
+        genuine drop to zero vessels still reflects within a couple of
+        polling intervals, it just isn't allowed to flicker the map on one
+        bad response."""
         async with self._lock:
+            new_count = len(vessels)
+            old_count = len(self._vessels)
+
+            suspicious_shrink = old_count >= 20 and new_count < old_count * 0.2
+            if suspicious_shrink:
+                self._consecutive_shrinks += 1
+                if self._consecutive_shrinks < 3:
+                    logger.warning(
+                        f"VesselStore: snapshot shrank {old_count} -> {new_count} "
+                        f"(consecutive={self._consecutive_shrinks}/3) — treating as a "
+                        f"transient bridge blip, keeping last-known-good data this cycle"
+                    )
+                    return
+                logger.warning(
+                    f"VesselStore: snapshot shrink {old_count} -> {new_count} confirmed "
+                    f"over {self._consecutive_shrinks} consecutive polls, accepting it"
+                )
+
+            self._consecutive_shrinks = 0
             self._vessels = {v["mmsi"]: v for v in vessels if "mmsi" in v}
 
     def query(
