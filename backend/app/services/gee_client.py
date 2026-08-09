@@ -15,7 +15,12 @@ logger = logging.getLogger(__name__)
 # tracking features don't depend on GEE, so a broken GEE credential
 # shouldn't take down the whole container — only satellite analysis queries
 # will fail (with a clear error) until the credential is fixed.
+GEE_READY = False
+GEE_INIT_ERROR = None
+
+
 def _initialize_gee():
+    global GEE_READY, GEE_INIT_ERROR
     creds_json = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     if creds_json:
         # Server/Docker/Render deployment — use service account from env var
@@ -27,8 +32,10 @@ def _initialize_gee():
             )
             ee.Initialize(credentials)
             logger.info("GEE initialized with service account.")
+            GEE_READY = True
             return
         except Exception as e:
+            GEE_INIT_ERROR = str(e)
             logger.error(
                 f"GEE service account init failed: {e}. Satellite analysis "
                 f"will be unavailable until GOOGLE_APPLICATION_CREDENTIALS_JSON "
@@ -50,7 +57,9 @@ def _initialize_gee():
                     "Run: earthengine set_project YOUR_PROJECT_ID"
                 )
         logger.info("GEE initialized with local credentials.")
+        GEE_READY = True
     except Exception as e:
+        GEE_INIT_ERROR = str(e)
         logger.error(
             f"GEE init error: {e}. Run 'earthengine authenticate' locally, or set "
             f"GOOGLE_APPLICATION_CREDENTIALS_JSON for server/Docker deployments. "
