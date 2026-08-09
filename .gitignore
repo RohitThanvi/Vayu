@@ -38,3 +38,4 @@ credentials.json
 
 # Docker
 *.log
+backend/agri_data.sqlite3
