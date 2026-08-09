@@ -248,7 +248,7 @@ class AISBridgeClient:
             "FilterMessageTypes": ["PositionReport", "ShipStaticData"],
         }
 
-        async with websockets.connect(AISSTREAM_WS_URL, ping_interval=20, ping_timeout=20) as ws:
+        async with websockets.connect(AISSTREAM_WS_URL, ping_interval=25, ping_timeout=40) as ws:
             await ws.send(json.dumps(subscribe_message))
             logger.info(f"AISStream: subscribed to {len(bounding_boxes)} chokepoint regions")
 
