@@ -84,28 +84,32 @@ def compute_risk_score(aoi: Dict[str, Any], as_of: Optional[str] = None,
     start_date = (end_dt - timedelta(days=365)).strftime("%Y-%m-%d")
 
     errors = []
+    error_details = {}
     veg_metrics, drought_metrics, moisture_metrics = {}, {}, {}
 
     try:
         veg = compute_vegetation_change(aoi=aoi, start_date=start_date, end_date=end_date)
         veg_metrics = veg["metrics"]
     except Exception as e:
-        logger.warning(f"risk_scoring: vegetation_change failed: {e}")
+        logger.warning(f"risk_scoring: vegetation_change failed: {e}", exc_info=True)
         errors.append("vegetation")
+        error_details["vegetation"] = str(e)
 
     try:
         drought = compute_drought_index(aoi=aoi, start_date=start_date, end_date=end_date)
         drought_metrics = drought["metrics"]
     except Exception as e:
-        logger.warning(f"risk_scoring: drought_index failed: {e}")
+        logger.warning(f"risk_scoring: drought_index failed: {e}", exc_info=True)
         errors.append("drought")
+        error_details["drought"] = str(e)
 
     try:
         moisture = compute_soil_moisture(aoi=aoi, start_date=start_date, end_date=end_date)
         moisture_metrics = moisture["metrics"]
     except Exception as e:
-        logger.warning(f"risk_scoring: soil_moisture failed: {e}")
+        logger.warning(f"risk_scoring: soil_moisture failed: {e}", exc_info=True)
         errors.append("moisture")
+        error_details["moisture"] = str(e)
 
     sub_scores = {
         "drought": _drought_subscore(drought_metrics) if "drought" not in errors else None,
@@ -115,7 +119,7 @@ def compute_risk_score(aoi: Dict[str, Any], as_of: Optional[str] = None,
 
     available = {k: v for k, v in sub_scores.items() if v is not None}
     if not available:
-        raise RuntimeError(f"All risk sub-scores failed to compute: {errors}")
+        raise RuntimeError(f"All risk sub-scores failed to compute: {error_details}")
 
     # Renormalize weights over whatever actually computed successfully —
     # this is also why confidence drops when inputs are missing (below).

@@ -82,6 +82,7 @@ app.include_router(agri_router,      prefix="/api/v1")
 async def health():
     from .services.intel.store import intel_store
     from .services.intel.vessel_store import vessel_store
+    from .services import gee_client
     stats = intel_store.get_stats()
     vstats = vessel_store.get_stats()
     return {
@@ -91,6 +92,8 @@ async def health():
         "sources": stats.get("by_source", {}),
         "active_vessels": vstats.get("active_vessels", 0),
         "vessels_by_category": vstats.get("by_category", {}),
+        "gee_ready": gee_client.GEE_READY,
+        "gee_init_error": gee_client.GEE_INIT_ERROR,
     }
 
 
