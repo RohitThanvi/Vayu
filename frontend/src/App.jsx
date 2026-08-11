@@ -459,6 +459,7 @@ function PlaceSearchBar({ mapRef, drawGroupRef, aoiBoundsRef, onAreaDrawn, isMob
   const [results, setResults] = useState([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [fallbackWarning, setFallbackWarning] = useState(null);
   const debounceRef = useRef(null);
 
   useEffect(() => {
@@ -474,7 +475,18 @@ function PlaceSearchBar({ mapRef, drawGroupRef, aoiBoundsRef, onAreaDrawn, isMob
           { headers: { 'Accept-Language': 'en' } },
         );
         const data = await resp.json();
-        setResults(data.features || []);
+        // Prefer actual boundary polygons over bare point matches — Nominatim
+        // often returns a place's point/label node ranked above its real
+        // administrative boundary relation, and silently using the point
+        // (via the small-box fallback below) produces a tiny, misleading
+        // AOI with no indication anything's off. Surface real boundaries
+        // first so picking the top result is usually the right one.
+        const features = (data.features || []).slice().sort((a, b) => {
+          const aPoint = a.geometry?.type === 'Point' ? 1 : 0;
+          const bPoint = b.geometry?.type === 'Point' ? 1 : 0;
+          return aPoint - bPoint;
+        });
+        setResults(features);
         setOpen(true);
       } catch (e) {
         setResults([]);
@@ -492,11 +504,16 @@ function PlaceSearchBar({ mapRef, drawGroupRef, aoiBoundsRef, onAreaDrawn, isMob
 
     dg.clearLayers();
     let geometry = feature.geometry;
+    const isPointFallback = geometry.type === 'Point';
 
     // Nominatim sometimes only has a Point for smaller places — turn that
     // into a small usable box rather than leaving no AOI at all, so the
-    // search bar still works for places without a mapped boundary.
-    if (geometry.type === 'Point') {
+    // search bar still works for places without a mapped boundary. This is
+    // NOT the real place boundary though — it's an arbitrary ~11km box
+    // around a label point, so anything computed over it (e.g. built-up
+    // area) reflects that small box, not the actual city/district. Warn
+    // visibly rather than silently substituting it.
+    if (isPointFallback) {
       const [lon, lat] = geometry.coordinates;
       const d = 0.05; // ~5km box
       geometry = {
@@ -517,6 +534,9 @@ function PlaceSearchBar({ mapRef, drawGroupRef, aoiBoundsRef, onAreaDrawn, isMob
     onAreaDrawn(geometry);
     setOpen(false);
     setQuery(feature.properties?.display_name?.split(',')[0] || query);
+    setFallbackWarning(isPointFallback
+      ? 'No mapped boundary for this place — using an approximate ~11km box around its center point, not the actual city/district boundary. Search a more specific result, or draw the AOI manually for an accurate area.'
+      : null);
   };
 
   return (
@@ -527,7 +547,7 @@ function PlaceSearchBar({ mapRef, drawGroupRef, aoiBoundsRef, onAreaDrawn, isMob
       <div style={{ position: 'relative' }}>
         <input
           value={query}
-          onChange={e => setQuery(e.target.value)}
+          onChange={e => { setQuery(e.target.value); setFallbackWarning(null); }}
           onFocus={() => { if (results.length) setOpen(true); }}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           placeholder="Search a place (e.g. Churu, Rajasthan)..."
@@ -548,17 +568,32 @@ function PlaceSearchBar({ mapRef, drawGroupRef, aoiBoundsRef, onAreaDrawn, isMob
             background: 'rgba(18,21,26,0.98)', border: '1px solid #262b33', borderRadius: 4,
             boxShadow: '0 4px 14px rgba(0,0,0,0.5)', maxHeight: 240, overflowY: 'auto',
           }}>
-            {results.map((f, i) => (
-              <button key={i} onClick={() => selectPlace(f)}
-                style={{
-                  display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
-                  background: 'transparent', border: 'none', borderBottom: i < results.length - 1 ? '1px solid #1c2027' : 'none',
-                  color: '#a8b0bb', fontSize: 12.5, fontFamily: "'JetBrains Mono', monospace",
-                  cursor: 'pointer', lineHeight: 1.4,
-                }}>
-                {f.properties?.display_name}
-              </button>
-            ))}
+            {results.map((f, i) => {
+              const isPoint = f.geometry?.type === 'Point';
+              return (
+                <button key={i} onClick={() => selectPlace(f)}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+                    background: 'transparent', border: 'none', borderBottom: i < results.length - 1 ? '1px solid #1c2027' : 'none',
+                    color: '#a8b0bb', fontSize: 12.5, fontFamily: "'JetBrains Mono', monospace",
+                    cursor: 'pointer', lineHeight: 1.4,
+                  }}>
+                  <span style={{ color: isPoint ? '#c9933a' : '#4a7c59', fontSize: 10, marginRight: 6 }}>
+                    {isPoint ? '[NO BOUNDARY]' : '[BOUNDARY]'}
+                  </span>
+                  {f.properties?.display_name}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {fallbackWarning && (
+          <div style={{
+            marginTop: 6, padding: '7px 10px', fontSize: 11.5, lineHeight: 1.5,
+            background: 'rgba(201,147,58,0.1)', border: '1px solid rgba(201,147,58,0.4)',
+            borderRadius: 4, color: '#c9933a', fontFamily: "'JetBrains Mono', monospace",
+          }}>
+            ⚠ {fallbackWarning}
           </div>
         )}
       </div>
