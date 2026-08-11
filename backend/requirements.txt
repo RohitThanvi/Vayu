@@ -22,3 +22,6 @@ groq==0.12.0
 
 # HTTP client (intel fetchers)
 httpx==0.27.2
+
+# PDF report generation
+reportlab==4.2.5

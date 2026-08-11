@@ -645,8 +645,37 @@ function MetricSelector({ selected, onChange }) {
 }
 
 // ── Results ───────────────────────────────────────────────────────────────────
-function ResultsPanel({ result }) {
+function ResultsPanel({ result, drawnAOI, apiUrl }) {
   const m = METRICS_META[result.metric] || { label:result.metric, color:S.accent };
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState(null);
+
+  const downloadReport = async () => {
+    if (!drawnAOI) { setReportError('AOI unavailable — re-run the analysis first.'); return; }
+    setReportLoading(true); setReportError(null);
+    try {
+      const resp = await fetch(`${apiUrl}/api/v1/report/analysis`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          analysis_type: result.metric, aoi_geojson: drawnAOI,
+          start_date: result.start_date, end_date: result.end_date,
+          metrics: result.metrics,
+        }),
+      });
+      if (!resp.ok) throw new Error((await resp.json()).detail || 'Report generation failed');
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `vayu_${result.metric}_report.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      setReportError(e.message);
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
       <div style={{ borderBottom:`1px solid ${S.border}`, paddingBottom:8 }}>
@@ -682,6 +711,18 @@ function ResultsPanel({ result }) {
             letterSpacing:1, textDecoration:'none', textTransform:'uppercase' }}>
           Download GeoJSON
         </a>
+      )}
+      <button onClick={downloadReport} disabled={reportLoading}
+        style={{ display:'block', width:'100%', textAlign:'center', fontSize:15, padding:'7px', fontFamily:S.mono,
+          background: reportLoading ? S.surface2 : 'rgba(126,184,212,0.1)',
+          border:`1px solid ${reportLoading ? S.border : S.accent}`, color: reportLoading ? S.text3 : S.accent,
+          letterSpacing:1, textTransform:'uppercase', cursor: reportLoading ? 'not-allowed' : 'pointer' }}>
+        {reportLoading ? 'Generating Report...' : 'Download Report (PDF)'}
+      </button>
+      {reportError && (
+        <div style={{ fontSize:13, color:S.text2, background:'rgba(139,32,32,0.08)', border:'1px solid rgba(139,32,32,0.3)', padding:'6px 9px' }}>
+          {reportError}
+        </div>
       )}
     </div>
   );
@@ -773,7 +814,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
                 <div style={{ fontSize:15, color:S.text2 }}>{error}</div>
               </div>
             )}
-            {result && <ResultsPanel result={result} />}
+            {result && <ResultsPanel result={result} drawnAOI={drawnAOI} apiUrl={apiUrl} />}
           </>
         )}
         {tab === 'History' && (
