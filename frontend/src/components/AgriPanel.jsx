@@ -17,6 +17,8 @@ export default function AgriPanel({ drawnAOI, apiUrl }) {
   const [scoreResult, setScoreResult] = useState(null);
   const [scoreLoading, setScoreLoading] = useState(false);
   const [scoreError, setScoreError] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState(null);
 
   const [regions, setRegions] = useState([]);
   const [regionName, setRegionName] = useState('');
@@ -43,6 +45,28 @@ export default function AgriPanel({ drawnAOI, apiUrl }) {
       setScoreLoading(false);
     }
   }, [drawnAOI, apiUrl]);
+
+  const downloadAgriReport = async () => {
+    if (!drawnAOI) return;
+    setReportLoading(true); setReportError(null);
+    try {
+      const resp = await fetch(`${apiUrl}/api/v1/report/agri-risk`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aoi_geojson: drawnAOI }),
+      });
+      if (!resp.ok) throw new Error((await resp.json()).detail || 'Report generation failed');
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'vayu_agri_risk_report.pdf';
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      setReportError(e.message);
+    } finally {
+      setReportLoading(false);
+    }
+  };
 
   const loadRegions = useCallback(async () => {
     try {
@@ -151,6 +175,21 @@ export default function AgriPanel({ drawnAOI, apiUrl }) {
                 inputs used: {scoreResult.inputs_used?.join(', ') || 'none'}
                 {scoreResult.inputs_failed?.length > 0 && ` · failed: ${scoreResult.inputs_failed.join(', ')}`}
               </div>
+              <button onClick={downloadAgriReport} disabled={reportLoading}
+                style={{
+                  padding: '9px', fontSize: 13, fontFamily: S.mono, letterSpacing: 1.5, textTransform: 'uppercase',
+                  background: reportLoading ? S.surface2 : 'rgba(126,184,212,0.1)',
+                  border: `1px solid ${reportLoading ? S.border : S.accent}`,
+                  color: reportLoading ? S.text3 : S.accent,
+                  cursor: reportLoading ? 'not-allowed' : 'pointer',
+                }}>
+                {reportLoading ? 'GENERATING...' : 'DOWNLOAD REPORT (PDF)'}
+              </button>
+              {reportError && (
+                <div style={{ fontSize: 12, color: S.text2, background: 'rgba(139,32,32,0.08)', border: '1px solid rgba(139,32,32,0.3)', padding: '6px 9px' }}>
+                  {reportError}
+                </div>
+              )}
             </div>
           )}
         </div>
