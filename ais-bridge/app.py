@@ -71,6 +71,8 @@ RECONNECT_DELAY_S = 10
 MAX_RECONNECT_DELAY_S = 120
 RATE_LIMIT_MIN_DELAY_S = 60
 RATE_LIMIT_MAX_DELAY_S = 600
+IDLE_TIMEOUT_S = 180       # no application message in 3 min = feed considered stalled
+HEARTBEAT_INTERVAL_S = 300 # log proof-of-life every 5 min
 
 
 # ── Ship-type classification (mirrors backend/app/services/intel/vessel_store.py) ──
@@ -194,6 +196,9 @@ class VesselBuffer:
     def snapshot(self) -> list[dict]:
         return list(self._vessels.values())
 
+    def count(self) -> int:
+        return len(self._vessels)
+
 
 vessel_buffer = VesselBuffer()
 
@@ -203,6 +208,7 @@ class AISBridgeClient:
         self.api_key = api_key
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self._last_message_at = datetime.utcnow()
 
     async def start(self):
         if not self.api_key:
@@ -251,46 +257,89 @@ class AISBridgeClient:
         async with websockets.connect(AISSTREAM_WS_URL, ping_interval=25, ping_timeout=40) as ws:
             await ws.send(json.dumps(subscribe_message))
             logger.info(f"AISStream: subscribed to {len(bounding_boxes)} chokepoint regions")
+            self._last_message_at = datetime.utcnow()  # fresh clock for this connection
 
-            async for raw_message in ws:
-                if not self._running:
-                    break
-                try:
-                    message = json.loads(raw_message)
-                except json.JSONDecodeError:
-                    continue
-
-                msg_type = message.get("MessageType")
-                inner = message.get("Message", {})
-                metadata = message.get("MetaData", {})
-                mmsi = metadata.get("MMSI")
-                if mmsi is None:
-                    continue
-
-                if msg_type == "PositionReport":
-                    pr = inner.get("PositionReport", {})
-                    lat = pr.get("Latitude")
-                    lon = pr.get("Longitude")
-                    if lat is None or lon is None:
+            message_count = 0
+            watchdog_task = asyncio.create_task(self._idle_watchdog(ws))
+            heartbeat_task = asyncio.create_task(self._heartbeat_loop(lambda: message_count))
+            try:
+                async for raw_message in ws:
+                    if not self._running:
+                        break
+                    self._last_message_at = datetime.utcnow()
+                    message_count += 1
+                    try:
+                        message = json.loads(raw_message)
+                    except json.JSONDecodeError:
                         continue
-                    await vessel_buffer.update_position(
-                        mmsi=mmsi, lat=lat, lon=lon,
-                        sog=pr.get("Sog", 0.0), cog=pr.get("Cog", 0.0),
-                        heading=pr.get("TrueHeading"),
-                    )
-                    ship_name = metadata.get("ShipName")
-                    if ship_name and ship_name.strip():
-                        await vessel_buffer.update_static(mmsi=mmsi, name=ship_name)
 
-                elif msg_type == "ShipStaticData":
-                    sd = inner.get("ShipStaticData", {})
-                    await vessel_buffer.update_static(
-                        mmsi=mmsi,
-                        name=sd.get("ShipName", ""),
-                        ship_type=sd.get("Type"),
-                        destination=sd.get("Destination", ""),
-                        callsign=sd.get("CallSign", ""),
-                    )
+                    msg_type = message.get("MessageType")
+                    inner = message.get("Message", {})
+                    metadata = message.get("MetaData", {})
+                    mmsi = metadata.get("MMSI")
+                    if mmsi is None:
+                        continue
+
+                    if msg_type == "PositionReport":
+                        pr = inner.get("PositionReport", {})
+                        lat = pr.get("Latitude")
+                        lon = pr.get("Longitude")
+                        if lat is None or lon is None:
+                            continue
+                        await vessel_buffer.update_position(
+                            mmsi=mmsi, lat=lat, lon=lon,
+                            sog=pr.get("Sog", 0.0), cog=pr.get("Cog", 0.0),
+                            heading=pr.get("TrueHeading"),
+                        )
+                        ship_name = metadata.get("ShipName")
+                        if ship_name and ship_name.strip():
+                            await vessel_buffer.update_static(mmsi=mmsi, name=ship_name)
+
+                    elif msg_type == "ShipStaticData":
+                        sd = inner.get("ShipStaticData", {})
+                        await vessel_buffer.update_static(
+                            mmsi=mmsi,
+                            name=sd.get("ShipName", ""),
+                            ship_type=sd.get("Type"),
+                            destination=sd.get("Destination", ""),
+                            callsign=sd.get("CallSign", ""),
+                        )
+            finally:
+                watchdog_task.cancel()
+                heartbeat_task.cancel()
+                logger.info(f"AISStream: stream loop ended, received {message_count} messages this connection")
+
+    async def _idle_watchdog(self, ws):
+        """AISStream can leave the WebSocket technically alive (still
+        answering pings) while silently stopping the actual data stream —
+        this happened after ~3-4 days of otherwise-normal operation, with
+        no error and no log line to show for it, since nothing at the
+        transport level ever failed. ping/pong keepalive can't catch this
+        because the server keeps responding to pings; only the absence of
+        *application* messages reveals it. If no message has arrived in
+        IDLE_TIMEOUT_S, force-close the socket so _run_forever's normal
+        exception handling reconnects — the chokepoints here see enough
+        real traffic that a multi-minute silence is never legitimate."""
+        while True:
+            await asyncio.sleep(15)
+            idle_for = (datetime.utcnow() - self._last_message_at).total_seconds()
+            if idle_for > IDLE_TIMEOUT_S:
+                logger.warning(
+                    f"AISStream: no messages received for {idle_for:.0f}s (feed appears stalled "
+                    f"despite the connection being technically open) — forcing reconnect"
+                )
+                await ws.close()
+                return
+
+    async def _heartbeat_loop(self, get_count):
+        """Periodic proof-of-life in the logs — so a future stall like this
+        one is visible in the log timeline instead of just going silent."""
+        last_count = 0
+        while True:
+            await asyncio.sleep(HEARTBEAT_INTERVAL_S)
+            count = get_count()
+            logger.info(f"AISStream: heartbeat — {count - last_count} messages in the last {HEARTBEAT_INTERVAL_S}s, {vessel_buffer.count()} vessels tracked")
+            last_count = count
 
 
 ais_client = AISBridgeClient(api_key=AISSTREAM_API_KEY)
