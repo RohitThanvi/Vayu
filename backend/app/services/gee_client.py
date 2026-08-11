@@ -135,7 +135,12 @@ def _sentinel2_ndvi_composite(region: ee.Geometry, start: ee.Date, end: ee.Date)
 # ── Area helpers ──────────────────────────────────────────────────────────────
 
 def _calc_area_km2(mask: ee.Image, region: ee.Geometry, scale: int = 100) -> float:
-    """Calculate area in km². Uses scale=100m by default to avoid memory limits."""
+    """Calculate area in km². Uses scale=100m by default to avoid memory limits.
+    tileScale=4 splits the reduction into smaller tiles server-side — this is
+    the fix GEE recommends for "User memory limit exceeded" (bestEffort alone
+    adjusts the pixel scale, but large/complex AOIs like a whole district
+    boundary from the place-search bar can still blow the interactive compute
+    budget on the reduction step itself)."""
     result = (
         ee.Image.pixelArea()
         .updateMask(mask)
@@ -145,6 +150,7 @@ def _calc_area_km2(mask: ee.Image, region: ee.Geometry, scale: int = 100) -> flo
             scale=scale,
             maxPixels=1e9,
             bestEffort=True,   # auto-increases scale if needed to avoid memory errors
+            tileScale=4,       # splits computation into smaller tiles to reduce peak memory
         )
         .get("area")
         .getInfo()
@@ -444,10 +450,12 @@ def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
     severe_km2 = _calc_area_km2(severe_drought_mask, region)
 
     avg_nddi_start = start_nddi.reduceRegion(
-        reducer=ee.Reducer.mean(), geometry=region, scale=30, maxPixels=1e9
+        reducer=ee.Reducer.mean(), geometry=region, scale=30, maxPixels=1e9,
+        bestEffort=True, tileScale=4,
     ).get("NDDI").getInfo() or 0
     avg_nddi_end = end_nddi.reduceRegion(
-        reducer=ee.Reducer.mean(), geometry=region, scale=30, maxPixels=1e9
+        reducer=ee.Reducer.mean(), geometry=region, scale=30, maxPixels=1e9,
+        bestEffort=True, tileScale=4,
     ).get("NDDI").getInfo() or 0
 
     return {
@@ -504,7 +512,7 @@ def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) 
         return img.reduceRegion(
             reducer=ee.Reducer.mean().combine(ee.Reducer.min(), sharedInputs=True)
                                      .combine(ee.Reducer.max(), sharedInputs=True),
-            geometry=region, scale=100, maxPixels=1e9,
+            geometry=region, scale=100, maxPixels=1e9, bestEffort=True, tileScale=4,
         ).getInfo()
 
     start_stats = get_stats(start_lst)
@@ -512,7 +520,8 @@ def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) 
 
     # UHI mask: pixels > mean + 2°C
     mean_temp = end_lst.reduceRegion(
-        reducer=ee.Reducer.mean(), geometry=region, scale=100, maxPixels=1e9
+        reducer=ee.Reducer.mean(), geometry=region, scale=100, maxPixels=1e9,
+        bestEffort=True, tileScale=4,
     ).get("LST_C")
     uhi_mask = end_lst.gt(ee.Image.constant(mean_temp).add(2))
     uhi_km2 = _calc_area_km2(uhi_mask, region, scale=100)
