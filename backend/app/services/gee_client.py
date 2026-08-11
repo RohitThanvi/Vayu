@@ -416,13 +416,18 @@ def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
     start_ee = ee.Date(start_date)
 
     def get_nddi(start, end):
-        col = (
+        col_raw = (
             ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
             .filterBounds(region)
             .filterDate(start, end)
             .map(_mask_s2_clouds)
-            .median()
         )
+        if col_raw.size().getInfo() == 0:
+            raise ValueError(
+                f"No cloud-free Sentinel-2 imagery found for {start.format('YYYY-MM-dd').getInfo()} "
+                f"– {end.format('YYYY-MM-dd').getInfo()}."
+            )
+        col = col_raw.median()
         ndvi = col.normalizedDifference(["B8", "B4"]).rename("NDVI")
         ndwi = col.normalizedDifference(["B3", "B8"]).rename("NDWI")
         # NDDI = (NDVI - NDWI) / (NDVI + NDWI)
@@ -594,9 +599,18 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
     end_mean = (end_stats or {}).get("ssm_mean") or 0
 
     # Dry stress mask: SM < 0.1 m³/m³
-    end_sm_img = smap.filterDate(end_ee.advance(-3, "month"), end_ee).select("ssm").mean()
-    dry_mask = end_sm_img.lt(0.1)
-    dry_km2 = _calc_area_km2(dry_mask, region, scale=10000)
+    end_window = smap.filterDate(end_ee.advance(-3, "month"), end_ee).select("ssm")
+    if end_window.size().getInfo() == 0:
+        # No SMAP coverage for this AOI/window — same condition get_sm_stats
+        # already handles gracefully above; .mean() on an empty collection
+        # returns a 0-band image, and comparing that against a constant
+        # throws ("Image.lt: ... Got 0 and 1") rather than failing cleanly.
+        dry_km2 = 0.0
+        dry_mask = ee.Image(0).clip(region)  # valid, empty mask — keeps ee_image usable downstream
+    else:
+        end_sm_img = end_window.mean()
+        dry_mask = end_sm_img.lt(0.1)
+        dry_km2 = _calc_area_km2(dry_mask, region, scale=10000)
 
     return {
         "metrics": {
