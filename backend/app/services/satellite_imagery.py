@@ -106,7 +106,16 @@ def get_optical_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: in
 
         return _fetch_thumb_bytes(
             composite, region,
-            {"bands": ["B4", "B3", "B2"], "min": 0, "max": 3000, "gamma": 1.3},
+            # _mask_s2_clouds() (applied above via the collection .map()) already
+            # divides surface reflectance by 10000, rescaling it from the raw
+            # ~0-10000 DN range down to ~0.0-1.0. Stretching against a 0-3000 max
+            # (the RAW scale) here was the actual bug: every real pixel value
+            # (~0.0-0.4) was negligible against 3000 and rendered as pure black,
+            # with only rare saturated/anomalous pixels bright enough to show as
+            # white flecks — exactly the black-with-white-speckle pattern seen in
+            # the report. 0.3 is the standard stretch max for the already-rescaled
+            # 0-1 reflectance range.
+            {"bands": ["B4", "B3", "B2"], "min": 0, "max": 0.3, "gamma": 1.3},
         )
     return None
 
