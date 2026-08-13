@@ -119,21 +119,25 @@ def _vegetation_findings(m: Dict) -> List[str]:
 
 
 def _builtup_findings(m: Dict) -> List[str]:
-    gain = m.get("built_up_gain_km2", m.get("builtup_gain_km2", 0)) or 0
-    loss = m.get("built_up_loss_km2", m.get("builtup_loss_km2", 0)) or 0
-    initial = m.get("initial_built_up_km2", m.get("initial_builtup_km2", 0)) or 0
-    net = m.get("net_change_km2", 0) or 0
+    gain = m.get("builtup_gain_km2", 0) or 0
+    loss = m.get("builtup_loss_km2", 0) or 0
+    initial = m.get("initial_builtup_km2", 0) or 0
+    final = m.get("final_builtup_km2", initial + gain - loss)
+    net = final - initial
     p1 = (
         f"Dynamic World land-cover classification identifies {gain:,.2f} km\u00b2 of newly built-up land "
         f"and {loss:,.2f} km\u00b2 reverting from built-up to another class over the period, against an "
-        f"initial built-up extent of {initial:,.2f} km\u00b2 \u2014 a net change of {net:+,.2f} km\u00b2."
+        f"initial built-up extent of {initial:,.2f} km\u00b2 \u2014 a net change of {net:+,.2f} km\u00b2 "
+        f"(final built-up extent: {final:,.2f} km\u00b2)."
     )
     p2 = (
         "Built-up gain concentrated at the urban fringe is consistent with peri-urban expansion and "
         "densification, a common and generally expected pattern for growing settlements; built-up loss "
         "is comparatively unusual and can indicate demolition, land-use conversion, or a classification "
         "artifact from cloud/shadow contamination in one of the two comparison periods, and is worth "
-        "spot-checking against the source imagery where it is material."
+        "spot-checking against the source imagery where it is material. Note that this reflects a change "
+        "in classified land-cover category between two modal composites, not direct confirmation of a "
+        "physical construction or demolition event."
     )
     return [p1, p2]
 
@@ -158,14 +162,16 @@ def _water_findings(m: Dict) -> List[str]:
 
 def _flood_findings(m: Dict) -> List[str]:
     flood_km2 = m.get("flood_area_km2", 0) or 0
-    raw_km2 = m.get("raw_flood_area_km2", flood_km2) or 0
-    scenes = m.get("scene_count", m.get("scenes_used", "N/A"))
+    raw_km2 = m.get("raw_backscatter_drop_km2", flood_km2) or 0
+    ref_scenes = m.get("reference_scenes_used", "N/A")
+    flood_scenes = m.get("flood_period_scenes_used", "N/A")
     p1 = (
-        f"SAR backscatter change detection (Sentinel-1) against a pre-event reference window identifies "
-        f"{flood_km2:,.2f} km\u00b2 of newly inundated area after excluding permanent water bodies (JRC "
-        f"Global Surface Water) and steep terrain (SRTM slope > 5\u00b0) that produces backscatter changes "
-        f"unrelated to flooding. Before these exclusions and speckle filtering, the raw change signal "
-        f"covered {raw_km2:,.2f} km\u00b2, computed from {scenes} usable SAR scenes."
+        f"SAR backscatter change detection (Sentinel-1) against a pre-event reference window ({ref_scenes} "
+        f"reference scenes) identifies {flood_km2:,.2f} km\u00b2 of newly inundated area after excluding "
+        f"permanent water bodies (JRC Global Surface Water) and steep terrain (SRTM slope > 5\u00b0) that "
+        f"produces backscatter changes unrelated to flooding. Before these exclusions and speckle "
+        f"filtering, the raw backscatter-drop signal covered {raw_km2:,.2f} km\u00b2, computed from "
+        f"{flood_scenes} usable SAR scenes during the flood-period window."
     )
     p2 = (
         "SAR-based flood detection is not affected by cloud cover, unlike optical imagery, which makes it "
@@ -179,11 +185,11 @@ def _flood_findings(m: Dict) -> List[str]:
 
 
 def _fire_findings(m: Dict) -> List[str]:
-    count = m.get("fire_count", m.get("hotspot_count", 0)) or 0
-    area = m.get("affected_area_km2", 0) or 0
+    count = m.get("fire_event_count", 0) or 0
+    area = m.get("burned_area_km2", 0) or 0
     p1 = (
         f"NASA FIRMS thermal anomaly detections recorded {int(count)} fire/thermal hotspots within the "
-        f"area of interest over the analysis period, with an estimated affected footprint of "
+        f"area of interest over the analysis period, with an estimated burned/affected footprint of "
         f"{area:,.2f} km\u00b2 based on the detection resolution."
     )
     p2 = (
@@ -197,9 +203,9 @@ def _fire_findings(m: Dict) -> List[str]:
 
 def _drought_findings(m: Dict) -> List[str]:
     drought_km2 = m.get("drought_affected_km2", 0) or 0
-    severe_km2 = m.get("severe_drought_affected_km2", 0) or 0
-    nddi_start = m.get("avg_nddi_start", m.get("start_nddi", 0)) or 0
-    nddi_end = m.get("avg_nddi_end", m.get("end_nddi", 0)) or 0
+    severe_km2 = m.get("severe_drought_km2", 0) or 0
+    nddi_start = m.get("avg_nddi_start", 0) or 0
+    nddi_end = m.get("avg_nddi_end", 0) or 0
     p1 = (
         f"The Normalized Difference Drought Index (NDDI = (NDVI \u2212 NDWI) / (NDVI + NDWI)) identifies "
         f"{drought_km2:,.2f} km\u00b2 under drought stress (NDDI > 0.5) at the end of the analysis period, "
@@ -237,12 +243,14 @@ def _lst_findings(m: Dict) -> List[str]:
 
 def _deforestation_findings(m: Dict) -> List[str]:
     loss_km2 = m.get("forest_loss_km2", 0) or 0
-    initial_km2 = m.get("initial_forest_km2", 0) or 0
-    loss_pct = (loss_km2 / initial_km2 * 100) if initial_km2 else 0
+    initial_km2 = m.get("total_forest_2000_km2", 0) or 0
+    loss_pct = m.get("loss_pct", (loss_km2 / initial_km2 * 100) if initial_km2 else 0)
+    annual_rate = m.get("annual_loss_rate_km2", 0) or 0
     p1 = (
-        f"{loss_km2:,.2f} km\u00b2 of forest cover present at the start of the period was no longer "
-        f"classified as forest by the end of the period, against an initial forested extent of "
-        f"{initial_km2:,.2f} km\u00b2 ({loss_pct:.2f}% of initial forest cover)."
+        f"{loss_km2:,.2f} km\u00b2 of forest cover present in the Hansen Global Forest Change baseline "
+        f"(year 2000 tree cover) was lost by the end of the analysis period, against a baseline forested "
+        f"extent of {initial_km2:,.2f} km\u00b2 ({loss_pct:.2f}% of baseline forest cover), an average "
+        f"loss rate of {annual_rate:,.2f} km\u00b2/year over the period."
     )
     p2 = (
         "This method identifies canopy-cover loss and does not itself distinguish cause (clear-cutting, "
@@ -315,10 +323,12 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
             "areas are computed via a pixel-area reduction over the AOI.",
         ],
         "metric_labels": {
-            "built_up_gain_km2": ("Built-Up Gain", "km\u00b2", 4),
-            "built_up_loss_km2": ("Built-Up Loss", "km\u00b2", 4),
-            "initial_built_up_km2": ("Initial Built-Up Area", "km\u00b2", 4),
+            "builtup_gain_km2": ("Built-Up Gain", "km\u00b2", 4),
+            "builtup_loss_km2": ("Built-Up Loss", "km\u00b2", 4),
+            "initial_builtup_km2": ("Initial Built-Up Area", "km\u00b2", 4),
             "net_change_km2": ("Net Change", "km\u00b2", 4),
+            "final_builtup_km2": ("Final Built-Up Area", "km\u00b2", 4),
+            "gain_pct": ("Gain (% of initial)", "%", 4),
         },
         "findings_fn": _builtup_findings,
         "limitations": (
@@ -341,6 +351,7 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
             "water_gain_km2": ("Water Gain", "km\u00b2", 4),
             "water_loss_km2": ("Water Loss", "km\u00b2", 4),
             "initial_water_km2": ("Initial Water Extent", "km\u00b2", 4),
+            "net_change_km2": ("Net Change", "km\u00b2", 4),
         },
         "findings_fn": _water_findings,
         "limitations": (
@@ -350,7 +361,7 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "flood_detection": {
         "title": "Flood Detection Analysis (SAR)",
-        "sources": ["Sentinel-1 SAR GRD (COPERNICUS/S1_GRD)", "10 m spatial resolution"],
+        "sources": ["Sentinel-1 SAR GRD (COPERNICUS/S1_GRD)", "JRC Global Surface Water (JRC/GSW1_4/GlobalSurfaceWater)", "SRTM 30m DEM (USGS/SRTMGL1_003)", "10 m spatial resolution"],
         "methodology": [
             "Flood extent is derived from Synthetic Aperture Radar (SAR) backscatter change detection, "
             "which is unaffected by cloud cover \u2014 standing water produces a characteristic drop in "
@@ -363,8 +374,9 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
         ],
         "metric_labels": {
             "flood_area_km2": ("Flood Area (filtered)", "km\u00b2", 4),
-            "raw_flood_area_km2": ("Flood Area (unfiltered)", "km\u00b2", 4),
-            "scene_count": ("SAR Scenes Used", "", 0),
+            "raw_backscatter_drop_km2": ("Backscatter-Drop Area (unfiltered)", "km\u00b2", 4),
+            "reference_scenes_used": ("Reference-Period SAR Scenes", "", 0),
+            "flood_period_scenes_used": ("Flood-Period SAR Scenes", "", 0),
         },
         "findings_fn": _flood_findings,
         "limitations": (
@@ -375,24 +387,29 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
         ),
     },
     "fire_detection": {
-        "title": "Fire / Thermal Anomaly Detection Analysis",
-        "sources": ["NASA FIRMS (VIIRS/MODIS active fire detections)", "375 m (VIIRS) / 1 km (MODIS) nominal resolution"],
+        "title": "Fire / Burned Area Detection Analysis",
+        "sources": ["MODIS Burned Area (MODIS/061/MCD64A1)", "MODIS Active Fire (MODIS/061/MOD14A1)", "500 m (burned area) / 1 km (active fire) nominal resolution"],
         "methodology": [
-            "Active fire and thermal anomaly detections are sourced from NASA's Fire Information for "
-            "Resource Management System (FIRMS), which flags pixels exceeding a temperature threshold "
-            "relative to their surroundings in twice-daily satellite overpasses.",
-            "Detections are filtered spatially to the AOI and temporally to the analysis window; affected "
-            "area is estimated from the nominal pixel footprint of each detection.",
+            "Burned area is derived from the MODIS Collection 6.1 monthly burned-area product (MCD64A1), "
+            "which maps the approximate date of burning at 500 m resolution from MODIS surface "
+            "reflectance imagery. Any pixel with a burn date within the analysis window is classified as "
+            "burned.",
+            "Fire event count is derived independently from the MODIS active-fire product (MOD14A1), which "
+            "flags thermal anomalies at 1 km resolution; the count reflects the number of active-fire "
+            "detection scenes with at least one flagged pixel in the AOI over the period, not a count of "
+            "distinct burn events.",
         ],
         "metric_labels": {
-            "fire_count": ("Hotspot Detections", "", 0),
-            "affected_area_km2": ("Estimated Affected Area", "km\u00b2", 4),
+            "fire_event_count": ("Active-Fire Detection Scenes", "", 0),
+            "burned_area_km2": ("Burned Area", "km\u00b2", 4),
         },
         "findings_fn": _fire_findings,
         "limitations": (
-            "FIRMS detects thermal anomalies broadly, not confirmed wildfires specifically; detections "
-            "can include agricultural burning, gas flares, and other industrial heat sources, and small "
-            "or short-duration fires below the sensor's detection threshold are missed entirely."
+            "MCD64A1 burned-area mapping can miss small or low-intensity fires below its 500 m detection "
+            "threshold, and MOD14A1 active-fire detections include non-wildfire thermal sources "
+            "(agricultural burning, gas flaring, industrial heat); a high detection count alone does not "
+            "confirm wildfire activity without corroborating context such as land cover and burn "
+            "duration/spread pattern."
         ),
     },
     "drought_index": {
@@ -409,9 +426,10 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
         ],
         "metric_labels": {
             "drought_affected_km2": ("Drought-Affected Area", "km\u00b2", 4),
-            "severe_drought_affected_km2": ("Severely Drought-Affected Area", "km\u00b2", 4),
+            "severe_drought_km2": ("Severely Drought-Affected Area", "km\u00b2", 4),
             "avg_nddi_start": ("Mean NDDI (start)", "", 4),
             "avg_nddi_end": ("Mean NDDI (end)", "", 4),
+            "nddi_change": ("NDDI Change", "", 4),
         },
         "findings_fn": _drought_findings,
         "limitations": (
@@ -433,8 +451,7 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
         "metric_labels": {
             "start_mean_lst_c": ("Start Mean LST", "\u00b0C", 2),
             "end_mean_lst_c": ("End Mean LST", "\u00b0C", 2),
-            "start_min_lst_c": ("Start Min LST", "\u00b0C", 2),
-            "start_max_lst_c": ("Start Max LST", "\u00b0C", 2),
+            "lst_change_c": ("LST Change", "\u00b0C", 2),
             "end_min_lst_c": ("End Min LST", "\u00b0C", 2),
             "end_max_lst_c": ("End Max LST", "\u00b0C", 2),
             "uhi_area_km2": ("Urban Heat Island Area", "km\u00b2", 4),
@@ -448,22 +465,28 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "deforestation": {
         "title": "Deforestation / Forest Cover Loss Analysis",
-        "sources": ["Sentinel-2 SR Harmonized (COPERNICUS/S2_SR_HARMONIZED)", "10 m spatial resolution"],
+        "sources": ["Hansen Global Forest Change v1.12 (UMD/hansen/global_forest_change_2024_v1_12)", "30 m spatial resolution"],
         "methodology": [
-            "Forest cover is classified via NDVI thresholding on cloud-masked median composites for the "
-            "start and end of the analysis window, following the same compositing approach as the "
-            "vegetation-change analysis but with a higher NDVI threshold tuned to closed-canopy forest.",
-            "Loss is defined as pixels meeting the forest threshold in the start composite but not the "
-            "end composite; area is computed via a pixel-area reduction over the AOI.",
+            "Forest cover loss is derived from the Hansen Global Forest Change dataset, which maps "
+            "year-2000 tree canopy cover and, independently, the year in which stand-replacement forest "
+            "loss occurred at each pixel (2001\u20132023) from Landsat time-series analysis.",
+            "A pixel is counted as baseline forest where year-2000 canopy cover was \u2265 30%. Loss is the "
+            "subset of that baseline forest whose mapped loss year falls within the requested analysis "
+            "period; area is computed via a 30 m-scale pixel-area reduction over the AOI.",
         ],
         "metric_labels": {
             "forest_loss_km2": ("Forest Loss", "km\u00b2", 4),
-            "initial_forest_km2": ("Initial Forest Area", "km\u00b2", 4),
+            "total_forest_2000_km2": ("Baseline Forest Area (2000)", "km\u00b2", 4),
+            "loss_pct": ("Loss (% of baseline)", "%", 4),
+            "annual_loss_rate_km2": ("Average Annual Loss Rate", "km\u00b2/yr", 4),
         },
         "findings_fn": _deforestation_findings,
         "limitations": (
-            "NDVI-threshold forest classification does not distinguish natural forest from dense tree "
-            "plantations or orchards, and does not itself identify the cause of any detected loss."
+            "The Hansen dataset's loss-year attribution is derived from Landsat time series and can miss "
+            "loss under persistent cloud cover or misattribute the exact year in fast-regrowth areas; the "
+            "30% canopy threshold does not distinguish natural forest from dense plantations or orchards, "
+            "and the dataset's loss-year data currently extends only through 2023, so any portion of the "
+            "requested period after 2023 is not reflected in these figures."
         ),
     },
     "soil_moisture": {
@@ -686,6 +709,49 @@ def _limitations_section(styles, text: str) -> List:
 # Public entry points
 # ═════════════════════════════════════════════════════════════════════════════
 
+CONSISTENCY_TOLERANCE_KM2 = 0.5  # allows for GEE pixel-area rounding across independent reduceRegion calls
+
+# For analysis types with a gain/loss/initial/(net or final) relationship,
+# maps analysis_type -> (gain_key, loss_key, initial_key, net_key_or_None, final_key_or_None).
+# Used to catch exactly the class of bug this report generator shipped with
+# once already: metric keys silently not matching gee_client's real output,
+# producing a report where net change reads "+0.00" while gain and loss are
+# both large nonzero numbers. Rather than trust every future analysis type
+# to get this right, check it mechanically before rendering.
+_CONSISTENCY_CHECKS = {
+    "vegetation_change": ("vegetation_gain_km2", "vegetation_loss_km2", "initial_vegetation_km2", "net_change_km2", None),
+    "builtup_change": ("builtup_gain_km2", "builtup_loss_km2", "initial_builtup_km2", "net_change_km2", "final_builtup_km2"),
+    "water_change": ("water_gain_km2", "water_loss_km2", "initial_water_km2", "net_change_km2", None),
+}
+
+
+def _validate_consistency(analysis_type: str, metrics: Dict[str, Any]) -> Optional[str]:
+    """Returns an error message if the metrics are internally inconsistent
+    (gain - loss doesn't match the reported net/final change), or None if
+    they check out / this analysis type has no such relationship to check."""
+    check = _CONSISTENCY_CHECKS.get(analysis_type)
+    if not check:
+        return None
+    gain_k, loss_k, initial_k, net_k, final_k = check
+    gain, loss, initial = metrics.get(gain_k), metrics.get(loss_k), metrics.get(initial_k)
+    if gain is None or loss is None:
+        return None  # can't check what wasn't computed
+    expected_net = gain - loss
+
+    if net_k and metrics.get(net_k) is not None:
+        if abs(metrics[net_k] - expected_net) > CONSISTENCY_TOLERANCE_KM2:
+            return (f"Inconsistent metrics for {analysis_type}: reported {net_k}="
+                    f"{metrics[net_k]:.2f} km\u00b2 but gain ({gain:.2f}) - loss ({loss:.2f}) = "
+                    f"{expected_net:.2f} km\u00b2")
+    if final_k and metrics.get(final_k) is not None and initial is not None:
+        expected_final = initial + expected_net
+        if abs(metrics[final_k] - expected_final) > CONSISTENCY_TOLERANCE_KM2:
+            return (f"Inconsistent metrics for {analysis_type}: reported {final_k}="
+                    f"{metrics[final_k]:.2f} km\u00b2 but initial ({initial:.2f}) + gain ({gain:.2f}) - "
+                    f"loss ({loss:.2f}) = {expected_final:.2f} km\u00b2")
+    return None
+
+
 def build_analysis_report(
     analysis_type: str,
     aoi_geojson: Dict[str, Any],
@@ -699,6 +765,10 @@ def build_analysis_report(
     spec = ANALYSIS_SPECS.get(analysis_type)
     if not spec:
         raise ValueError(f"Unknown analysis_type: {analysis_type}. Must be one of {list(ANALYSIS_SPECS)}")
+
+    consistency_error = _validate_consistency(analysis_type, metrics)
+    if consistency_error:
+        raise ValueError(f"RESULT VALIDATION FAILED: {consistency_error}")
 
     styles = _styles()
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")

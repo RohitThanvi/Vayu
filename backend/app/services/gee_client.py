@@ -227,6 +227,7 @@ def compute_builtup_change(aoi: Dict, start_date: str, end_date: str) -> Dict:
             "builtup_loss_km2": round(loss_km2, 4),
             "initial_builtup_km2": round(initial_km2, 4),
             "final_builtup_km2": round(initial_km2 + gain_km2 - loss_km2, 4),
+            "net_change_km2": round(gain_km2 - loss_km2, 4),
             "gain_pct": round(gain_pct, 4),
         },
         "ee_image": gain_mask,
