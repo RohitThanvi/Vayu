@@ -1266,10 +1266,14 @@ export default function App() {
     if (drawGroupRef.current?.getLayers().length > 0) {
       try { aoiBoundsRef.current = drawGroupRef.current.getBounds(); } catch(e) {}
     }
+    // Clear the *editable* draw-tool layer (the rectangle/polygon handles),
+    // but keep drawnAOI itself set — it's re-drawn as a static outline once
+    // the result comes in (see the [result] effect below), and several
+    // features (Download Report, the Agri tab) need it to stay available
+    // after a query completes rather than forcing a manual re-draw.
     drawGroupRef.current?.clearLayers();
     setIsLoading(true); setError(null); setResult(null); setJobStatus(null);
     const savedAOI = drawnAOI;
-    setDrawnAOI(null);
     const text = selMetric ? `[Metric: ${selMetric}] ${queryText}` : queryText;
     try {
       const res = await fetch(`${API_URL}/api/v1/query`, {
@@ -1300,6 +1304,16 @@ export default function App() {
   useEffect(() => {
     if (!result || !mapRef.current) return;
     clearLayers();
+    // Re-draw the AOI as a static (non-editable) outline — the editable
+    // draw-tool layer was cleared when the query submitted, but the
+    // boundary itself should stay visible rather than vanishing once
+    // results come in.
+    if (drawnAOI) {
+      try {
+        const outline = L.geoJSON(drawnAOI, { style:{ color:'#2a6abd', weight:1.5, fillOpacity:0, dashArray:'4,3' } }).addTo(mapRef.current);
+        layersRef.current.push(outline);
+      } catch(e) {}
+    }
     if (result.tile_url) {
       const tl = L.tileLayer(result.tile_url, { opacity:0.75 }).addTo(mapRef.current);
       layersRef.current.push(tl);

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -8,6 +9,7 @@ from pydantic import BaseModel
 from ..services import gee_client
 from ..services.report_generator import build_analysis_report, build_agri_risk_report
 from ..services.agri.risk_scoring import compute_risk_score
+from ..services.satellite_imagery import get_thumbnail_for_analysis, get_optical_thumbnail
 from .. schemas import MetricType
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ class AnalysisReportRequest(BaseModel):
     # recomputing against GEE a second time just to build the PDF. If
     # omitted, the analysis is recomputed fresh from the AOI/dates.
     metrics: Optional[Dict[str, Any]] = None
+    include_imagery: bool = True
 
 
 class AgriRiskReportRequest(BaseModel):
@@ -42,6 +45,7 @@ class AgriRiskReportRequest(BaseModel):
     as_of: Optional[str] = None
     region_name: Optional[str] = None
     region_id: Optional[str] = None
+    include_imagery: bool = True
 
 
 @router.post("/analysis", summary="Generate a scientific PDF report for one of the 9 satellite analyses")
@@ -59,10 +63,24 @@ async def analysis_report(req: AnalysisReportRequest):
             logger.error(f"report analysis recompute failed: {e}", exc_info=True)
             raise HTTPException(status_code=422, detail=f"Could not compute analysis for report: {e}")
 
+    before_bytes, after_bytes = None, None
+    if req.include_imagery:
+        try:
+            before_bytes, after_bytes = await asyncio.gather(
+                asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.start_date),
+                asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.end_date),
+            )
+        except Exception as e:
+            # Imagery is a nice-to-have on top of the metrics/findings, which
+            # are already computed above — never fail the whole report over
+            # a thumbnail fetch issue.
+            logger.warning(f"report imagery fetch failed, continuing without it: {e}")
+
     try:
         pdf_bytes = build_analysis_report(
             analysis_type=req.analysis_type, aoi_geojson=req.aoi_geojson,
             start_date=req.start_date, end_date=req.end_date, metrics=metrics,
+            before_image_bytes=before_bytes, after_image_bytes=after_bytes,
         )
     except Exception as e:
         logger.error(f"report generation failed: {e}", exc_info=True)
@@ -83,9 +101,18 @@ async def agri_risk_report(req: AgriRiskReportRequest):
         logger.error(f"agri risk report recompute failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Could not compute risk score for report: {e}")
 
+    image_bytes = None
+    if req.include_imagery:
+        try:
+            as_of = risk_result.get("period", {}).get("end_date")
+            image_bytes = await asyncio.to_thread(get_optical_thumbnail, req.aoi_geojson, as_of)
+        except Exception as e:
+            logger.warning(f"agri risk report imagery fetch failed, continuing without it: {e}")
+
     try:
         pdf_bytes = build_agri_risk_report(
             aoi_geojson=req.aoi_geojson, risk_result=risk_result, region_name=req.region_name,
+            image_bytes=image_bytes,
         )
     except Exception as e:
         logger.error(f"agri risk report generation failed: {e}", exc_info=True)

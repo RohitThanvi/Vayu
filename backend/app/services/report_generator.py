@@ -601,8 +601,56 @@ def _study_area_section(styles, aoi_geojson: Dict[str, Any]) -> List:
     return flow
 
 
+def _imagery_section(styles, before_bytes: Optional[bytes], after_bytes: Optional[bytes],
+                      before_label: str, after_label: str) -> List:
+    """Embeds actual satellite imagery (not just derived metrics) side by
+    side, so the reader can see the real scene a finding is drawn from.
+    Falls back to a single centered image when only one side is available
+    (e.g. the agri risk report only has a current-conditions image, not a
+    before/after pair)."""
+    flow = [Paragraph("2. Satellite Imagery", styles["section_head"])]
+    if not before_bytes and not after_bytes:
+        flow.append(Paragraph(
+            "No cloud-free satellite imagery was available for this AOI within the analysis window to "
+            "embed here; the metrics and findings below are unaffected, as they are computed from the "
+            "same underlying satellite collections independently of this thumbnail.",
+            styles["caveat"]))
+        return flow
+
+    if bool(before_bytes) != bool(after_bytes):
+        # Single-image case — center it full-width rather than pairing with
+        # an empty placeholder column.
+        img_bytes = before_bytes or after_bytes
+        label = before_label if before_bytes else after_label
+        img = Image(io.BytesIO(img_bytes), width=110 * mm, height=110 * mm)
+        img.hAlign = "CENTER"
+        flow.append(img)
+        if label:
+            flow.append(Paragraph(f"<i>{label}</i>", ParagraphStyle(
+                "img_label_center", parent=styles["footer"], alignment=TA_CENTER)))
+        flow.append(Spacer(1, 4))
+        return flow
+
+    img_w = 78 * mm
+    cells, labels = [], []
+    for b, label in ((before_bytes, before_label), (after_bytes, after_label)):
+        cells.append(Image(io.BytesIO(b), width=img_w, height=img_w))
+        labels.append(Paragraph(f"<i>{label}</i>", styles["footer"]))
+
+    t = Table([cells, labels], colWidths=[img_w + 4, img_w + 4])
+    t.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, 0), "TOP"),
+        ("TOPPADDING", (0, 1), (-1, 1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    flow.append(t)
+    flow.append(Spacer(1, 4))
+    return flow
+
+
 def _methodology_section(styles, sources: List[str], paragraphs: List[str]) -> List:
-    flow = [Paragraph("2. Data Sources & Methodology", styles["section_head"])]
+    flow = [Paragraph("3. Data Sources & Methodology", styles["section_head"])]
     flow.append(Paragraph("<b>Sources:</b> " + "; ".join(sources), styles["body"]))
     for p in paragraphs:
         flow.append(Paragraph(p, styles["body"]))
@@ -610,21 +658,21 @@ def _methodology_section(styles, sources: List[str], paragraphs: List[str]) -> L
 
 
 def _results_section(styles, metric_rows: List[Tuple[str, str, str]]) -> List:
-    flow = [Paragraph("3. Results", styles["section_head"])]
+    flow = [Paragraph("4. Results", styles["section_head"])]
     flow.append(_metrics_table(styles, metric_rows))
     flow.append(Spacer(1, 4))
     return flow
 
 
 def _findings_section(styles, paragraphs: List[str]) -> List:
-    flow = [Paragraph("4. Findings & Interpretation", styles["section_head"])]
+    flow = [Paragraph("5. Findings & Interpretation", styles["section_head"])]
     for p in paragraphs:
         flow.append(Paragraph(p, styles["body"]))
     return flow
 
 
 def _limitations_section(styles, text: str) -> List:
-    flow = [Paragraph("5. Limitations & Caveats", styles["section_head"])]
+    flow = [Paragraph("6. Limitations & Caveats", styles["section_head"])]
     flow.append(Paragraph(text, styles["caveat"]))
     flow.append(Paragraph(
         "This report is generated from satellite remote-sensing data and automated processing. It is "
@@ -644,6 +692,8 @@ def build_analysis_report(
     start_date: str,
     end_date: str,
     metrics: Dict[str, Any],
+    before_image_bytes: Optional[bytes] = None,
+    after_image_bytes: Optional[bytes] = None,
 ) -> bytes:
     """Builds one of the 9 satellite-analysis PDF reports. Returns raw PDF bytes."""
     spec = ANALYSIS_SPECS.get(analysis_type)
@@ -667,6 +717,8 @@ def build_analysis_report(
     flow.append(Spacer(1, 6))
 
     flow += _study_area_section(styles, aoi_geojson)
+    flow += _imagery_section(styles, before_image_bytes, after_image_bytes,
+                              f"Start of period ({start_date})", f"End of period ({end_date})")
     flow += _methodology_section(styles, spec["sources"], spec["methodology"])
 
     metric_rows = []
@@ -688,6 +740,7 @@ def build_agri_risk_report(
     aoi_geojson: Dict[str, Any],
     risk_result: Dict[str, Any],
     region_name: Optional[str] = None,
+    image_bytes: Optional[bytes] = None,
 ) -> bytes:
     """Builds the agri risk-score PDF report from a compute_risk_score() result."""
     styles = _styles()
@@ -717,8 +770,10 @@ def build_agri_risk_report(
     flow.append(Spacer(1, 6))
 
     flow += _study_area_section(styles, aoi_geojson)
+    flow += _imagery_section(styles, None, image_bytes,
+                              "", f"Current conditions (as of {period.get('end_date', 'N/A')})")
 
-    flow.append(Paragraph("2. Methodology", styles["section_head"]))
+    flow.append(Paragraph("3. Methodology", styles["section_head"]))
     flow.append(Paragraph(
         "The composite risk score combines three independently-computed satellite indicators \u2014 "
         "drought stress (Sentinel-2 NDDI), vegetation loss (Sentinel-2 NDVI threshold change), and "
@@ -730,7 +785,7 @@ def build_agri_risk_report(
         "the region's historical alert accuracy.",
         styles["body"]))
 
-    flow.append(Paragraph("3. Sub-Score Breakdown", styles["section_head"]))
+    flow.append(Paragraph("4. Sub-Score Breakdown", styles["section_head"]))
     sub_scores = risk_result.get("sub_scores", {})
     sub_rows = [
         (k.replace("_", " ").title(), _fmt_num(v, 1) if v is not None else "Not computed", "/ 100")
@@ -748,7 +803,7 @@ def build_agri_risk_report(
             f"{', '.join(inputs_failed)}.",
             styles["caveat"]))
 
-    flow.append(Paragraph("4. Findings & Interpretation", styles["section_head"]))
+    flow.append(Paragraph("5. Findings & Interpretation", styles["section_head"]))
     flow.append(Paragraph(risk_result.get("reason", "No specific driver identified."), styles["body"]))
     flow.append(Paragraph(
         f"This assessment carries a confidence of {confidence}%, reflecting "
@@ -758,7 +813,7 @@ def build_agri_risk_report(
         ),
         styles["body"]))
 
-    flow.append(Paragraph("5. Limitations & Caveats", styles["section_head"]))
+    flow.append(Paragraph("6. Limitations & Caveats", styles["section_head"]))
     flow.append(Paragraph(
         "This is a satellite-derived composite indicator, not a substitute for field inspection, "
         "agronomic assessment, or official crop-loss/insurance determinations. The scoring model is "

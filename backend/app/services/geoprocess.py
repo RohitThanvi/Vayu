@@ -46,9 +46,19 @@ def process_and_store_results(
 ) -> Dict[str, Optional[str]]:
     logger.info(f"[{request_id}] Geoprocess: starting")
 
+    # loss_mask_image is a boolean comparison result (.gt()/.and()/etc.) — in
+    # Earth Engine that has a real value (0 or 1) at EVERY pixel, not just
+    # where the condition is true. Masking it once here and reusing the
+    # result for both the tile and the vectorization keeps them consistent:
+    # without this, the tile paints the entire AOI red (0 and 1 both render
+    # under a single-color palette), and reduceToVectors below would vectorize
+    # the giant unmasked "no change" background as one huge polygon alongside
+    # the real change polygons in the downloadable GeoJSON.
+    masked_image = loss_mask_image.selfMask()
+
     # ── 1. Tile URL ────────────────────────────────────────────────────────────
     try:
-        map_id = loss_mask_image.getMapId({"palette": ["#FF4136"], "min": 0, "max": 1})
+        map_id = masked_image.getMapId({"palette": ["#FF4136"]})
         tile_url = map_id["tile_fetcher"].url_format
         logger.info(f"[{request_id}] Geoprocess: tile URL generated")
     except Exception as e:
@@ -58,11 +68,11 @@ def process_and_store_results(
     # ── 2. Clean raster ────────────────────────────────────────────────────────
     try:
         min_px = 15
-        px_count = loss_mask_image.connectedPixelCount(min_px, False)
-        cleaned = loss_mask_image.updateMask(px_count.gte(min_px))
+        px_count = masked_image.connectedPixelCount(min_px, False)
+        cleaned = masked_image.updateMask(px_count.gte(min_px))
     except Exception as e:
         logger.warning(f"[{request_id}] Raster cleaning failed: {e}")
-        cleaned = loss_mask_image
+        cleaned = masked_image
 
     # ── 3. Vectorize ───────────────────────────────────────────────────────────
     try:
