@@ -147,3 +147,74 @@ def get_thumbnail_for_analysis(analysis_type: str, aoi: Dict[str, Any], date: st
     if analysis_type == "flood_detection":
         return get_sar_thumbnail(aoi, date)
     return get_optical_thumbnail(aoi, date)
+
+
+def _s2_composite(region: ee.Geometry, center_date: str, days_window: int) -> Optional[ee.Image]:
+    center_dt = datetime.strptime(center_date, "%Y-%m-%d")
+    start = ee.Date((center_dt - timedelta(days=days_window)).strftime("%Y-%m-%d"))
+    end = _cap_end_date((center_dt + timedelta(days=days_window)).strftime("%Y-%m-%d"))
+    col = (
+        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+        .filterBounds(region)
+        .filterDate(start, end)
+        .map(_mask_s2_clouds)
+    )
+    if col.size().getInfo() == 0:
+        return None
+    return col.median().clip(region)
+
+
+def get_ndvi_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 30) -> Optional[bytes]:
+    """Colored NDVI map — the actual vegetation-health surface the risk
+    score's vegetation-loss sub-score is computed from, not just a generic
+    photo. Red/orange = sparse or stressed vegetation, green = healthy."""
+    region = _polygon_geometry(aoi)
+    composite = _s2_composite(region, center_date, days_window)
+    if composite is None:
+        return None
+    ndvi = composite.normalizedDifference(["B8", "B4"])
+    return _fetch_thumb_bytes(ndvi, region, {
+        "min": -0.2, "max": 0.8,
+        "palette": ["#a83232", "#d9a441", "#e8e88a", "#8fd453", "#1a7a1a"],
+    })
+
+
+def get_nddi_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 30) -> Optional[bytes]:
+    """Colored NDDI drought map — the surface the drought sub-score is
+    computed from. Green/blue = moist, red/brown = drought-stressed."""
+    region = _polygon_geometry(aoi)
+    composite = _s2_composite(region, center_date, days_window)
+    if composite is None:
+        return None
+    ndvi = composite.normalizedDifference(["B8", "B4"]).rename("NDVI")
+    ndwi = composite.normalizedDifference(["B3", "B8"]).rename("NDWI")
+    nddi = ndvi.subtract(ndwi).divide(ndvi.add(ndwi))
+    return _fetch_thumb_bytes(nddi, region, {
+        "min": -0.5, "max": 1.0,
+        "palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"],
+    })
+
+
+def get_soil_moisture_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 90) -> Optional[bytes]:
+    """Colored SMAP soil-moisture map — the coarse (~10km) surface the
+    moisture-deficit sub-score is computed from. Brown = dry, blue = moist.
+    Uses a wider default window than the optical/NDVI/NDDI thumbnails since
+    SMAP has genuinely sparser temporal coverage (matches the 3-month
+    window compute_soil_moisture itself uses for the end-period reading)."""
+    region = _polygon_geometry(aoi)
+    center_dt = datetime.strptime(center_date, "%Y-%m-%d")
+    start = ee.Date((center_dt - timedelta(days=days_window)).strftime("%Y-%m-%d"))
+    end = _cap_end_date((center_dt + timedelta(days=days_window)).strftime("%Y-%m-%d"))
+    col = (
+        ee.ImageCollection("NASA_USDA/HSL/SMAP10KM_soil_moisture")
+        .filterBounds(region)
+        .filterDate(start, end)
+        .select("ssm")
+    )
+    if col.size().getInfo() == 0:
+        return None
+    composite = col.mean().clip(region)
+    return _fetch_thumb_bytes(composite, region, {
+        "min": 0, "max": 0.5,
+        "palette": ["#8b6b3d", "#c9a86a", "#a8c9d4", "#4a9ec9", "#1a4d7a"],
+    })

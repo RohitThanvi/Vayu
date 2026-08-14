@@ -653,6 +653,49 @@ def _risk_gauge(score: float) -> Drawing:
     return d
 
 
+def _imagery_grid_section(styles, images: List[Tuple[str, Optional[bytes]]], section_num: int) -> List:
+    """Like _imagery_section but for an arbitrary set of labeled images laid
+    out 2-per-row — used for the agri report's per-indicator maps (true
+    color, NDVI, NDDI, soil moisture) rather than a single before/after pair.
+    Any entry with bytes=None is skipped entirely rather than shown as a
+    blank placeholder, since a missing one here isn't a failure worth
+    dwelling on the way a missing before/after comparison would be."""
+    available = [(label, b) for label, b in images if b]
+    flow = [Paragraph(f"{section_num}. Satellite Imagery by Indicator", styles["section_head"])]
+    if not available:
+        flow.append(Paragraph(
+            "No cloud-free satellite imagery was available for this AOI within the analysis window to "
+            "embed here; the metrics and findings below are unaffected, as they are computed from the "
+            "same underlying satellite collections independently of these thumbnails.",
+            styles["caveat"]))
+        return flow
+
+    img_w = 78 * mm
+    rows = []
+    for i in range(0, len(available), 2):
+        pair = available[i:i + 2]
+        img_cells = [Image(io.BytesIO(b), width=img_w, height=img_w) for _, b in pair]
+        label_cells = [Paragraph(f"<i>{label}</i>", styles["footer"]) for label, _ in pair]
+        if len(pair) == 1:
+            img_cells.append("")
+            label_cells.append("")
+        rows.append(img_cells)
+        rows.append(label_cells)
+
+    t = Table(rows, colWidths=[img_w + 4, img_w + 4])
+    style_cmds = [
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]
+    for r in range(1, len(rows), 2):
+        style_cmds.append(("TOPPADDING", (0, r), (-1, r), 4))
+    t.setStyle(TableStyle(style_cmds))
+    flow.append(t)
+    flow.append(Spacer(1, 4))
+    return flow
+
+
 def _imagery_section(styles, before_bytes: Optional[bytes], after_bytes: Optional[bytes],
                       before_label: str, after_label: str) -> List:
     """Embeds actual satellite imagery (not just derived metrics) side by
@@ -840,6 +883,9 @@ def build_agri_risk_report(
     risk_result: Dict[str, Any],
     region_name: Optional[str] = None,
     image_bytes: Optional[bytes] = None,
+    ndvi_image_bytes: Optional[bytes] = None,
+    nddi_image_bytes: Optional[bytes] = None,
+    moisture_image_bytes: Optional[bytes] = None,
     baseline_result: Optional[Dict[str, Any]] = None,
     llm_synthesis: Optional[str] = None,
 ) -> bytes:
@@ -876,8 +922,12 @@ def build_agri_risk_report(
     flow.append(Spacer(1, 6))
 
     flow += _study_area_section(styles, aoi_geojson)
-    flow += _imagery_section(styles, None, image_bytes,
-                              "", f"Current conditions (as of {period.get('end_date', 'N/A')})")
+    flow += _imagery_grid_section(styles, [
+        ("True Color (current conditions)", image_bytes),
+        ("NDVI \u2014 Vegetation (drives Vegetation Loss score)", ndvi_image_bytes),
+        ("NDDI \u2014 Drought (drives Drought score)", nddi_image_bytes),
+        ("SMAP Soil Moisture (drives Moisture Deficit score)", moisture_image_bytes),
+    ], section_num=2)
 
     flow.append(Paragraph("3. Methodology", styles["section_head"]))
     flow.append(Paragraph(

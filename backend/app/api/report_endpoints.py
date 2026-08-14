@@ -10,7 +10,10 @@ from ..services import gee_client
 from ..services.report_generator import build_analysis_report, build_agri_risk_report
 from ..services.agri.risk_scoring import compute_risk_score
 from ..services.agri.baseline import compute_seasonal_baseline
-from ..services.satellite_imagery import get_thumbnail_for_analysis, get_optical_thumbnail
+from ..services.satellite_imagery import (
+    get_thumbnail_for_analysis, get_optical_thumbnail,
+    get_ndvi_thumbnail, get_nddi_thumbnail, get_soil_moisture_thumbnail,
+)
 from ..services.llm_client import get_llm_synthesis
 from .. schemas import MetricType
 
@@ -67,16 +70,19 @@ async def analysis_report(req: AnalysisReportRequest):
 
     before_bytes, after_bytes = None, None
     if req.include_imagery:
-        try:
-            before_bytes, after_bytes = await asyncio.gather(
-                asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.start_date),
-                asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.end_date),
-            )
-        except Exception as e:
-            # Imagery is a nice-to-have on top of the metrics/findings, which
-            # are already computed above — never fail the whole report over
-            # a thumbnail fetch issue.
-            logger.warning(f"report imagery fetch failed, continuing without it: {e}")
+        results = await asyncio.gather(
+            asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.start_date),
+            asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.end_date),
+            return_exceptions=True,
+        )
+        before_bytes = results[0] if not isinstance(results[0], Exception) else None
+        after_bytes = results[1] if not isinstance(results[1], Exception) else None
+        for label, r in zip(("before", "after"), results):
+            if isinstance(r, Exception):
+                # Imagery is a nice-to-have on top of the metrics/findings, which
+                # are already computed above — never fail the whole report over
+                # a thumbnail fetch issue.
+                logger.warning(f"report {label} imagery fetch failed, continuing without it: {r}")
 
     try:
         pdf_bytes = build_analysis_report(
@@ -104,12 +110,25 @@ async def agri_risk_report(req: AgriRiskReportRequest):
         raise HTTPException(status_code=422, detail=f"Could not compute risk score for report: {e}")
 
     image_bytes = None
+    ndvi_bytes = None
+    nddi_bytes = None
+    moisture_bytes = None
     if req.include_imagery:
-        try:
-            as_of = risk_result.get("period", {}).get("end_date")
-            image_bytes = await asyncio.to_thread(get_optical_thumbnail, req.aoi_geojson, as_of)
-        except Exception as e:
-            logger.warning(f"agri risk report imagery fetch failed, continuing without it: {e}")
+        as_of = risk_result.get("period", {}).get("end_date")
+        results = await asyncio.gather(
+            asyncio.to_thread(get_optical_thumbnail, req.aoi_geojson, as_of),
+            asyncio.to_thread(get_ndvi_thumbnail, req.aoi_geojson, as_of),
+            asyncio.to_thread(get_nddi_thumbnail, req.aoi_geojson, as_of),
+            asyncio.to_thread(get_soil_moisture_thumbnail, req.aoi_geojson, as_of),
+            return_exceptions=True,
+        )
+        labels = ("true-color", "NDVI", "NDDI", "soil-moisture")
+        image_bytes, ndvi_bytes, nddi_bytes, moisture_bytes = (
+            r if not isinstance(r, Exception) else None for r in results
+        )
+        for label, r in zip(labels, results):
+            if isinstance(r, Exception):
+                logger.warning(f"agri risk report {label} thumbnail failed, continuing without it: {r}")
 
     baseline_result = None
     try:
@@ -137,7 +156,8 @@ async def agri_risk_report(req: AgriRiskReportRequest):
     try:
         pdf_bytes = build_agri_risk_report(
             aoi_geojson=req.aoi_geojson, risk_result=risk_result, region_name=req.region_name,
-            image_bytes=image_bytes, baseline_result=baseline_result, llm_synthesis=llm_synthesis,
+            image_bytes=image_bytes, ndvi_image_bytes=ndvi_bytes, nddi_image_bytes=nddi_bytes,
+            moisture_image_bytes=moisture_bytes, baseline_result=baseline_result, llm_synthesis=llm_synthesis,
         )
     except Exception as e:
         logger.error(f"agri risk report generation failed: {e}", exc_info=True)
