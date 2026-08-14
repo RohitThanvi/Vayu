@@ -9,7 +9,9 @@ from pydantic import BaseModel
 from ..services import gee_client
 from ..services.report_generator import build_analysis_report, build_agri_risk_report
 from ..services.agri.risk_scoring import compute_risk_score
+from ..services.agri.baseline import compute_seasonal_baseline
 from ..services.satellite_imagery import get_thumbnail_for_analysis, get_optical_thumbnail
+from ..services.llm_client import get_llm_synthesis
 from .. schemas import MetricType
 
 logger = logging.getLogger(__name__)
@@ -109,10 +111,33 @@ async def agri_risk_report(req: AgriRiskReportRequest):
         except Exception as e:
             logger.warning(f"agri risk report imagery fetch failed, continuing without it: {e}")
 
+    baseline_result = None
+    try:
+        as_of = risk_result.get("period", {}).get("end_date")
+        baseline_result = await asyncio.to_thread(compute_seasonal_baseline, req.aoi_geojson, as_of)
+    except Exception as e:
+        logger.warning(f"agri risk report baseline fetch failed, continuing without it: {e}")
+
+    llm_synthesis = None
+    try:
+        context = {
+            "risk_score": risk_result.get("risk_score"), "band": risk_result.get("band"),
+            "confidence": risk_result.get("confidence"), "sub_scores": risk_result.get("sub_scores"),
+            "reason": risk_result.get("reason"), "region_name": req.region_name or "the AOI",
+            "period": risk_result.get("period"),
+            "seasonal_context": (
+                {"status": baseline_result.get("status"), "z_score": baseline_result.get("z_score")}
+                if baseline_result and baseline_result.get("seasonal_normal_ndvi") is not None else None
+            ),
+        }
+        llm_synthesis = await asyncio.to_thread(get_llm_synthesis, context)
+    except Exception as e:
+        logger.warning(f"agri risk report LLM synthesis failed, continuing without it: {e}")
+
     try:
         pdf_bytes = build_agri_risk_report(
             aoi_geojson=req.aoi_geojson, risk_result=risk_result, region_name=req.region_name,
-            image_bytes=image_bytes,
+            image_bytes=image_bytes, baseline_result=baseline_result, llm_synthesis=llm_synthesis,
         )
     except Exception as e:
         logger.error(f"agri risk report generation failed: {e}", exc_info=True)

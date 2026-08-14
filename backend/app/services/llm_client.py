@@ -182,3 +182,39 @@ def generate_insight(query: StructuredQuery, metrics: dict) -> Optional[str]:
     except Exception as e:
         logger.warning(f"Insight generation failed: {e}")
         return None
+
+
+def get_llm_synthesis(context: dict) -> Optional[str]:
+    """Optional narrative synthesis for a report, grounded strictly in
+    numbers already computed elsewhere. The model is explicitly forbidden
+    from introducing any figure not present in the context — this is a
+    prose synthesis layer on top of deterministic results, not a source of
+    new numbers. Returns None (silently) if unavailable/fails, since this
+    is additive polish, not something a report should ever depend on."""
+    try:
+        client = _get_client()
+    except EnvironmentError:
+        return None
+
+    system = (
+        "You are writing one short paragraph (3-5 sentences) synthesizing an agricultural risk "
+        "assessment for a professional report. Use ONLY the numbers given to you in the JSON context — "
+        "never invent, estimate, or round to a different figure than what's provided. Do not repeat "
+        "every number verbatim as a list; write connected prose a decision-maker would actually read. "
+        "Formal, measured, non-alarmist tone. No markdown, no bullet points, no headers — plain prose only."
+    )
+    try:
+        resp = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(context)},
+            ],
+            temperature=0.3,
+            max_tokens=300,
+        )
+        text = resp.choices[0].message.content.strip()
+        return text or None
+    except Exception as e:
+        logger.warning(f"LLM report synthesis failed, continuing without it: {e}")
+        return None

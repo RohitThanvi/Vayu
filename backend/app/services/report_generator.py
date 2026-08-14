@@ -23,6 +23,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.graphics.shapes import Drawing, Rect, Line, String, Polygon
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable, KeepTogether
@@ -624,6 +625,34 @@ def _study_area_section(styles, aoi_geojson: Dict[str, Any]) -> List:
     return flow
 
 
+def _risk_gauge(score: float) -> Drawing:
+    """A horizontal color-banded gauge with a marker at the actual score —
+    gives the risk number a visual anchor instead of being just a line of
+    text, and shows at a glance how close it sits to the next band."""
+    width, height = 480, 46
+    d = Drawing(width, height)
+    bands = [
+        (0, 30, colors.HexColor("#4a7c59"), "LOW"),
+        (30, 55, colors.HexColor("#c9933a"), "MODERATE"),
+        (55, 75, colors.HexColor("#c96a3a"), "HIGH"),
+        (75, 100, colors.HexColor("#8b2020"), "SEVERE"),
+    ]
+    bar_x, bar_y, bar_w, bar_h = 10, 18, 460, 16
+    for lo, hi, color, label in bands:
+        x0 = bar_x + bar_w * (lo / 100)
+        x1 = bar_x + bar_w * (hi / 100)
+        d.add(Rect(x0, bar_y, x1 - x0, bar_h, fillColor=color, strokeColor=colors.white, strokeWidth=0.5))
+        d.add(String((x0 + x1) / 2, bar_y - 10, label, fontSize=6.5, fillColor=colors.HexColor("#5c6673"),
+                      textAnchor="middle", fontName="Helvetica"))
+
+    marker_x = bar_x + bar_w * (max(0, min(100, score)) / 100)
+    d.add(Polygon(points=[marker_x - 5, bar_y + bar_h + 10, marker_x + 5, bar_y + bar_h + 10, marker_x, bar_y + bar_h + 2],
+                  fillColor=colors.HexColor("#12151a"), strokeColor=None))
+    d.add(String(marker_x, bar_y + bar_h + 13, f"{score:.1f}", fontSize=9, fontName="Helvetica-Bold",
+                  fillColor=colors.HexColor("#12151a"), textAnchor="middle"))
+    return d
+
+
 def _imagery_section(styles, before_bytes: Optional[bytes], after_bytes: Optional[bytes],
                       before_label: str, after_label: str) -> List:
     """Embeds actual satellite imagery (not just derived metrics) side by
@@ -811,6 +840,8 @@ def build_agri_risk_report(
     risk_result: Dict[str, Any],
     region_name: Optional[str] = None,
     image_bytes: Optional[bytes] = None,
+    baseline_result: Optional[Dict[str, Any]] = None,
+    llm_synthesis: Optional[str] = None,
 ) -> bytes:
     """Builds the agri risk-score PDF report from a compute_risk_score() result."""
     styles = _styles()
@@ -837,6 +868,11 @@ def build_agri_risk_report(
         ("Composite Risk Score", f"{score} / 100  ({str(band).upper()})"),
         ("Confidence", f"{confidence}%"),
     ]))
+    flow.append(Spacer(1, 10))
+
+    gauge = _risk_gauge(score if score is not None else 0)
+    gauge.hAlign = "CENTER"
+    flow.append(gauge)
     flow.append(Spacer(1, 6))
 
     flow += _study_area_section(styles, aoi_geojson)
@@ -855,10 +891,24 @@ def build_agri_risk_report(
         "the region's historical alert accuracy.",
         styles["body"]))
 
-    flow.append(Paragraph("4. Sub-Score Breakdown", styles["section_head"]))
+    flow.append(Paragraph("4. Indicator Definitions & Thresholds", styles["section_head"]))
+    flow.append(_metadata_table(styles, [
+        ("Drought (NDDI)", "NDDI = (NDVI \u2212 NDWI) / (NDVI + NDWI). Sub-score reflects the share of "
+                            "the AOI with NDDI > 0.5 (drought-affected threshold)."),
+        ("Vegetation Loss (NDVI)", "Sub-score reflects the share of NDVI \u2265 0.20 (vegetated) area at "
+                                    "the start of the period that dropped below that threshold by the end."),
+        ("Moisture Deficit (SMAP)", "Sub-score combines the magnitude of the soil-moisture drop over the "
+                                      "period with the extent of area below the 0.10 m\u00b3/m\u00b3 dry-stress "
+                                      "threshold at the end of the period."),
+        ("Risk Bands", "LOW: 0\u201329  \u00b7  MODERATE: 30\u201354  \u00b7  HIGH: 55\u201374  \u00b7  "
+                        "SEVERE: 75\u2013100"),
+    ]))
+    flow.append(Spacer(1, 4))
+
+    flow.append(Paragraph("5. Sub-Score Breakdown", styles["section_head"]))
     sub_scores = risk_result.get("sub_scores", {})
     sub_rows = [
-        (k.replace("_", " ").title(), _fmt_num(v, 1) if v is not None else "Not computed", "/ 100")
+        (k.replace("_", " ").title(), _fmt_num(v, 1) if v is not None else "No data available", "/ 100")
         for k, v in sub_scores.items()
     ]
     flow.append(_metrics_table(styles, sub_rows))
@@ -868,12 +918,36 @@ def build_agri_risk_report(
     inputs_failed = risk_result.get("inputs_failed", [])
     if inputs_failed:
         flow.append(Paragraph(
-            f"<b>Note:</b> the following indicators could not be computed for this AOI/period and were "
-            f"excluded from the composite score (weights renormalized over the remainder): "
-            f"{', '.join(inputs_failed)}.",
+            f"<b>Data availability note:</b> the following indicator(s) had no usable satellite coverage "
+            f"for this AOI/period and were excluded from the composite score (weights renormalized over "
+            f"the remainder) \u2014 this is reported as missing data, not assumed to be low-risk: "
+            f"{', '.join(k.replace('_', ' ') for k in inputs_failed)}.",
             styles["caveat"]))
+        flow.append(Spacer(1, 4))
 
-    flow.append(Paragraph("5. Findings & Interpretation", styles["section_head"]))
+    section_num = 6
+
+    if baseline_result and baseline_result.get("seasonal_normal_ndvi") is not None:
+        flow.append(Paragraph(f"{section_num}. Historical Context (5-Year Seasonal Baseline)", styles["section_head"]))
+        status = baseline_result.get("status", "normal").replace("_", " ")
+        flow.append(Paragraph(
+            f"Current-period NDVI for this AOI is {baseline_result['current_ndvi']:.3f}, against a "
+            f"{baseline_result.get('years_used', 5)}-year seasonal-normal mean of "
+            f"{baseline_result['seasonal_normal_ndvi']:.3f} for this same time of year "
+            f"(\u00b1{baseline_result.get('seasonal_std_ndvi', 0):.3f} std. dev.). This places current "
+            f"conditions <b>{status}</b>" + (
+                f" (z-score: {baseline_result['z_score']:+.2f})." if baseline_result.get("z_score") is not None else "."
+            ),
+            styles["body"]))
+        flow.append(Paragraph(
+            "This historical comparison is independent of the composite risk score above \u2014 it answers "
+            "whether current conditions are unusual for this specific time of year at this specific "
+            "location, which a single-period snapshot cannot.",
+            styles["caveat"]))
+        flow.append(Spacer(1, 4))
+        section_num += 1
+
+    flow.append(Paragraph(f"{section_num}. Findings & Interpretation", styles["section_head"]))
     flow.append(Paragraph(risk_result.get("reason", "No specific driver identified."), styles["body"]))
     flow.append(Paragraph(
         f"This assessment carries a confidence of {confidence}%, reflecting "
@@ -882,8 +956,13 @@ def build_agri_risk_report(
             " and this region's accumulated alert-accuracy track record." if len(inputs_used) == 3 else "."
         ),
         styles["body"]))
+    if llm_synthesis:
+        flow.append(Spacer(1, 4))
+        flow.append(Paragraph("<i>Assessment summary:</i>", styles["meta_label"]))
+        flow.append(Paragraph(llm_synthesis, styles["body"]))
+    section_num += 1
 
-    flow.append(Paragraph("6. Limitations & Caveats", styles["section_head"]))
+    flow.append(Paragraph(f"{section_num}. Limitations & Caveats", styles["section_head"]))
     flow.append(Paragraph(
         "This is a satellite-derived composite indicator, not a substitute for field inspection, "
         "agronomic assessment, or official crop-loss/insurance determinations. The scoring model is "
