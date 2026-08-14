@@ -605,8 +605,9 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
     start_stats = get_sm_stats(start_ee, start_ee.advance(3, "month"))
     end_stats = get_sm_stats(end_ee.advance(-3, "month"), end_ee)
 
-    start_mean = (start_stats or {}).get("ssm_mean") or 0
-    end_mean = (end_stats or {}).get("ssm_mean") or 0
+    start_mean = (start_stats or {}).get("ssm_mean")
+    end_mean = (end_stats or {}).get("ssm_mean")
+    data_available = start_mean is not None and end_mean is not None
 
     # Dry stress mask: SM < 0.1 m³/m³
     end_window = smap.filterDate(end_ee.advance(-3, "month"), end_ee).select("ssm")
@@ -615,21 +616,27 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
         # already handles gracefully above; .mean() on an empty collection
         # returns a 0-band image, and comparing that against a constant
         # throws ("Image.lt: ... Got 0 and 1") rather than failing cleanly.
-        dry_km2 = 0.0
+        # IMPORTANT: this is genuinely "we don't know", not "definitely zero
+        # dry area" — reported as null, not 0.0, so it isn't mistaken for a
+        # verified low-risk reading downstream (this was previously a real
+        # bug: a missing-data case and a genuinely-fine case both silently
+        # produced identical 0.0 values with no way to tell them apart).
+        dry_km2 = None
         dry_mask = ee.Image(0).clip(region)  # valid, empty mask — keeps ee_image usable downstream
     else:
         end_sm_img = end_window.mean()
         dry_mask = end_sm_img.lt(0.1)
-        dry_km2 = _calc_area_km2(dry_mask, region, scale=10000)
+        dry_km2 = round(_calc_area_km2(dry_mask, region, scale=10000), 4)
 
     return {
         "metrics": {
-            "start_avg_soil_moisture": round(start_mean, 4),
-            "end_avg_soil_moisture": round(end_mean, 4),
-            "moisture_change": round(end_mean - start_mean, 4),
-            "dry_stress_area_km2": round(dry_km2, 4),
-            "end_min_sm": round((end_stats or {}).get("ssm_min") or 0, 4),
-            "end_max_sm": round((end_stats or {}).get("ssm_max") or 0, 4),
+            "start_avg_soil_moisture": round(start_mean, 4) if start_mean is not None else None,
+            "end_avg_soil_moisture": round(end_mean, 4) if end_mean is not None else None,
+            "moisture_change": round(end_mean - start_mean, 4) if data_available else None,
+            "dry_stress_area_km2": dry_km2,
+            "end_min_sm": round((end_stats or {}).get("ssm_min"), 4) if (end_stats or {}).get("ssm_min") is not None else None,
+            "end_max_sm": round((end_stats or {}).get("ssm_max"), 4) if (end_stats or {}).get("ssm_max") is not None else None,
+            "data_available": data_available,
         },
         "ee_image": dry_mask,
         "ee_geometry": region,

@@ -59,10 +59,16 @@ def _vegetation_subscore(veg_metrics: Dict[str, Any]) -> float:
     return _clamp(loss_pct)
 
 
-def _moisture_subscore(moisture_metrics: Dict[str, Any]) -> float:
-    """0-100: how far soil moisture has dropped, and how dry the end state is."""
+def _moisture_subscore(moisture_metrics: Dict[str, Any]) -> Optional[float]:
+    """0-100: how far soil moisture has dropped, and how dry the end state is.
+    Returns None (not 0) when SMAP had no real coverage for this AOI/window —
+    a missing reading must never look identical to a verified low-risk one."""
+    if not moisture_metrics.get("data_available", True):
+        return None
     change = moisture_metrics.get("moisture_change", 0) or 0
-    dry_km2 = moisture_metrics.get("dry_stress_area_km2", 0) or 0
+    dry_km2 = moisture_metrics.get("dry_stress_area_km2")
+    if dry_km2 is None:
+        return None
     drop_component = _clamp(max(0, -change) * 500)  # moisture is a small fraction (m3/m3)
     dry_component = _clamp(min(dry_km2, 50) * 2)
     return _clamp((drop_component + dry_component) / 2)
@@ -138,6 +144,8 @@ def compute_risk_score(aoi: Dict[str, Any], as_of: Optional[str] = None,
 
     reason = _explain(composite, band, sub_scores, drought_metrics, veg_metrics, moisture_metrics)
 
+    inputs_failed = [k for k, v in sub_scores.items() if v is None]
+
     return {
         "risk_score": composite,
         "band": band,
@@ -145,7 +153,7 @@ def compute_risk_score(aoi: Dict[str, Any], as_of: Optional[str] = None,
         "reason": reason,
         "sub_scores": sub_scores,
         "inputs_used": list(available.keys()),
-        "inputs_failed": errors,
+        "inputs_failed": inputs_failed,
         "period": {"start_date": start_date, "end_date": end_date},
         "raw_metrics": {
             "vegetation": veg_metrics,
@@ -193,7 +201,16 @@ def _explain(score: float, band: str, sub_scores: Dict, drought_m: Dict, veg_m: 
     if sub_scores.get("moisture_deficit") and sub_scores["moisture_deficit"] > 40:
         parts.append("declining soil moisture")
 
-    if not parts:
-        return f"Risk is {band} — no single indicator stands out; conditions look broadly stable for the period analyzed."
+    missing = [k.replace("_", " ") for k, v in sub_scores.items() if v is None]
+    missing_note = ""
+    if missing:
+        missing_note = (
+            f" Note: {', '.join(missing)} could not be assessed (no satellite coverage for this AOI/"
+            f"period) and is excluded from this score rather than assumed low-risk."
+        )
 
-    return f"Risk is {band} ({score}/100), driven mainly by: " + ", ".join(parts) + "."
+    if not parts:
+        base = f"Risk is {band} — no single indicator stands out; conditions look broadly stable for the period analyzed."
+        return base + missing_note
+
+    return f"Risk is {band} ({score}/100), driven mainly by: " + ", ".join(parts) + "." + missing_note
