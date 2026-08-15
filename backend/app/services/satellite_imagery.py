@@ -196,20 +196,20 @@ def get_nddi_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int =
 
 
 def get_soil_moisture_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 90) -> Optional[bytes]:
-    """Colored SMAP soil-moisture map — the coarse (~10km) surface the
-    moisture-deficit sub-score is computed from. Brown = dry, blue = moist.
-    Uses a wider default window than the optical/NDVI/NDDI thumbnails since
-    SMAP has genuinely sparser temporal coverage (matches the 3-month
-    window compute_soil_moisture itself uses for the end-period reading)."""
+    """Colored SMAP soil-moisture map — the surface the moisture-deficit
+    sub-score is computed from. Brown = dry, blue = moist. Uses NASA/SMAP/
+    SPL4SMGP/008 (band sm_surface) — same dataset compute_soil_moisture in
+    gee_client.py uses; the old NASA_USDA/HSL/SMAP10KM_soil_moisture is
+    deprecated and appears to have stopped receiving new imagery."""
     region = _polygon_geometry(aoi)
     center_dt = datetime.strptime(center_date, "%Y-%m-%d")
     start = ee.Date((center_dt - timedelta(days=days_window)).strftime("%Y-%m-%d"))
     end = _cap_end_date((center_dt + timedelta(days=days_window)).strftime("%Y-%m-%d"))
     col = (
-        ee.ImageCollection("NASA_USDA/HSL/SMAP10KM_soil_moisture")
+        ee.ImageCollection("NASA/SMAP/SPL4SMGP/008")
         .filterBounds(region)
         .filterDate(start, end)
-        .select("ssm")
+        .select("sm_surface")
     )
     if col.size().getInfo() == 0:
         return None

@@ -89,12 +89,28 @@ def compute_risk_score(aoi: Dict[str, Any], as_of: Optional[str] = None,
     end_dt = datetime.strptime(end_date, "%Y-%m-%d")
     start_date = (end_dt - timedelta(days=365)).strftime("%Y-%m-%d")
 
+    # compute_vegetation_change expands whatever start_date/end_date it's
+    # given into two full-year composite windows internally:
+    #   start composite = [start_date, start_date + 1yr]
+    #   end composite   = [end_date - 1yr, end_date]
+    # Passing a start_date exactly 365 days before end_date (as above) makes
+    # start_date + 1yr == end_date and end_date - 1yr == start_date — BOTH
+    # internal windows collapse to the identical [start_date, end_date]
+    # range. Since median() composites are deterministic, start/end
+    # vegetation masks come out pixel-for-pixel identical, so loss and gain
+    # are mathematically guaranteed to compute to exactly zero every time,
+    # for every region — this was the real cause of "vegetation loss is
+    # always 0.0", not a data-availability issue. Using a start_date 2
+    # years back (only for this call) makes the two internal windows land
+    # on genuinely distinct, adjacent 1-year periods instead.
+    veg_start_date = (end_dt - timedelta(days=730)).strftime("%Y-%m-%d")
+
     errors = []
     error_details = {}
     veg_metrics, drought_metrics, moisture_metrics = {}, {}, {}
 
     try:
-        veg = compute_vegetation_change(aoi=aoi, start_date=start_date, end_date=end_date)
+        veg = compute_vegetation_change(aoi=aoi, start_date=veg_start_date, end_date=end_date)
         veg_metrics = veg["metrics"]
     except Exception as e:
         logger.warning(f"risk_scoring: vegetation_change failed: {e}", exc_info=True)
@@ -163,7 +179,7 @@ def compute_risk_score(aoi: Dict[str, Any], as_of: Optional[str] = None,
         "provenance": {
             "vegetation_source": "Sentinel-2 (COPERNICUS/S2_SR_HARMONIZED)",
             "drought_source": "Sentinel-2 NDDI",
-            "moisture_source": "NASA_USDA/HSL/SMAP10KM_soil_moisture",
+            "moisture_source": "NASA_SMAP_SPL4SMGP_008",
             "computed_at": datetime.utcnow().isoformat() + "Z",
         },
     }

@@ -581,25 +581,40 @@ def compute_deforestation(aoi: Dict, start_date: str, end_date: str) -> Dict:
 
 
 def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
-    """Soil moisture using SMAP L3."""
+    """Soil moisture using SMAP L4 (NASA/SMAP/SPL4SMGP/008).
+
+    Was previously NASA_USDA/HSL/SMAP10KM_soil_moisture (band "ssm"), which
+    GEE flags as deprecated in favor of this dataset. That old collection
+    appears to have stopped receiving new imagery some time ago — every
+    request for a recent window (e.g. the last 3 months) was returning zero
+    images regardless of which AOI was queried, which is exactly what a
+    frozen/discontinued collection looks like (a real per-region data gap
+    would vary by region and season, not fail identically everywhere,
+    every time). SPL4SMGP.008 is NASA's actively-maintained 3-hourly
+    replacement (band "sm_surface")."""
     logger.info(f"GEE: soil_moisture {start_date} → {end_date}")
     _require_start_after(start_date, "2015-04-01", "SMAP")
     end_ee = _cap_end_date(end_date)
     region = _polygon_geometry(aoi)
     start_ee = ee.Date(start_date)
 
-    smap = ee.ImageCollection("NASA_USDA/HSL/SMAP10KM_soil_moisture").filterBounds(region)
+    smap = ee.ImageCollection("NASA/SMAP/SPL4SMGP/008").filterBounds(region)
 
     def get_sm_stats(start, end):
-        col = smap.filterDate(start, end).select("ssm")
+        col = smap.filterDate(start, end).select("sm_surface")
         if col.size().getInfo() == 0:
             return None
         img = col.mean()
         stats = img.reduceRegion(
             reducer=ee.Reducer.mean().combine(ee.Reducer.min(), sharedInputs=True)
                                      .combine(ee.Reducer.max(), sharedInputs=True),
-            geometry=region, scale=10000, maxPixels=1e9,
+            geometry=region, scale=10000, maxPixels=1e9, bestEffort=True, tileScale=4,
         ).getInfo()
+        # reduceRegion output keys are named after the (renamed) band, so
+        # normalize back to the "ssm_*" shape the rest of this function
+        # already expects rather than touching every call site below.
+        if stats:
+            stats = {k.replace("sm_surface", "ssm"): v for k, v in stats.items()}
         return stats
 
     start_stats = get_sm_stats(start_ee, start_ee.advance(3, "month"))
@@ -610,7 +625,7 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
     data_available = start_mean is not None and end_mean is not None
 
     # Dry stress mask: SM < 0.1 m³/m³
-    end_window = smap.filterDate(end_ee.advance(-3, "month"), end_ee).select("ssm")
+    end_window = smap.filterDate(end_ee.advance(-3, "month"), end_ee).select("sm_surface")
     if end_window.size().getInfo() == 0:
         # No SMAP coverage for this AOI/window — same condition get_sm_stats
         # already handles gracefully above; .mean() on an empty collection
@@ -618,9 +633,7 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
         # throws ("Image.lt: ... Got 0 and 1") rather than failing cleanly.
         # IMPORTANT: this is genuinely "we don't know", not "definitely zero
         # dry area" — reported as null, not 0.0, so it isn't mistaken for a
-        # verified low-risk reading downstream (this was previously a real
-        # bug: a missing-data case and a genuinely-fine case both silently
-        # produced identical 0.0 values with no way to tell them apart).
+        # verified low-risk reading downstream.
         dry_km2 = None
         dry_mask = ee.Image(0).clip(region)  # valid, empty mask — keeps ee_image usable downstream
     else:
