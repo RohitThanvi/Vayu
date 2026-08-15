@@ -36,6 +36,15 @@ const WEATHER_LAYERS = {
   pressure: { type:'tile',     owmLayer: 'pressure_new', label: 'Air Pressure', icon: 'target', opacity: 0.55 },
 };
 
+// Bhuvan/GEE-Explorer-style toggleable satellite imagery layers — each
+// backed by a cached GEE tile URL fetched from /api/v1/layers/{key}.
+const SATELLITE_LAYERS = {
+  true_color: { label: 'True Color',      icon: 'map',    opacity: 0.85, desc: 'Sentinel-2, recent ~30 days' },
+  ndvi:       { label: 'NDVI Vegetation', icon: 'leaf',   opacity: 0.75, desc: 'Vegetation health index' },
+  sar:        { label: 'SAR / Microwave', icon: 'radio',  opacity: 0.75, desc: 'Sentinel-1, sees through cloud cover' },
+  thermal:    { label: 'Thermal / IR',    icon: 'thermo', opacity: 0.75, desc: 'Landsat surface temperature' },
+};
+
 // Official OpenWeatherMap Weather Maps 1.0 color stops (openweathermap.org/map_legend),
 // so the legend shown in the app matches exactly what the tiles are actually
 // drawing rather than an approximation. Pressure converted Pa -> hPa.
@@ -396,6 +405,36 @@ function WeatherLayerToggles({ active, onToggle }) {
   );
 }
 
+function SatelliteLayerToggles({ active, onToggle, loadingKey }) {
+  return (
+    <div>
+      <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, marginBottom:9, textTransform:'uppercase' }}>Satellite Layers</div>
+      <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
+        {Object.entries(SATELLITE_LAYERS).map(([key, meta]) => {
+          const on = !!active[key];
+          const loading = loadingKey === key;
+          return (
+            <button key={key} onClick={() => onToggle(key)} disabled={loading}
+              style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44, width:'100%',
+                fontFamily:S.mono, letterSpacing:0.3,
+                background: on ? 'rgba(126,184,212,0.10)' : S.surface2,
+                border: `1px solid ${on ? S.accent : S.border}`, borderRadius:3,
+                color: on ? S.accent : S.text2, cursor: loading ? 'wait' : 'pointer',
+                textAlign:'left', transition:'border-color 0.15s, background 0.15s' }}>
+              <Icon name={meta.icon} size={18} style={{ flexShrink:0, opacity: on ? 1 : 0.75 }} />
+              <span style={{ flex:1 }}>
+                <span style={{ fontSize:14, display:'block' }}>{meta.label}</span>
+                <span style={{ fontSize:11, color:S.text3, display:'block', marginTop:1 }}>{meta.desc}</span>
+              </span>
+              <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{loading ? '...' : (on ? 'ON' : 'OFF')}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Map ───────────────────────────────────────────────────────────────────────
 function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef }) {
   const divRef = useRef(null);
@@ -454,6 +493,90 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
 // places (districts, cities, blocks) when one exists in OSM, not just a
 // point — falls back to a small box around the point if OSM only has a
 // point for that place. ─────────────────────────────────────────────────────
+// ── Air quality check — queries the current map-center coordinates against
+// Open-Meteo's free Air Quality API (same no-key provider as the wind
+// layer) and shows PM2.5/PM10/US AQI with a color-coded category. ─────────
+function AirQualityCheck({ mapRef, apiUrl }) {
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const check = async () => {
+    const map = mapRef.current;
+    if (!map) return;
+    const center = map.getCenter();
+    setLoading(true); setError(null); setResult(null);
+    try {
+      const resp = await fetch(`${apiUrl}/api/v1/intel/air-quality?lat=${center.lat}&lon=${center.lng}`);
+      if (!resp.ok) throw new Error((await resp.json()).detail || 'Air quality lookup failed');
+      setResult(await resp.json());
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+      <div style={{ fontSize:14, color:S.text3, fontFamily:S.mono, letterSpacing:2, textTransform:'uppercase' }}>Air Quality</div>
+      <div style={{ fontSize:13, color:S.text3, lineHeight:1.6 }}>
+        Checks current air quality at the center of the visible map — pan the map to a location first, then check.
+      </div>
+      <button onClick={check} disabled={loading}
+        style={{
+          padding:'8px', fontSize:13, fontFamily:S.mono, letterSpacing:1.5, textTransform:'uppercase',
+          background: loading ? S.surface2 : 'rgba(126,184,212,0.1)',
+          border:`1px solid ${loading ? S.border : S.accent}`, color: loading ? S.text3 : S.accent,
+          cursor: loading ? 'not-allowed' : 'pointer',
+        }}>
+        {loading ? 'CHECKING...' : 'CHECK AIR QUALITY HERE'}
+      </button>
+      {error && (
+        <div style={{ fontSize:13, color:S.text2, background:'rgba(139,32,32,0.08)', border:'1px solid rgba(139,32,32,0.3)', padding:'7px 9px' }}>
+          {error}
+        </div>
+      )}
+      {result && (
+        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+          <div style={{
+            display:'flex', alignItems:'baseline', gap:10, padding:'12px',
+            background:S.surface2, border:`1px solid ${result.color}`,
+          }}>
+            <div style={{ fontSize:28, fontFamily:S.mono, fontWeight:700, color:result.color }}>
+              {result.us_aqi ?? 'N/A'}
+            </div>
+            <div>
+              <div style={{ fontSize:13, fontFamily:S.mono, letterSpacing:1, textTransform:'uppercase', color:result.color }}>
+                {result.category}
+              </div>
+              <div style={{ fontSize:12, color:S.text3 }}>US AQI</div>
+            </div>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:4 }}>
+            <div style={{ background:S.surface2, border:`1px solid ${S.border}`, padding:'7px 8px' }}>
+              <div style={{ fontSize:12, color:S.text3, marginBottom:3 }}>PM2.5</div>
+              <div style={{ fontSize:15, fontFamily:S.mono, color:S.text }}>{result.pm2_5 ?? 'N/A'} μg/m³</div>
+            </div>
+            <div style={{ background:S.surface2, border:`1px solid ${S.border}`, padding:'7px 8px' }}>
+              <div style={{ fontSize:12, color:S.text3, marginBottom:3 }}>PM10</div>
+              <div style={{ fontSize:15, fontFamily:S.mono, color:S.text }}>{result.pm10 ?? 'N/A'} μg/m³</div>
+            </div>
+            <div style={{ background:S.surface2, border:`1px solid ${S.border}`, padding:'7px 8px' }}>
+              <div style={{ fontSize:12, color:S.text3, marginBottom:3 }}>NO₂</div>
+              <div style={{ fontSize:15, fontFamily:S.mono, color:S.text }}>{result.nitrogen_dioxide ?? 'N/A'} μg/m³</div>
+            </div>
+            <div style={{ background:S.surface2, border:`1px solid ${S.border}`, padding:'7px 8px' }}>
+              <div style={{ fontSize:12, color:S.text3, marginBottom:3 }}>O₃</div>
+              <div style={{ fontSize:15, fontFamily:S.mono, color:S.text }}>{result.ozone ?? 'N/A'} μg/m³</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PlaceSearchBar({ mapRef, drawGroupRef, aoiBoundsRef, onAreaDrawn, isMobile }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -571,7 +694,8 @@ function PlaceSearchBar({ mapRef, drawGroupRef, aoiBoundsRef, onAreaDrawn, isMob
             {results.map((f, i) => {
               const isPoint = f.geometry?.type === 'Point';
               return (
-                <button key={i} onClick={() => selectPlace(f)}
+                <button key={i}
+                  onMouseDown={e => { e.preventDefault(); selectPlace(f); }}
                   style={{
                     display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
                     background: 'transparent', border: 'none', borderBottom: i < results.length - 1 ? '1px solid #1c2027' : 'none',
@@ -731,7 +855,7 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI,
   isLoading,error,result,jobStatus, onSubmit, history,onSelectHistory, vesselStats, onClose, isMobile,
-  weatherLayers, onToggleWeather, apiUrl }) {
+  weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const TABS = [
@@ -903,6 +1027,15 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
                 Temperature and Air Pressure need a free OpenWeatherMap key (openweathermap.org, no card required) set as VITE_OWM_API_KEY. Wind Speed doesn't need it — it's animated live from our own backend.
               </div>
             )}
+            <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:14 }}>
+              <SatelliteLayerToggles active={satelliteLayers} onToggle={onToggleSatelliteLayer} loadingKey={satelliteLoadingKey} />
+              <div style={{ fontSize:13, color:S.text3, lineHeight:1.6, marginTop:9 }}>
+                Whole-map satellite imagery layers, similar to ISRO Bhuvan's layer switcher — the first toggle of each layer takes a few seconds to build server-side, then stays cached for 6 hours.
+              </div>
+            </div>
+            <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:14 }}>
+              <AirQualityCheck mapRef={mapRef} apiUrl={apiUrl} />
+            </div>
           </div>
         )}
         {tab === 'Agri' && <AgriPanel drawnAOI={drawnAOI} apiUrl={apiUrl} />}
@@ -986,11 +1119,14 @@ export default function App() {
   const [jobStatus, setJobStatus] = useState(null);
   const [history, setHistory]     = useState([]);
   const [weatherLayers, setWeatherLayers] = useState({ temp:false, wind:false, pressure:false });
+  const [satelliteLayers, setSatelliteLayers] = useState({ true_color:false, ndvi:false, sar:false, thermal:false });
+  const [satelliteLoadingKey, setSatelliteLoadingKey] = useState(null);
 
   const mapRef          = useRef(null);
   const drawGroupRef    = useRef(null);
   const layersRef       = useRef([]);
   const weatherTileRefs = useRef({});     // 'temp'|'wind'|'pressure' -> L.tileLayer instance
+  const satelliteTileRefs = useRef({});   // 'true_color'|'ndvi'|'sar'|'thermal' -> L.tileLayer instance
   const pollRef         = useRef(null);
   const aoiBoundsRef    = useRef(null);
   const intelLayerRef   = useRef(null);   // LayerGroup for intel markers
@@ -1235,6 +1371,38 @@ export default function App() {
     });
   }, []);
 
+  const handleToggleSatelliteLayer = useCallback((key) => {
+    if (!mapRef.current) return;
+
+    // Turning off: synchronous, no fetch needed.
+    if (satelliteLayers[key]) {
+      const layer = satelliteTileRefs.current[key];
+      if (layer) { try { mapRef.current.removeLayer(layer); } catch(e) {} }
+      delete satelliteTileRefs.current[key];
+      setSatelliteLayers(prev => ({ ...prev, [key]: false }));
+      return;
+    }
+
+    // Turning on: fetch the cached tile URL first, then add the layer —
+    // the composite/tile-URL build can take a few seconds server-side the
+    // first time (cached for 6h after), so show a loading state rather
+    // than optimistically flipping on like the weather tiles do.
+    setSatelliteLoadingKey(key);
+    fetch(`${API_URL}/api/v1/layers/${key}`)
+      .then(r => { if (!r.ok) throw new Error(`layers/${key} ${r.status}`); return r.json(); })
+      .then(data => {
+        if (!mapRef.current) return;
+        const meta = SATELLITE_LAYERS[key];
+        const tl = L.tileLayer(data.tile_url, { opacity: meta.opacity, zIndex: 4 }).addTo(mapRef.current);
+        satelliteTileRefs.current[key] = tl;
+        setSatelliteLayers(prev => ({ ...prev, [key]: true }));
+      })
+      .catch(err => {
+        console.error(`satellite layer '${key}' load failed:`, err);
+      })
+      .finally(() => setSatelliteLoadingKey(null));
+  }, [satelliteLayers]);
+
   const handleEventClick = useCallback((event) => {
     if (!mapRef.current) return;
     setMobilePanel('map');
@@ -1342,7 +1510,9 @@ export default function App() {
       onSelectHistory={r => { setResult(r); clearLayers(); }}
       vesselStats={vesselStats}
       weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
-      isMobile={isMobile} onClose={() => setMobilePanel('map')} apiUrl={API_URL} />
+      satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
+      satelliteLoadingKey={satelliteLoadingKey}
+      isMobile={isMobile} onClose={() => setMobilePanel('map')} apiUrl={API_URL} mapRef={mapRef} />
   );
 
   const intelPanelEl = (
