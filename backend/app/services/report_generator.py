@@ -492,11 +492,11 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "soil_moisture": {
         "title": "Soil Moisture Analysis",
-        "sources": ["NASA/USDA SMAP 10km Soil Moisture (NASA_USDA/HSL/SMAP10KM_soil_moisture)", "~10 km spatial resolution"],
+        "sources": ["NASA SMAP L4 Global (NASA/SMAP/SPL4SMGP/008)", "~9 km spatial resolution, 3-hourly"],
         "methodology": [
-            "Surface soil moisture (ssm) is sourced from the SMAP 10 km product. Start- and end-period "
-            "means are computed as the mean across all available passes in a 3-month window at each end "
-            "of the analysis period.",
+            "Surface soil moisture (sm_surface, 0\u20135 cm depth) is sourced from the SMAP L4 3-hourly "
+            "global product. Start- and end-period means are computed as the mean across all available "
+            "3-hourly readings in a 3-month window at each end of the analysis period.",
             "Dry-stress area is the extent falling below 0.10 m\u00b3/m\u00b3 volumetric soil moisture in "
             "the end-period composite.",
         ],
@@ -510,7 +510,7 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
         },
         "findings_fn": _soil_moisture_findings,
         "limitations": (
-            "SMAP's ~10 km native resolution averages over a large area; results are appropriate for "
+            "SMAP L4's ~9 km native resolution averages over a large area; results are appropriate for "
             "regional/district-scale trends and not for parcel-level irrigation scheduling."
         ),
     },
