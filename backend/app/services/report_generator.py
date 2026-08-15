@@ -832,6 +832,7 @@ def build_analysis_report(
     metrics: Dict[str, Any],
     before_image_bytes: Optional[bytes] = None,
     after_image_bytes: Optional[bytes] = None,
+    llm_synthesis: Optional[str] = None,
 ) -> bytes:
     """Builds one of the 9 satellite-analysis PDF reports. Returns raw PDF bytes."""
     spec = ANALYSIS_SPECS.get(analysis_type)
@@ -871,6 +872,9 @@ def build_analysis_report(
 
     findings = spec["findings_fn"](metrics)
     flow += _findings_section(styles, findings)
+    if llm_synthesis:
+        flow.append(Paragraph("<i>Assessment summary:</i>", styles["meta_label"]))
+        flow.append(Paragraph(llm_synthesis, styles["body"]))
     flow += _limitations_section(styles, spec["limitations"])
 
     doc.build(flow, onFirstPage=lambda c, d: _footer_canvas(c, d, generated_at),

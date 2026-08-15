@@ -17,6 +17,7 @@ from .api import endpoints
 from .api.intel_endpoints import router as intel_router
 from .api.agri_endpoints import router as agri_router
 from .api.report_endpoints import router as report_router
+from .api.layers_endpoints import router as layers_router
 from .services.intel.scheduler import get_scheduler
 from .services.agri.alert_engine import get_agri_engine
 from .services.agri.whatsapp import send_whatsapp_message
@@ -77,6 +78,7 @@ app.include_router(endpoints.router, prefix="/api/v1")
 app.include_router(intel_router,     prefix="/api/v1")
 app.include_router(agri_router,      prefix="/api/v1")
 app.include_router(report_router,    prefix="/api/v1")
+app.include_router(layers_router,    prefix="/api/v1")
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

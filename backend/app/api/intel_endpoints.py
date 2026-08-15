@@ -272,3 +272,12 @@ async def get_wind_field():
     if data is None:
         raise HTTPException(status_code=503, detail="wind field not yet available — refreshes shortly after startup")
     return data
+
+
+@router.get("/air-quality", summary="Air quality (PM2.5, PM10, US AQI) at a point")
+async def get_air_quality_endpoint(lat: float, lon: float):
+    from ..services.weather.air_quality import get_air_quality
+    result = await get_air_quality(lat, lon)
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=f"Air quality lookup failed: {result['error']}")
+    return result

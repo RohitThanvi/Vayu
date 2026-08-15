@@ -84,11 +84,22 @@ async def analysis_report(req: AnalysisReportRequest):
                 # a thumbnail fetch issue.
                 logger.warning(f"report {label} imagery fetch failed, continuing without it: {r}")
 
+    llm_synthesis = None
+    try:
+        context = {
+            "analysis_type": req.analysis_type, "metrics": metrics,
+            "period": {"start_date": req.start_date, "end_date": req.end_date},
+        }
+        llm_synthesis = await asyncio.to_thread(get_llm_synthesis, context)
+    except Exception as e:
+        logger.warning(f"report LLM synthesis failed, continuing without it: {e}")
+
     try:
         pdf_bytes = build_analysis_report(
             analysis_type=req.analysis_type, aoi_geojson=req.aoi_geojson,
             start_date=req.start_date, end_date=req.end_date, metrics=metrics,
             before_image_bytes=before_bytes, after_image_bytes=after_bytes,
+            llm_synthesis=llm_synthesis,
         )
     except Exception as e:
         logger.error(f"report generation failed: {e}", exc_info=True)
