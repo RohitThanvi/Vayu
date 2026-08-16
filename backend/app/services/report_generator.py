@@ -625,6 +625,67 @@ def _study_area_section(styles, aoi_geojson: Dict[str, Any]) -> List:
     return flow
 
 
+def _hex_to_rgb(hex_color: str):
+    h = hex_color.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+
+def _lerp_color(c1: str, c2: str, t: float):
+    r1, g1, b1 = _hex_to_rgb(c1)
+    r2, g2, b2 = _hex_to_rgb(c2)
+    return colors.Color(r1 + (r2 - r1) * t, g1 + (g2 - g1) * t, b1 + (b2 - b1) * t)
+
+
+def _gradient_legend(palette: List[str], vmin: float, vmax: float, unit: str,
+                      tick_labels: Optional[List[str]] = None, width: int = 300, height: int = 34) -> Drawing:
+    """A horizontal color-gradient legend bar (min -> max) with tick labels
+    — makes an index map (NDVI/NDDI/soil moisture) actually readable: what
+    does this color correspond to, in real units. Approximates a smooth
+    gradient using many thin segments interpolated across the palette
+    stops, since reportlab has no native multi-stop linear-gradient fill."""
+    d = Drawing(width, height)
+    bar_x, bar_y, bar_w, bar_h = 5, 16, width - 10, 12
+    n_segments = 60
+    n_stops = len(palette) - 1
+    for i in range(n_segments):
+        t = i / n_segments
+        stop_pos = t * n_stops
+        stop_idx = min(int(stop_pos), n_stops - 1)
+        local_t = stop_pos - stop_idx
+        color = _lerp_color(palette[stop_idx], palette[stop_idx + 1], local_t)
+        seg_x = bar_x + bar_w * t
+        seg_w = bar_w / n_segments + 0.5  # slight overlap to avoid hairline gaps
+        d.add(Rect(seg_x, bar_y, seg_w, bar_h, fillColor=color, strokeColor=None))
+    d.add(Rect(bar_x, bar_y, bar_w, bar_h, fillColor=None, strokeColor=colors.HexColor("#5c6673"), strokeWidth=0.5))
+
+    labels = tick_labels or [f"{vmin:g}", f"{(vmin + vmax) / 2:g}", f"{vmax:g}"]
+    for i, label in enumerate(labels):
+        x = bar_x + bar_w * (i / (len(labels) - 1))
+        anchor = "start" if i == 0 else "end" if i == len(labels) - 1 else "middle"
+        d.add(String(x, bar_y - 10, label, fontSize=7, fillColor=colors.HexColor("#5c6673"),
+                      textAnchor=anchor, fontName="Helvetica"))
+    if unit:
+        d.add(String(bar_x + bar_w / 2, bar_y + bar_h + 4, unit, fontSize=7,
+                      fillColor=colors.HexColor("#5c6673"), textAnchor="middle", fontName="Helvetica-Oblique"))
+    return d
+
+
+# Palette definitions shared with satellite_imagery.py's getThumbURL calls —
+# kept in sync manually since one lives in report generation (reportlab
+# Drawing) and the other in GEE visualization params (plain hex list); if
+# satellite_imagery.py's palette changes, this must be updated to match.
+NDVI_LEGEND = {"palette": ["#a83232", "#d9a441", "#e8e88a", "#8fd453", "#1a7a1a"], "min": -0.2, "max": 0.8,
+                "labels": ["-0.2 (bare/water)", "0.3", "0.8 (dense veg.)"], "unit": "NDVI"}
+NDDI_LEGEND = {"palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"], "min": -0.5, "max": 1.0,
+                "labels": ["-0.5 (wet)", "0.25", "1.0 (severe drought)"], "unit": "NDDI"}
+MOISTURE_LEGEND = {"palette": ["#8b6b3d", "#c9a86a", "#a8c9d4", "#4a9ec9", "#1a4d7a"], "min": 0, "max": 0.5,
+                     "labels": ["0.0 (dry)", "0.25", "0.5 m\u00b3/m\u00b3 (saturated)"], "unit": "Volumetric soil moisture"}
+SAR_LEGEND = {"palette": ["#0a0a0a", "#4a4a4a", "#8a8a8a", "#c8c8c8", "#f5f5f5"], "min": -25, "max": 0,
+               "labels": ["-25 dB (smooth/water)", "-12.5", "0 dB (rough/urban)"], "unit": "VH backscatter"}
+THERMAL_LEGEND = {"palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"], "min": 0, "max": 45,
+                    "labels": ["0\u00b0C", "22.5\u00b0C", "45\u00b0C"], "unit": "Land surface temperature"}
+
+
 def _risk_gauge(score: float) -> Drawing:
     """A horizontal color-banded gauge with a marker at the actual score —
     gives the risk number a visual anchor instead of being just a line of
@@ -653,14 +714,17 @@ def _risk_gauge(score: float) -> Drawing:
     return d
 
 
-def _imagery_grid_section(styles, images: List[Tuple[str, Optional[bytes]]], section_num: int) -> List:
+def _imagery_grid_section(styles, images: List[Dict[str, Any]], section_num: int) -> List:
     """Like _imagery_section but for an arbitrary set of labeled images laid
     out 2-per-row — used for the agri report's per-indicator maps (true
     color, NDVI, NDDI, soil moisture) rather than a single before/after pair.
-    Any entry with bytes=None is skipped entirely rather than shown as a
-    blank placeholder, since a missing one here isn't a failure worth
-    dwelling on the way a missing before/after comparison would be."""
-    available = [(label, b) for label, b in images if b]
+
+    Each entry in `images` is a dict: {"label", "bytes", "caption"
+    (source/sensor/date, one line), "legend" (optional dict with palette/
+    min/max/unit/labels — omit for true-color/photographic imagery that
+    isn't mapping values to colors)}. Any entry with bytes=None is skipped
+    entirely rather than shown as a blank placeholder."""
+    available = [img for img in images if img.get("bytes")]
     flow = [Paragraph(f"{section_num}. Satellite Imagery by Indicator", styles["section_head"])]
     if not available:
         flow.append(Paragraph(
@@ -671,25 +735,37 @@ def _imagery_grid_section(styles, images: List[Tuple[str, Optional[bytes]]], sec
         return flow
 
     img_w = 78 * mm
+    cell_style = ParagraphStyle("grid_caption", parent=styles["footer"], alignment=TA_CENTER, spaceBefore=3)
+
+    def _cell(img):
+        content = [Image(io.BytesIO(img["bytes"]), width=img_w, height=img_w)]
+        content.append(Paragraph(f"<b>{img['label']}</b>", cell_style))
+        if img.get("caption"):
+            content.append(Paragraph(img["caption"], cell_style))
+        if img.get("legend"):
+            leg = img["legend"]
+            drawing = _gradient_legend(leg["palette"], leg["min"], leg["max"], leg["unit"],
+                                        tick_labels=leg.get("labels"), width=int(img_w))
+            drawing.hAlign = "CENTER"
+            content.append(Spacer(1, 3))
+            content.append(drawing)
+        return content
+
     rows = []
     for i in range(0, len(available), 2):
         pair = available[i:i + 2]
-        img_cells = [Image(io.BytesIO(b), width=img_w, height=img_w) for _, b in pair]
-        label_cells = [Paragraph(f"<i>{label}</i>", styles["footer"]) for label, _ in pair]
+        row = [_cell(img) for img in pair]
         if len(pair) == 1:
-            img_cells.append("")
-            label_cells.append("")
-        rows.append(img_cells)
-        rows.append(label_cells)
+            row.append("")
+        rows.append(row)
 
     t = Table(rows, colWidths=[img_w + 4, img_w + 4])
     style_cmds = [
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
     ]
-    for r in range(1, len(rows), 2):
-        style_cmds.append(("TOPPADDING", (0, r), (-1, r), 4))
     t.setStyle(TableStyle(style_cmds))
     flow.append(t)
     flow.append(Spacer(1, 4))
@@ -697,12 +773,16 @@ def _imagery_grid_section(styles, images: List[Tuple[str, Optional[bytes]]], sec
 
 
 def _imagery_section(styles, before_bytes: Optional[bytes], after_bytes: Optional[bytes],
-                      before_label: str, after_label: str) -> List:
+                      before_label: str, after_label: str, source_caption: str = "",
+                      legend: Optional[Dict[str, Any]] = None) -> List:
     """Embeds actual satellite imagery (not just derived metrics) side by
     side, so the reader can see the real scene a finding is drawn from.
     Falls back to a single centered image when only one side is available
     (e.g. the agri risk report only has a current-conditions image, not a
-    before/after pair)."""
+    before/after pair). source_caption is one line (satellite/sensor,
+    resolution) shown under both images; legend (optional) renders a
+    color-gradient key for imagery that maps values to colors (e.g. SAR
+    backscatter) rather than being a plain true-color photo."""
     flow = [Paragraph("2. Satellite Imagery", styles["section_head"])]
     if not before_bytes and not after_bytes:
         flow.append(Paragraph(
@@ -711,6 +791,8 @@ def _imagery_section(styles, before_bytes: Optional[bytes], after_bytes: Optiona
             "same underlying satellite collections independently of this thumbnail.",
             styles["caveat"]))
         return flow
+
+    cell_style = ParagraphStyle("img_caption_center", parent=styles["footer"], alignment=TA_CENTER)
 
     if bool(before_bytes) != bool(after_bytes):
         # Single-image case — center it full-width rather than pairing with
@@ -721,22 +803,38 @@ def _imagery_section(styles, before_bytes: Optional[bytes], after_bytes: Optiona
         img.hAlign = "CENTER"
         flow.append(img)
         if label:
-            flow.append(Paragraph(f"<i>{label}</i>", ParagraphStyle(
-                "img_label_center", parent=styles["footer"], alignment=TA_CENTER)))
+            flow.append(Paragraph(f"<b>{label}</b>", cell_style))
+        if source_caption:
+            flow.append(Paragraph(source_caption, cell_style))
+        if legend:
+            d = _gradient_legend(legend["palette"], legend["min"], legend["max"], legend["unit"],
+                                  tick_labels=legend.get("labels"), width=220)
+            d.hAlign = "CENTER"
+            flow.append(Spacer(1, 3))
+            flow.append(d)
         flow.append(Spacer(1, 4))
         return flow
 
     img_w = 78 * mm
-    cells, labels = [], []
-    for b, label in ((before_bytes, before_label), (after_bytes, after_label)):
-        cells.append(Image(io.BytesIO(b), width=img_w, height=img_w))
-        labels.append(Paragraph(f"<i>{label}</i>", styles["footer"]))
 
-    t = Table([cells, labels], colWidths=[img_w + 4, img_w + 4])
+    def _cell(b, label):
+        content = [Image(io.BytesIO(b), width=img_w, height=img_w), Paragraph(f"<b>{label}</b>", cell_style)]
+        if source_caption:
+            content.append(Paragraph(source_caption, cell_style))
+        if legend:
+            d = _gradient_legend(legend["palette"], legend["min"], legend["max"], legend["unit"],
+                                  tick_labels=legend.get("labels"), width=int(img_w))
+            d.hAlign = "CENTER"
+            content.append(Spacer(1, 3))
+            content.append(d)
+        return content
+
+    cells = [_cell(before_bytes, before_label), _cell(after_bytes, after_label)]
+
+    t = Table([cells], colWidths=[img_w + 4, img_w + 4])
     t.setStyle(TableStyle([
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, 0), "TOP"),
-        ("TOPPADDING", (0, 1), (-1, 1), 4),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
     ]))
     flow.append(t)
@@ -860,8 +958,15 @@ def build_analysis_report(
     flow.append(Spacer(1, 6))
 
     flow += _study_area_section(styles, aoi_geojson)
+    if analysis_type == "flood_detection":
+        img_source_caption = "Sentinel-1 SAR (VH polarization), \u00b115 days around each date"
+        img_legend = SAR_LEGEND
+    else:
+        img_source_caption = "Sentinel-2, cloud-masked true-color composite, \u00b130 days around each date"
+        img_legend = None
     flow += _imagery_section(styles, before_image_bytes, after_image_bytes,
-                              f"Start of period ({start_date})", f"End of period ({end_date})")
+                              f"Start of period ({start_date})", f"End of period ({end_date})",
+                              source_caption=img_source_caption, legend=img_legend)
     flow += _methodology_section(styles, spec["sources"], spec["methodology"])
 
     metric_rows = []
@@ -926,11 +1031,19 @@ def build_agri_risk_report(
     flow.append(Spacer(1, 6))
 
     flow += _study_area_section(styles, aoi_geojson)
+    end_date_str = period.get("end_date", "N/A")
     flow += _imagery_grid_section(styles, [
-        ("True Color (current conditions)", image_bytes),
-        ("NDVI \u2014 Vegetation (drives Vegetation Loss score)", ndvi_image_bytes),
-        ("NDDI \u2014 Drought (drives Drought score)", nddi_image_bytes),
-        ("SMAP Soil Moisture (drives Moisture Deficit score)", moisture_image_bytes),
+        {"label": "True Color (current conditions)", "bytes": image_bytes,
+         "caption": f"Sentinel-2, cloud-masked composite \u00b130 days around {end_date_str}"},
+        {"label": "NDVI \u2014 Vegetation", "bytes": ndvi_image_bytes,
+         "caption": f"Sentinel-2, \u00b130 days around {end_date_str} \u00b7 drives the Vegetation Loss score",
+         "legend": NDVI_LEGEND},
+        {"label": "NDDI \u2014 Drought", "bytes": nddi_image_bytes,
+         "caption": f"Sentinel-2, \u00b130 days around {end_date_str} \u00b7 drives the Drought score",
+         "legend": NDDI_LEGEND},
+        {"label": "SMAP Soil Moisture", "bytes": moisture_image_bytes,
+         "caption": f"NASA SMAP L4, \u00b190 days around {end_date_str} \u00b7 drives the Moisture Deficit score",
+         "legend": MOISTURE_LEGEND},
     ], section_num=2)
 
     flow.append(Paragraph("3. Methodology", styles["section_head"]))
