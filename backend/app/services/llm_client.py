@@ -109,13 +109,14 @@ def parse_natural_language_query(text: str) -> StructuredQuery:
 
     try:
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": text},
             ],
             temperature=0.0,
-            max_tokens=200,
+            max_tokens=500,
+            reasoning_effort="low",
         )
         raw = resp.choices[0].message.content
         logger.info(f"LLM raw response: {raw}")
@@ -145,13 +146,14 @@ def generate_summary(query: StructuredQuery, metrics: dict) -> str:
     }
     try:
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": _SUMMARY_SYSTEM},
                 {"role": "user", "content": json.dumps(payload)},
             ],
             temperature=0.1,
-            max_tokens=60,
+            max_tokens=200,
+            reasoning_effort="low",
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
@@ -170,13 +172,14 @@ def generate_insight(query: StructuredQuery, metrics: dict) -> Optional[str]:
     }
     try:
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": _INSIGHT_SYSTEM},
                 {"role": "user", "content": json.dumps(payload)},
             ],
             temperature=0.3,
-            max_tokens=120,
+            max_tokens=350,
+            reasoning_effort="low",
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
@@ -205,13 +208,14 @@ def get_llm_synthesis(context: dict) -> Optional[str]:
     )
     try:
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": json.dumps(context)},
             ],
             temperature=0.3,
-            max_tokens=300,
+            max_tokens=600,
+            reasoning_effort="low",
         )
         text = resp.choices[0].message.content.strip()
         return text or None
