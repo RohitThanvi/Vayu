@@ -26,7 +26,7 @@ from reportlab.lib.units import mm
 from reportlab.graphics.shapes import Drawing, Rect, Line, String, Polygon
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable, KeepTogether
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable, KeepTogether, PageBreak
 )
 
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "..", "assets", "vayu_logo.png")
@@ -517,6 +517,157 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
 }
 
 
+# Companion to ANALYSIS_SPECS — recommendations, glossary terms, and
+# citation keys per analysis type. Kept separate rather than folded into
+# the (already large) spec dicts above to keep each editable independently.
+ANALYSIS_EXTRAS: Dict[str, Dict[str, Any]] = {
+    "vegetation_change": {
+        "recommendations": [
+            "Where loss exceeds 10-15% of the initial vegetated area, cross-reference against the fire "
+            "detection and land surface temperature analyses for the same AOI/period to help distinguish "
+            "drought/heat-driven dieback from land-use conversion.",
+            "For land-use planning or compliance use cases, pair this analysis with a field visit to the "
+            "highest-loss sub-areas before drawing conclusions about cause.",
+            "Re-run this analysis at a 1-2 year cadence for the same AOI to distinguish a one-off "
+            "seasonal anomaly from a sustained trend.",
+        ],
+        "glossary": [
+            ("NDVI", "Normalized Difference Vegetation Index = (NIR \u2212 Red) / (NIR + Red). Ranges "
+                      "\u22121 to 1; higher values indicate denser, healthier vegetation."),
+            ("Vegetated (threshold)", "A pixel is classified vegetated where NDVI \u2265 0.20 in this "
+                                       "analysis \u2014 a general-purpose cutoff, not tuned to a specific crop or biome."),
+        ],
+        "citation_keys": ["sentinel2"],
+    },
+    "builtup_change": {
+        "recommendations": [
+            "Treat built-up loss as a flag for manual review, not a confirmed demolition \u2014 verify "
+            "against higher-resolution imagery or a site visit before acting on it.",
+            "For urban planning use, combine this analysis with the population/infrastructure data your "
+            "organization already holds, since built-up extent alone doesn't indicate density or use type.",
+        ],
+        "glossary": [
+            ("Dynamic World", "A near-real-time, 10 m land cover classifier producing 9 land cover classes "
+                               "(including 'built') from a deep learning model trained on Sentinel-2 imagery."),
+            ("Modal Composite", "The single most-frequently-occurring classification across all scenes in "
+                                 "the time window, used instead of a single date to reduce misclassification noise."),
+        ],
+        "citation_keys": ["dynamicworld", "sentinel2"],
+    },
+    "water_change": {
+        "recommendations": [
+            "Confirm any apparent water loss against a longer multi-year time series before concluding a "
+            "waterbody is drying \u2014 a single-period comparison can reflect normal seasonal drawdown.",
+            "For reservoir/irrigation management, cross-reference with local rainfall records for the "
+            "same period.",
+        ],
+        "glossary": [
+            ("Water Occurrence", "The JRC dataset's measure of how often a pixel was observed as water "
+                                  "across the full Landsat historical record, used to build the water mask for each period."),
+        ],
+        "citation_keys": ["jrc_water"],
+    },
+    "flood_detection": {
+        "recommendations": [
+            "This analysis is suitable for rapid situational awareness; for damage assessment or "
+            "emergency-response resource allocation, corroborate with ground reports or higher-resolution "
+            "commercial SAR/optical tasking where available.",
+            "Check the raw (unfiltered) backscatter-drop figure against the filtered figure \u2014 a large "
+            "gap between them suggests significant permanent-water or steep-terrain area in the AOI worth "
+            "reviewing on the map.",
+        ],
+        "glossary": [
+            ("SAR", "Synthetic Aperture Radar \u2014 an active sensor that transmits its own microwave "
+                     "signal and measures the reflection, working day/night and through cloud cover."),
+            ("VH Backscatter", "The returned radar signal strength in the vertical-transmit, "
+                                "horizontal-receive polarization; standing water produces a characteristic drop in this value."),
+            ("dB (decibel)", "The logarithmic unit SAR backscatter is measured in; lower (more negative) "
+                              "values indicate a smoother surface (e.g. calm water), higher values a rougher one (e.g. buildings, vegetation)."),
+        ],
+        "citation_keys": ["sentinel1", "jrc_water", "srtm"],
+    },
+    "fire_detection": {
+        "recommendations": [
+            "Cross-reference hotspot locations against land cover and known agricultural-burning calendars "
+            "for the region before attributing detections to wildfire specifically.",
+            "For a confirmed wildfire event, pair this with the vegetation change and land surface "
+            "temperature analyses over the same AOI to assess ecological impact.",
+        ],
+        "glossary": [
+            ("Burned Area (MCD64A1)", "A MODIS product mapping the approximate calendar date a given "
+                                       "500 m pixel burned, derived from surface reflectance change detection."),
+            ("Active Fire (MOD14A1)", "A MODIS product flagging thermal anomalies (pixels significantly "
+                                       "hotter than their surroundings) at 1 km resolution from twice-daily overpasses."),
+        ],
+        "citation_keys": ["modis_fire"],
+    },
+    "drought_index": {
+        "recommendations": [
+            "Pair this reading with local precipitation and, where available, in-situ soil moisture data "
+            "before using it for insurance, subsidy, or water-allocation decisions.",
+            "A single-period NDDI reading doesn't establish a trend \u2014 request the same AOI at 3-6 month "
+            "intervals to see whether drought stress is worsening, stable, or recovering.",
+        ],
+        "glossary": [
+            ("NDDI", "Normalized Difference Drought Index = (NDVI \u2212 NDWI) / (NDVI + NDWI). Combines "
+                      "vegetation vigor and surface water content into one drought-stress indicator."),
+            ("NDWI", "Normalized Difference Water Index, a measure of surface water/moisture content used "
+                      "as one of NDDI's two inputs."),
+        ],
+        "citation_keys": ["sentinel2"],
+    },
+    "land_surface_temperature": {
+        "recommendations": [
+            "For public-health heat-risk applications, combine LST with population density data \u2014 "
+            "LST alone identifies hot surfaces, not where people are actually exposed to heat.",
+            "Urban heat island pixels concentrated near industrial or dense built-up areas are consistent "
+            "with the expected pattern; isolated hot pixels elsewhere are worth visually cross-checking "
+            "against the true-color imagery for sensor artifacts.",
+        ],
+        "glossary": [
+            ("LST", "Land Surface Temperature \u2014 the actual temperature of the ground/canopy surface "
+                     "as measured by a thermal sensor, distinct from near-surface air temperature."),
+            ("Urban Heat Island (UHI)", "A pixel classified as UHI here means its surface temperature "
+                                         "exceeds the AOI's own mean by more than 2\u00b0C in the end-period composite."),
+        ],
+        "citation_keys": ["landsat"],
+    },
+    "deforestation": {
+        "recommendations": [
+            "For enforcement or compliance monitoring, cross-reference high-loss areas against land "
+            "tenure/concession boundaries your organization already holds.",
+            "Combine with the fire detection analysis for the same AOI/period to help distinguish "
+            "fire-driven loss from mechanical clearing.",
+        ],
+        "glossary": [
+            ("Hansen GFC", "The Hansen Global Forest Change dataset \u2014 a Landsat time-series-derived "
+                            "product mapping year-2000 baseline tree canopy cover and the calendar year of any "
+                            "subsequent stand-replacement loss, from University of Maryland/Google/USGS/NASA."),
+            ("Canopy Cover Threshold", "This analysis counts a pixel as baseline forest where year-2000 "
+                                        "canopy cover was \u2265 30% \u2014 a standard Hansen-dataset convention, not "
+                                        "tuned to a specific forest type."),
+        ],
+        "citation_keys": ["hansen"],
+    },
+    "soil_moisture": {
+        "recommendations": [
+            "SMAP's ~9 km resolution is appropriate for regional monitoring and early-warning triage, not "
+            "field-level irrigation scheduling \u2014 pair with local sensors for operational decisions.",
+            "Where dry-stress area is large, cross-reference with the drought index and vegetation change "
+            "analyses for the same AOI/period for a fuller picture.",
+        ],
+        "glossary": [
+            ("sm_surface", "SMAP L4's surface soil moisture band (0-5 cm depth), reported as a volumetric "
+                            "fraction (m\u00b3 water per m\u00b3 soil)."),
+            ("Dry-Stress Threshold", "This analysis flags a pixel as dry-stressed where volumetric soil "
+                                      "moisture falls below 0.10 m\u00b3/m\u00b3 \u2014 a general agronomic reference point, "
+                                      "not calibrated to a specific soil type or crop."),
+        ],
+        "citation_keys": ["smap"],
+    },
+}
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Shared report chrome: header, footer, AOI section
 # ═════════════════════════════════════════════════════════════════════════════
@@ -604,9 +755,9 @@ def _metrics_table(styles, rows: List[Tuple[str, str, str]]) -> Table:
     return t
 
 
-def _study_area_section(styles, aoi_geojson: Dict[str, Any]) -> List:
+def _study_area_section(styles, aoi_geojson: Dict[str, Any], section_num: int = 2) -> List:
     summary = aoi_summary(aoi_geojson)
-    flow = [Paragraph("1. Study Area", styles["section_head"])]
+    flow = [Paragraph(f"{section_num}. Study Area", styles["section_head"])]
     bbox = summary.get("bbox")
     centroid = summary.get("centroid")
     rows = [
@@ -842,30 +993,98 @@ def _imagery_section(styles, before_bytes: Optional[bytes], after_bytes: Optiona
     return flow
 
 
-def _methodology_section(styles, sources: List[str], paragraphs: List[str]) -> List:
-    flow = [Paragraph("3. Data Sources & Methodology", styles["section_head"])]
+def _worked_example_section(styles, analysis_type: str, m: Dict[str, Any]) -> List:
+    """A short worked numeric example showing this specific run's actual
+    values substituted into the formula/area calculation described in
+    Methodology above \u2014 lets a reader verify the arithmetic themselves
+    rather than trusting the reported figures on faith."""
+    lines = []
+    if analysis_type == "vegetation_change":
+        loss = m.get("vegetation_loss_km2"); initial = m.get("initial_vegetation_km2"); pct = m.get("loss_pct")
+        if loss is not None and initial:
+            lines = [
+                f"Loss share = Vegetation Loss \u00f7 Initial Vegetated Area \u00d7 100",
+                f"= {loss:,.2f} km\u00b2 \u00f7 {initial:,.2f} km\u00b2 \u00d7 100 = {pct:,.2f}% "
+                f"(as reported in Section 5).",
+            ]
+    elif analysis_type == "builtup_change":
+        gain = m.get("builtup_gain_km2"); loss = m.get("builtup_loss_km2"); initial = m.get("initial_builtup_km2")
+        final = m.get("final_builtup_km2")
+        if gain is not None and loss is not None and initial is not None:
+            lines = [
+                f"Net Change = Gain \u2212 Loss = {gain:,.2f} \u2212 {loss:,.2f} = {gain - loss:+,.2f} km\u00b2",
+                f"Final Built-Up Area = Initial + Net Change = {initial:,.2f} + ({gain - loss:+,.2f}) "
+                f"= {final:,.2f} km\u00b2 (as reported in Section 5).",
+            ]
+    elif analysis_type == "drought_index":
+        drought = m.get("drought_affected_km2"); severe = m.get("severe_drought_km2")
+        if drought is not None and severe is not None:
+            lines = [
+                f"Severe drought is the subset of drought-affected area meeting the stricter NDDI > 0.7 "
+                f"threshold (vs. NDDI > 0.5 for the general drought-affected figure):",
+                f"Severely drought-affected ({severe:,.2f} km\u00b2) \u2264 Drought-affected ({drought:,.2f} km\u00b2) "
+                f"\u2014 confirmed consistent for this run.",
+            ]
+    elif analysis_type == "soil_moisture":
+        start = m.get("start_avg_soil_moisture"); end = m.get("end_avg_soil_moisture"); change = m.get("moisture_change")
+        if start is not None and end is not None:
+            lines = [
+                f"Change = End Mean \u2212 Start Mean = {end:.4f} \u2212 {start:.4f} = {change:+.4f} m\u00b3/m\u00b3 "
+                f"(as reported in Section 5).",
+            ]
+    elif analysis_type == "land_surface_temperature":
+        start = m.get("start_mean_lst_c"); end = m.get("end_mean_lst_c")
+        if start is not None and end is not None:
+            lines = [
+                f"\u0394T = End Mean LST \u2212 Start Mean LST = {end:.2f}\u00b0C \u2212 {start:.2f}\u00b0C "
+                f"= {end - start:+.2f}\u00b0C.",
+                "The underlying LST(\u00b0C) conversion for each pixel is: "
+                "ST_B10 \u00d7 0.00341802 + 149.0 \u2212 273.15, per USGS Collection 2 scaling.",
+            ]
+    elif analysis_type == "deforestation":
+        loss = m.get("forest_loss_km2"); baseline = m.get("total_forest_2000_km2"); pct = m.get("loss_pct")
+        if loss is not None and baseline:
+            lines = [
+                f"Loss share = Forest Loss \u00f7 Baseline (2000) Forest Area \u00d7 100",
+                f"= {loss:,.2f} km\u00b2 \u00f7 {baseline:,.2f} km\u00b2 \u00d7 100 = {pct:,.2f}% "
+                f"(as reported in Section 5).",
+            ]
+
+    if not lines:
+        return []
+    flow = [Paragraph("Worked Example (this run's actual values)", ParagraphStyle(
+        "worked_ex_head", parent=styles["section_head"], fontSize=10.5, spaceBefore=8))]
+    for line in lines:
+        flow.append(Paragraph(line, ParagraphStyle(
+            "worked_ex", parent=styles["body"], fontName="Courier", fontSize=8.5, leading=13,
+            backColor=colors.HexColor("#f4f5f6"), borderPadding=6)))
+    return flow
+
+
+def _methodology_section(styles, sources: List[str], paragraphs: List[str], section_num: int = 4) -> List:
+    flow = [Paragraph(f"{section_num}. Data Sources & Methodology", styles["section_head"])]
     flow.append(Paragraph("<b>Sources:</b> " + "; ".join(sources), styles["body"]))
     for p in paragraphs:
         flow.append(Paragraph(p, styles["body"]))
     return flow
 
 
-def _results_section(styles, metric_rows: List[Tuple[str, str, str]]) -> List:
-    flow = [Paragraph("4. Results", styles["section_head"])]
+def _results_section(styles, metric_rows: List[Tuple[str, str, str]], section_num: int = 5) -> List:
+    flow = [Paragraph(f"{section_num}. Results", styles["section_head"])]
     flow.append(_metrics_table(styles, metric_rows))
     flow.append(Spacer(1, 4))
     return flow
 
 
-def _findings_section(styles, paragraphs: List[str]) -> List:
-    flow = [Paragraph("5. Findings & Interpretation", styles["section_head"])]
+def _findings_section(styles, paragraphs: List[str], section_num: int = 6) -> List:
+    flow = [Paragraph(f"{section_num}. Findings & Interpretation", styles["section_head"])]
     for p in paragraphs:
         flow.append(Paragraph(p, styles["body"]))
     return flow
 
 
-def _limitations_section(styles, text: str) -> List:
-    flow = [Paragraph("6. Limitations & Caveats", styles["section_head"])]
+def _limitations_section(styles, text: str, section_num: int = 6) -> List:
+    flow = [Paragraph(f"{section_num}. Limitations & Caveats", styles["section_head"])]
     flow.append(Paragraph(text, styles["caveat"]))
     flow.append(Paragraph(
         "This report is generated from satellite remote-sensing data and automated processing. It is "
@@ -876,8 +1095,154 @@ def _limitations_section(styles, text: str) -> List:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Public entry points
+# Extended report sections: cover, TOC, executive summary, full-page imagery
+# with interpretation, data quality, glossary, citations, recommendations.
+# These exist because a 2-3 page report reads as a quick automated printout
+# rather than something a scientist or officer would treat as a formal
+# assessment — the fix is genuine additional substance (a real interpretation
+# paragraph per image, dataset citations, a data-quality discussion, an
+# actionable recommendations section), not padding line counts or margins.
 # ═════════════════════════════════════════════════════════════════════════════
+
+def _cover_page(styles, title: str, subtitle: str, meta_rows: List[Tuple[str, str]]) -> List:
+    flow = _header_flowables(styles, title, subtitle)
+    flow.append(Spacer(1, 30))
+    flow.append(_metadata_table(styles, meta_rows))
+    flow.append(Spacer(1, 40))
+    flow.append(HRFlowable(width="60%", thickness=0.5, color=LINE, hAlign="CENTER"))
+    flow.append(Spacer(1, 10))
+    flow.append(Paragraph(
+        "This document is a satellite remote-sensing assessment generated by the VAYU geospatial "
+        "intelligence platform. It combines automated analysis of public satellite data sources with "
+        "deterministic scientific methodology to produce a reproducible, source-cited report.",
+        ParagraphStyle("cover_note", parent=styles["body"], alignment=TA_CENTER, fontSize=9, textColor=MUTED)))
+    flow.append(PageBreak())
+    return flow
+
+
+def _table_of_contents(styles, sections: List[Tuple[str, str]]) -> List:
+    """sections: list of (number_and_title, one_line_description)."""
+    flow = [Paragraph("Table of Contents", styles["section_head"])]
+    rows = [[Paragraph(f"<b>{num_title}</b>", styles["body"]), Paragraph(desc, styles["footer"])]
+            for num_title, desc in sections]
+    t = Table(rows, colWidths=[65 * mm, 100 * mm])
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    flow.append(t)
+    flow.append(PageBreak())
+    return flow
+
+
+def _executive_summary_section(styles, paragraphs: List[str], section_num: int = 1) -> List:
+    flow = [Paragraph(f"{section_num}. Executive Summary", styles["section_head"])]
+    for p in paragraphs:
+        flow.append(Paragraph(p, styles["body"]))
+    return flow
+
+
+def _full_page_imagery_section(styles, images: List[Dict[str, Any]], section_num: int) -> List:
+    """Like _imagery_grid_section but one substantially larger image per
+    block with a real interpretation paragraph underneath — not just a
+    caption — so the imagery section reads as analysis, not decoration."""
+    available = [img for img in images if img.get("bytes")]
+    flow = [Paragraph(f"{section_num}. Satellite Imagery \u2014 Detailed View", styles["section_head"])]
+    if not available:
+        flow.append(Paragraph(
+            "No cloud-free satellite imagery was available for this AOI within the analysis window to "
+            "embed here; the metrics and findings elsewhere in this report are unaffected, as they are "
+            "computed from the same underlying satellite collections independently of these thumbnails.",
+            styles["caveat"]))
+        return flow
+
+    img_w = 120 * mm
+    for idx, img in enumerate(available):
+        block = [Paragraph(f"{section_num}.{idx + 1} {img['label']}", ParagraphStyle(
+            "subsection", parent=styles["section_head"], fontSize=10.5, spaceBefore=10))]
+        picture = Image(io.BytesIO(img["bytes"]), width=img_w, height=img_w)
+        picture.hAlign = "CENTER"
+        block.append(picture)
+        if img.get("caption"):
+            block.append(Paragraph(img["caption"], ParagraphStyle(
+                "img_cap", parent=styles["footer"], alignment=TA_CENTER, spaceBefore=4)))
+        if img.get("legend"):
+            leg = img["legend"]
+            d = _gradient_legend(leg["palette"], leg["min"], leg["max"], leg["unit"],
+                                  tick_labels=leg.get("labels"), width=int(img_w))
+            d.hAlign = "CENTER"
+            block.append(Spacer(1, 3))
+            block.append(d)
+        if img.get("interpretation"):
+            block.append(Spacer(1, 5))
+            block.append(Paragraph(img["interpretation"], styles["body"]))
+        flow.extend(block)
+        flow.append(Spacer(1, 10))
+    return flow
+
+
+def _data_quality_section(styles, rows: List[Tuple[str, str]], narrative: str, section_num: int) -> List:
+    flow = [Paragraph(f"{section_num}. Data Quality & Confidence", styles["section_head"])]
+    flow.append(Paragraph(narrative, styles["body"]))
+    flow.append(_metadata_table(styles, rows))
+    flow.append(Spacer(1, 4))
+    return flow
+
+
+def _glossary_section(styles, terms: List[Tuple[str, str]], section_num: int) -> List:
+    flow = [Paragraph(f"{section_num}. Glossary & Formula Reference", styles["section_head"])]
+    rows = [[Paragraph(f"<b>{term}</b>", styles["body"]), Paragraph(defn, styles["body"])] for term, defn in terms]
+    t = Table(rows, colWidths=[38 * mm, 127 * mm])
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.3, LINE),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    flow.append(t)
+    flow.append(Spacer(1, 4))
+    return flow
+
+
+def _citations_section(styles, citations: List[str], section_num: int) -> List:
+    flow = [Paragraph(f"{section_num}. Data Sources & Citations", styles["section_head"])]
+    for i, c in enumerate(citations, 1):
+        flow.append(Paragraph(f"[{i}] {c}", ParagraphStyle(
+            "citation", parent=styles["body"], fontSize=9, leading=13, spaceAfter=6)))
+    return flow
+
+
+def _recommendations_section(styles, paragraphs: List[str], section_num: int) -> List:
+    flow = [Paragraph(f"{section_num}. Recommendations", styles["section_head"])]
+    for p in paragraphs:
+        flow.append(Paragraph(p, styles["body"]))
+    return flow
+
+
+GLOSSARY_COMMON = [
+    ("AOI", "Area of Interest \u2014 the user-defined or searched boundary polygon this report's analysis is restricted to."),
+    ("km\u00b2", "Square kilometers, the unit used for all area measurements in this report."),
+    ("Spatial Resolution", "The ground distance represented by one pixel in the source imagery (e.g. 10 m means each pixel covers a 10\u00d710 m ground area). Finer resolution allows detection of smaller features."),
+    ("Cloud Masking", "A preprocessing step that excludes cloud- and cloud-shadow-contaminated pixels from a satellite scene before analysis, so cloud cover isn't mistaken for a ground feature."),
+    ("Median Composite", "A pixel-wise median taken across multiple satellite scenes over a time window, used to suppress the influence of any single anomalous (cloudy, shadowed, or noisy) scene."),
+]
+
+CITATIONS_BY_SOURCE = {
+    "sentinel2": "European Space Agency (ESA), Copernicus Sentinel-2 Mission, Level-2A Surface Reflectance. Available via Google Earth Engine: COPERNICUS/S2_SR_HARMONIZED.",
+    "sentinel1": "European Space Agency (ESA), Copernicus Sentinel-1 Mission, Ground Range Detected (GRD) SAR. Available via Google Earth Engine: COPERNICUS/S1_GRD.",
+    "landsat": "U.S. Geological Survey / NASA, Landsat 8-9 Collection 2 Level-2 Science Products. Available via Google Earth Engine: LANDSAT/LC08-LC09/C02/T1_L2.",
+    "dynamicworld": "Brown, C.F., Brumby, S.P., Guzder-Williams, B. et al. (2022). Dynamic World, Near real-time global 10 m land use land cover mapping. Scientific Data 9, 251. Google/World Resources Institute.",
+    "jrc_water": "Pekel, J.F., Cottam, A., Gorelick, N., Belward, A.S. (2016). High-resolution mapping of global surface water and its long-term changes. Nature 540, 418\u2013422. European Commission Joint Research Centre.",
+    "hansen": "Hansen, M.C., Potapov, P.V., Moore, R. et al. (2013). High-Resolution Global Maps of 21st-Century Forest Cover Change. Science 342(6160), 850\u2013853. University of Maryland / Google / USGS / NASA.",
+    "modis_fire": "Giglio, L., Boschetti, L., Roy, D.P. et al. (2018). The Collection 6 MODIS burned area mapping algorithm and product. Remote Sensing of Environment 217, 72\u201385. NASA MODIS/VIIRS product suite.",
+    "smap": "Entekhabi, D., Yueh, S., O'Neill, P.E. et al. NASA Soil Moisture Active Passive (SMAP) Mission, SPL4SMGP Level-4 Surface and Root Zone Soil Moisture. NASA Jet Propulsion Laboratory / Goddard Space Flight Center.",
+    "srtm": "Farr, T.G., Rosen, P.A., Caro, E. et al. (2007). The Shuttle Radar Topography Mission. Reviews of Geophysics 45, RG2004. NASA/USGS/JPL.",
+    "smap10km_deprecated": "Colliander, A. et al., NASA/USDA SMAP10KM downscaled soil moisture (legacy product, deprecated by data provider).",
+}
+
+
+
 
 CONSISTENCY_TOLERANCE_KM2 = 0.5  # allows for GEE pixel-area rounding across independent reduceRegion calls
 
@@ -922,6 +1287,38 @@ def _validate_consistency(analysis_type: str, metrics: Dict[str, Any]) -> Option
     return None
 
 
+_IMAGE_INTERPRETATION_HINTS = {
+    "flood_detection": (
+        "Darker regions in this SAR composite indicate a smoother surface returning less radar energy to "
+        "the sensor \u2014 consistent with calm standing water. Compare the start- and end-period images: "
+        "new dark regions appearing in the end-period composite, in areas that aren't permanent waterbodies "
+        "(see Section 4 for how permanent water is excluded), are the visual signature the flood-area "
+        "figure in Section 5 is derived from."
+    ),
+}
+_DEFAULT_INTERPRETATION_HINT = (
+    "This is a true-color composite \u2014 approximately what the area would look like to the eye from "
+    "orbit, built from cloud-free Sentinel-2 scenes over the stated window. It provides visual context for "
+    "the quantitative results in Section 5; the composite itself is not the basis for those figures, which "
+    "are computed from the same underlying satellite bands using the indices described in Section 4."
+)
+
+
+def _analysis_data_quality_rows(analysis_type: str, metrics: Dict[str, Any]) -> List[Tuple[str, str]]:
+    rows = [
+        ("Consistency Check", "Passed \u2014 reported change figures are internally consistent "
+                                "(gain \u2212 loss matches the reported net/final change) before this report was generated."),
+    ]
+    if analysis_type == "flood_detection":
+        ref = metrics.get("reference_scenes_used")
+        flood = metrics.get("flood_period_scenes_used")
+        if ref is not None:
+            rows.append(("Reference-Period Scenes", f"{ref} SAR scenes"))
+        if flood is not None:
+            rows.append(("Flood-Period Scenes", f"{flood} SAR scenes"))
+    return rows
+
+
 def build_analysis_report(
     analysis_type: str,
     aoi_geojson: Dict[str, Any],
@@ -936,6 +1333,7 @@ def build_analysis_report(
     spec = ANALYSIS_SPECS.get(analysis_type)
     if not spec:
         raise ValueError(f"Unknown analysis_type: {analysis_type}. Must be one of {list(ANALYSIS_SPECS)}")
+    extras = ANALYSIS_EXTRAS.get(analysis_type, {})
 
     consistency_error = _validate_consistency(analysis_type, metrics)
     if consistency_error:
@@ -948,26 +1346,54 @@ def build_analysis_report(
                              leftMargin=20 * mm, rightMargin=20 * mm)
 
     flow = []
-    flow += _header_flowables(styles, spec["title"], f"Analysis Period: {start_date} \u2013 {end_date}")
-    flow.append(Spacer(1, 6))
-    flow.append(_metadata_table(styles, [
+    flow += _cover_page(styles, spec["title"], f"Analysis Period: {start_date} \u2013 {end_date}", [
         ("Report Generated", generated_at),
         ("Analysis Type", spec["title"]),
         ("Analysis Period", f"{start_date} to {end_date}"),
-    ]))
-    flow.append(Spacer(1, 6))
+    ])
+    flow += _table_of_contents(styles, [
+        ("1. Executive Summary", "Key finding at a glance"),
+        ("2. Study Area", "AOI geometry and coordinates"),
+        ("3. Satellite Imagery", "Detailed before/after imagery with interpretation"),
+        ("4. Data Sources & Methodology", "Datasets, formulas, and processing steps used"),
+        ("5. Results", "Full computed metrics table"),
+        ("6. Findings & Interpretation", "What the results indicate"),
+        ("7. Data Quality & Confidence", "Validation checks and data completeness"),
+        ("8. Recommendations", "Suggested next steps"),
+        ("9. Glossary & Formula Reference", "Terms and formulas used in this report"),
+        ("10. Data Sources & Citations", "Full citations for every dataset used"),
+        ("11. Limitations & Caveats", "What this analysis does not tell you"),
+    ])
+
+    findings = spec["findings_fn"](metrics)
+    exec_summary = [findings[0]] if findings else []
+    if llm_synthesis:
+        exec_summary.append(llm_synthesis)
+    exec_summary.append(
+        f"Full methodology, per-image interpretation, data-quality notes, and dataset citations follow in "
+        f"the sections below."
+    )
+    flow += _executive_summary_section(styles, exec_summary, section_num=1)
+    flow.append(PageBreak())
 
     flow += _study_area_section(styles, aoi_geojson)
+    flow.append(PageBreak())
     if analysis_type == "flood_detection":
         img_source_caption = "Sentinel-1 SAR (VH polarization), \u00b115 days around each date"
         img_legend = SAR_LEGEND
     else:
         img_source_caption = "Sentinel-2, cloud-masked true-color composite, \u00b130 days around each date"
         img_legend = None
-    flow += _imagery_section(styles, before_image_bytes, after_image_bytes,
-                              f"Start of period ({start_date})", f"End of period ({end_date})",
-                              source_caption=img_source_caption, legend=img_legend)
+    interpretation = _IMAGE_INTERPRETATION_HINTS.get(analysis_type, _DEFAULT_INTERPRETATION_HINT)
+    flow += _full_page_imagery_section(styles, [
+        {"label": f"Start of Period ({start_date})", "bytes": before_image_bytes,
+         "caption": img_source_caption, "legend": img_legend, "interpretation": interpretation},
+        {"label": f"End of Period ({end_date})", "bytes": after_image_bytes,
+         "caption": img_source_caption, "legend": img_legend, "interpretation": interpretation},
+    ], section_num=3)
+
     flow += _methodology_section(styles, spec["sources"], spec["methodology"])
+    flow += _worked_example_section(styles, analysis_type, metrics)
 
     metric_rows = []
     for key, (label, unit, decimals) in spec["metric_labels"].items():
@@ -975,16 +1401,89 @@ def build_analysis_report(
             metric_rows.append((label, _fmt_num(metrics[key], decimals), unit))
     flow += _results_section(styles, metric_rows)
 
-    findings = spec["findings_fn"](metrics)
     flow += _findings_section(styles, findings)
     if llm_synthesis:
         flow.append(Paragraph("<i>Assessment summary:</i>", styles["meta_label"]))
         flow.append(Paragraph(llm_synthesis, styles["body"]))
-    flow += _limitations_section(styles, spec["limitations"])
+
+    flow += _data_quality_section(
+        styles, _analysis_data_quality_rows(analysis_type, metrics),
+        "Before this report was generated, the computed metrics passed an automated internal consistency "
+        "check (verifying reported gain/loss figures algebraically match the reported net or final change) "
+        "\u2014 a report failing this check is not produced. The table below lists what else is known about "
+        "this specific run's data completeness.",
+        section_num=7)
+
+    if extras.get("recommendations"):
+        flow.append(PageBreak())
+        flow += _recommendations_section(styles, extras["recommendations"], section_num=8)
+    flow.append(PageBreak())
+    flow.append(Paragraph("Appendices", ParagraphStyle(
+        "appendix_head", parent=styles["report_heading"], fontSize=13, spaceBefore=0)))
+    flow.append(Spacer(1, 8))
+    if extras.get("glossary"):
+        flow += _glossary_section(styles, GLOSSARY_COMMON + extras["glossary"], section_num=9)
+    citation_keys = extras.get("citation_keys", [])
+    if citation_keys:
+        flow.append(Spacer(1, 8))
+        flow += _citations_section(styles, [CITATIONS_BY_SOURCE[k] for k in citation_keys if k in CITATIONS_BY_SOURCE], section_num=10)
+
+    flow.append(Spacer(1, 8))
+    flow += _limitations_section(styles, spec["limitations"], section_num=11)
 
     doc.build(flow, onFirstPage=lambda c, d: _footer_canvas(c, d, generated_at),
                onLaterPages=lambda c, d: _footer_canvas(c, d, generated_at))
     return buf.getvalue()
+
+
+AGRI_GLOSSARY = [
+    ("NDDI", "Normalized Difference Drought Index = (NDVI \u2212 NDWI) / (NDVI + NDWI); combines "
+              "vegetation vigor and surface water content into one drought-stress indicator."),
+    ("NDVI", "Normalized Difference Vegetation Index = (NIR \u2212 Red) / (NIR + Red); higher values "
+              "indicate denser, healthier vegetation."),
+    ("SMAP", "NASA's Soil Moisture Active Passive mission; this report uses the L4 (SPL4SMGP) surface "
+              "soil moisture product, updated every 3 hours globally."),
+    ("Confidence", "Reflects both how many of the three indicators had usable satellite data, and (once "
+                    "a region has enough farmer/officer feedback) that region's track record of past alert accuracy."),
+    ("Weighted Average", "The composite score = 0.40\u00d7Drought + 0.35\u00d7Vegetation Loss + "
+                          "0.25\u00d7Moisture Deficit, with weights automatically renormalized over "
+                          "whichever indicators actually computed for this run."),
+]
+
+
+def _agri_recommendations(band: str, inputs_failed: List[str]) -> List[str]:
+    recs = []
+    if band in ("high", "severe"):
+        recs.append(
+            "Given the elevated risk band, prioritize a field visit to this AOI before making any "
+            "operational, insurance, or subsidy decision based on this score alone."
+        )
+        recs.append(
+            "Cross-reference the per-indicator maps in Section 3 to identify which part of the AOI is "
+            "driving the score \u2014 risk is rarely uniform across a large or irregular AOI."
+        )
+    elif band == "moderate":
+        recs.append(
+            "Monitor this AOI on a 2-4 week cadence to see whether the moderate reading is stable, "
+            "improving, or trending toward the high band."
+        )
+    else:
+        recs.append(
+            "No immediate action indicated by this score; continue routine monitoring at your normal "
+            "cadence."
+        )
+    if inputs_failed:
+        recs.append(
+            f"Data was unavailable for {', '.join(k.replace('_', ' ') for k in inputs_failed)} this run "
+            f"\u2014 consider re-running this assessment in a few weeks once satellite coverage improves, "
+            f"rather than treating the current partial score as final."
+        )
+    recs.append(
+        "If this region will be monitored repeatedly, add it to the Agri watchlist so future alerts can "
+        "build a farmer/officer feedback history \u2014 that history directly improves this score's future "
+        "confidence."
+    )
+    return recs
 
 
 def build_agri_risk_report(
@@ -1006,31 +1505,49 @@ def build_agri_risk_report(
                              leftMargin=20 * mm, rightMargin=20 * mm)
 
     period = risk_result.get("period", {})
-    band = risk_result.get("band", "unknown")
+    band = str(risk_result.get("band", "unknown"))
     score = risk_result.get("risk_score")
     confidence = risk_result.get("confidence")
+    inputs_used = risk_result.get("inputs_used", [])
+    inputs_failed = risk_result.get("inputs_failed", [])
 
     flow = []
-    flow += _header_flowables(
-        styles, "Agricultural Risk Assessment Report",
-        f"Analysis Period: {period.get('start_date', 'N/A')} \u2013 {period.get('end_date', 'N/A')}"
-    )
-    flow.append(Spacer(1, 6))
-    flow.append(_metadata_table(styles, [
+    flow += _cover_page(styles, "Agricultural Risk Assessment Report",
+        f"Analysis Period: {period.get('start_date', 'N/A')} \u2013 {period.get('end_date', 'N/A')}", [
         ("Report Generated", generated_at),
         ("Region", region_name or "Unnamed AOI"),
         ("Analysis Period", f"{period.get('start_date', 'N/A')} to {period.get('end_date', 'N/A')}"),
-        ("Composite Risk Score", f"{score} / 100  ({str(band).upper()})"),
+        ("Composite Risk Score", f"{score} / 100  ({band.upper()})"),
         ("Confidence", f"{confidence}%"),
-    ]))
-    flow.append(Spacer(1, 10))
+    ])
+    flow += _table_of_contents(styles, [
+        ("1. Executive Summary", "Risk score, band, and key driver at a glance"),
+        ("2. Study Area", "AOI geometry and coordinates"),
+        ("3. Satellite Imagery by Indicator", "True color, NDVI, NDDI, and soil moisture maps"),
+        ("4. Methodology", "How the composite score is calculated"),
+        ("5. Indicator Definitions & Thresholds", "What each sub-score measures"),
+        ("6. Sub-Score Breakdown", "Drought, vegetation loss, and moisture deficit scores"),
+        ("7. Historical Context", "5-year seasonal baseline comparison"),
+        ("8. Findings & Interpretation", "What the score indicates"),
+        ("9. Data Quality & Confidence", "Data completeness and validation"),
+        ("10. Recommendations", "Suggested next steps"),
+        ("11. Glossary & Formula Reference", "Terms and formulas used in this report"),
+        ("12. Data Sources & Citations", "Full citations for every dataset used"),
+        ("13. Limitations & Caveats", "What this assessment does not tell you"),
+    ])
 
-    gauge = _risk_gauge(score if score is not None else 0)
-    gauge.hAlign = "CENTER"
-    flow.append(gauge)
-    flow.append(Spacer(1, 6))
+    exec_paragraphs = [
+        f"This AOI's composite agricultural risk score is <b>{score}/100 ({band.upper()})</b>, computed "
+        f"with {confidence}% confidence from {len(inputs_used)} of 3 underlying satellite indicators.",
+        risk_result.get("reason", ""),
+    ]
+    if llm_synthesis:
+        exec_paragraphs.append(llm_synthesis)
+    flow += _executive_summary_section(styles, [p for p in exec_paragraphs if p], section_num=1)
+    flow.append(PageBreak())
 
-    flow += _study_area_section(styles, aoi_geojson)
+    flow += _study_area_section(styles, aoi_geojson, section_num=2)
+    flow.append(PageBreak())
     end_date_str = period.get("end_date", "N/A")
     flow += _imagery_grid_section(styles, [
         {"label": "True Color (current conditions)", "bytes": image_bytes,
@@ -1044,9 +1561,10 @@ def build_agri_risk_report(
         {"label": "SMAP Soil Moisture", "bytes": moisture_image_bytes,
          "caption": f"NASA SMAP L4, \u00b190 days around {end_date_str} \u00b7 drives the Moisture Deficit score",
          "legend": MOISTURE_LEGEND},
-    ], section_num=2)
+    ], section_num=3)
 
-    flow.append(Paragraph("3. Methodology", styles["section_head"]))
+    flow.append(PageBreak())
+    flow.append(Paragraph("4. Methodology", styles["section_head"]))
     flow.append(Paragraph(
         "The composite risk score combines three independently-computed satellite indicators \u2014 "
         "drought stress (Sentinel-2 NDDI), vegetation loss (Sentinel-2 NDVI threshold change), and "
@@ -1058,7 +1576,29 @@ def build_agri_risk_report(
         "the region's historical alert accuracy.",
         styles["body"]))
 
-    flow.append(Paragraph("4. Indicator Definitions & Thresholds", styles["section_head"]))
+    sub_scores = risk_result.get("sub_scores", {})
+    worked_lines = []
+    weights = {"drought": 0.40, "vegetation_loss": 0.35, "moisture_deficit": 0.25}
+    used_weight_sum = sum(weights[k] for k in sub_scores if sub_scores.get(k) is not None and k in weights)
+    if used_weight_sum > 0 and score is not None:
+        terms = []
+        for k, w in weights.items():
+            v = sub_scores.get(k)
+            if v is not None:
+                terms.append(f"({v:.1f} \u00d7 {w:.2f})")
+        worked_lines = [
+            f"Composite = [{' + '.join(terms)}] \u00f7 {used_weight_sum:.2f} = {score} "
+            f"(weights renormalized to sum to 1.0 over the {len(terms)} available indicator(s))."
+        ]
+    if worked_lines:
+        flow.append(Paragraph("Worked Example (this run's actual values)", ParagraphStyle(
+            "worked_ex_head", parent=styles["section_head"], fontSize=10.5, spaceBefore=8)))
+        for line in worked_lines:
+            flow.append(Paragraph(line, ParagraphStyle(
+                "worked_ex", parent=styles["body"], fontName="Courier", fontSize=8.5, leading=13,
+                backColor=colors.HexColor("#f4f5f6"), borderPadding=6)))
+
+    flow.append(Paragraph("5. Indicator Definitions & Thresholds", styles["section_head"]))
     flow.append(_metadata_table(styles, [
         ("Drought (NDDI)", "NDDI = (NDVI \u2212 NDWI) / (NDVI + NDWI). Sub-score reflects the share of "
                             "the AOI with NDDI > 0.5 (drought-affected threshold)."),
@@ -1072,8 +1612,7 @@ def build_agri_risk_report(
     ]))
     flow.append(Spacer(1, 4))
 
-    flow.append(Paragraph("5. Sub-Score Breakdown", styles["section_head"]))
-    sub_scores = risk_result.get("sub_scores", {})
+    flow.append(Paragraph("6. Sub-Score Breakdown", styles["section_head"]))
     sub_rows = [
         (k.replace("_", " ").title(), _fmt_num(v, 1) if v is not None else "No data available", "/ 100")
         for k, v in sub_scores.items()
@@ -1081,8 +1620,6 @@ def build_agri_risk_report(
     flow.append(_metrics_table(styles, sub_rows))
     flow.append(Spacer(1, 4))
 
-    inputs_used = risk_result.get("inputs_used", [])
-    inputs_failed = risk_result.get("inputs_failed", [])
     if inputs_failed:
         flow.append(Paragraph(
             f"<b>Data availability note:</b> the following indicator(s) had no usable satellite coverage "
@@ -1092,8 +1629,7 @@ def build_agri_risk_report(
             styles["caveat"]))
         flow.append(Spacer(1, 4))
 
-    section_num = 6
-
+    section_num = 7
     if baseline_result and baseline_result.get("seasonal_normal_ndvi") is not None:
         flow.append(Paragraph(f"{section_num}. Historical Context (5-Year Seasonal Baseline)", styles["section_head"]))
         status = baseline_result.get("status", "normal").replace("_", " ")
@@ -1127,6 +1663,32 @@ def build_agri_risk_report(
         flow.append(Spacer(1, 4))
         flow.append(Paragraph("<i>Assessment summary:</i>", styles["meta_label"]))
         flow.append(Paragraph(llm_synthesis, styles["body"]))
+    section_num += 1
+
+    flow += _data_quality_section(
+        styles,
+        [("Indicators Available", f"{len(inputs_used)} of 3 ({', '.join(inputs_used) if inputs_used else 'none'})"),
+         ("Indicators Unavailable", ', '.join(inputs_failed) if inputs_failed else "None"),
+         ("Confidence Basis", "Data completeness" + (", plus regional feedback history" if len(inputs_used) == 3 else ""))],
+        "This assessment's confidence figure is not a single opaque number \u2014 it is derived from exactly "
+        "how many of the three underlying indicators had usable satellite data for this AOI/period, shown "
+        "below, plus (once this region has enough farmer/officer feedback) its historical alert accuracy.",
+        section_num=section_num)
+    section_num += 1
+
+    flow.append(PageBreak())
+    flow += _recommendations_section(styles, _agri_recommendations(band, inputs_failed), section_num=section_num)
+    section_num += 1
+
+    flow.append(PageBreak())
+    flow.append(Paragraph("Appendices", ParagraphStyle(
+        "appendix_head", parent=styles["report_heading"], fontSize=13, spaceBefore=0)))
+    flow.append(Spacer(1, 8))
+    flow += _glossary_section(styles, GLOSSARY_COMMON + AGRI_GLOSSARY, section_num=section_num)
+    section_num += 1
+
+    flow.append(Spacer(1, 8))
+    flow += _citations_section(styles, [CITATIONS_BY_SOURCE["sentinel2"], CITATIONS_BY_SOURCE["smap"]], section_num=section_num)
     section_num += 1
 
     flow.append(Paragraph(f"{section_num}. Limitations & Caveats", styles["section_head"]))
