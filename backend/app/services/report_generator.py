@@ -1151,6 +1151,17 @@ def _table_of_contents(styles, sections: List[Tuple[str, str]]) -> List:
     return flow
 
 
+def _render_multi_paragraph(styles, text: str, style_key: str = "body") -> List:
+    """Splits LLM-generated multi-paragraph text (paragraphs separated by a
+    blank line) into separate Paragraph flowables — a single reportlab
+    Paragraph does not render '\\n\\n' as visible paragraph breaks, it just
+    collapses to whitespace, so a real paragraph split has to happen here."""
+    parts = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if not parts:
+        parts = [text.strip()]
+    return [Paragraph(p, styles[style_key]) for p in parts]
+
+
 def _executive_summary_section(styles, paragraphs: List[str], section_num: int = 1) -> List:
     flow = [Paragraph(f"{section_num}. Executive Summary", styles["section_head"])]
     for p in paragraphs:
@@ -1382,8 +1393,6 @@ def build_analysis_report(
 
     findings = spec["findings_fn"](metrics)
     exec_summary = [findings[0]] if findings else []
-    if llm_synthesis:
-        exec_summary.append(llm_synthesis)
     exec_summary.append(
         f"Full methodology, per-image interpretation, data-quality notes, and dataset citations follow in "
         f"the sections below."
@@ -1419,7 +1428,7 @@ def build_analysis_report(
     flow += _findings_section(styles, findings)
     if llm_synthesis:
         flow.append(Paragraph("<i>Assessment summary:</i>", styles["meta_label"]))
-        flow.append(Paragraph(llm_synthesis, styles["body"]))
+        flow.extend(_render_multi_paragraph(styles, llm_synthesis))
 
     flow += _data_quality_section(
         styles, _analysis_data_quality_rows(analysis_type, metrics),
@@ -1559,8 +1568,6 @@ def build_agri_risk_report(
         f"{confidence}%).",
         risk_result.get("reason", ""),
     ]
-    if llm_synthesis:
-        exec_paragraphs.append(llm_synthesis)
     flow += _executive_summary_section(styles, [p for p in exec_paragraphs if p], section_num=1)
     flow.append(PageBreak())
 
@@ -1694,7 +1701,7 @@ def build_agri_risk_report(
     if llm_synthesis:
         flow.append(Spacer(1, 4))
         flow.append(Paragraph("<i>Assessment summary:</i>", styles["meta_label"]))
-        flow.append(Paragraph(llm_synthesis, styles["body"]))
+        flow.extend(_render_multi_paragraph(styles, llm_synthesis))
     section_num += 1
 
     flow += _data_quality_section(

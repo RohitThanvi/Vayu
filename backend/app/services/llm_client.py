@@ -200,11 +200,16 @@ def get_llm_synthesis(context: dict) -> Optional[str]:
         return None
 
     system = (
-        "You are writing one short paragraph (3-5 sentences) synthesizing an agricultural risk "
-        "assessment for a professional report. Use ONLY the numbers given to you in the JSON context — "
-        "never invent, estimate, or round to a different figure than what's provided. Do not repeat "
-        "every number verbatim as a list; write connected prose a decision-maker would actually read. "
-        "Formal, measured, non-alarmist tone. No markdown, no bullet points, no headers — plain prose only."
+        "You are writing the narrative synthesis section of a professional satellite remote-sensing "
+        "analysis report. Using ONLY the data in the JSON context, write 3-4 well-developed paragraphs "
+        "(roughly 250-400 words total) covering, in order: (1) the headline finding and what's driving "
+        "it, (2) a closer look at the specific metrics or sub-scores that support that finding, "
+        "individually, (3) any historical or seasonal context provided and how it supports or "
+        "complicates the picture, and (4) the practical implication for someone deciding whether to act "
+        "on this assessment. Never invent, estimate, or state a number that isn't present in the "
+        "context. Write connected analytical prose, not a list of restated numbers. Formal, measured, "
+        "non-alarmist tone, as a careful analyst would write for a reader making a real decision. No "
+        "markdown, no bullet points, no headers — plain prose only, paragraphs separated by a blank line."
     )
     try:
         resp = client.chat.completions.create(
@@ -214,8 +219,8 @@ def get_llm_synthesis(context: dict) -> Optional[str]:
                 {"role": "user", "content": json.dumps(context)},
             ],
             temperature=0.3,
-            max_tokens=600,
-            reasoning_effort="low",
+            max_tokens=1400,
+            reasoning_effort="medium",
         )
         text = resp.choices[0].message.content.strip()
         return text or None
