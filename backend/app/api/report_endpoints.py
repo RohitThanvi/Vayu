@@ -124,6 +124,7 @@ async def agri_risk_report(req: AgriRiskReportRequest):
     ndvi_bytes = None
     nddi_bytes = None
     moisture_bytes = None
+    moisture_legend_range = None
     if req.include_imagery:
         as_of = risk_result.get("period", {}).get("end_date")
         results = await asyncio.gather(
@@ -134,9 +135,12 @@ async def agri_risk_report(req: AgriRiskReportRequest):
             return_exceptions=True,
         )
         labels = ("true-color", "NDVI", "NDDI", "soil-moisture")
-        image_bytes, ndvi_bytes, nddi_bytes, moisture_bytes = (
+        image_bytes, ndvi_bytes, nddi_bytes, moisture_result = (
             r if not isinstance(r, Exception) else None for r in results
         )
+        if moisture_result:
+            moisture_bytes = moisture_result["bytes"]
+            moisture_legend_range = (moisture_result["min"], moisture_result["max"])
         for label, r in zip(labels, results):
             if isinstance(r, Exception):
                 logger.warning(f"agri risk report {label} thumbnail failed, continuing without it: {r}")
@@ -168,7 +172,8 @@ async def agri_risk_report(req: AgriRiskReportRequest):
         pdf_bytes = build_agri_risk_report(
             aoi_geojson=req.aoi_geojson, risk_result=risk_result, region_name=req.region_name,
             image_bytes=image_bytes, ndvi_image_bytes=ndvi_bytes, nddi_image_bytes=nddi_bytes,
-            moisture_image_bytes=moisture_bytes, baseline_result=baseline_result, llm_synthesis=llm_synthesis,
+            moisture_image_bytes=moisture_bytes, moisture_legend_range=moisture_legend_range,
+            baseline_result=baseline_result, llm_synthesis=llm_synthesis,
         )
     except Exception as e:
         logger.error(f"agri risk report generation failed: {e}", exc_info=True)
