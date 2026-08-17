@@ -296,7 +296,7 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
             "is the reverse. Areas are computed via a 30 m-scale pixel-area reduction over the AOI.",
         ],
         "metric_labels": {
-            "vegetation_loss_km2": ("Vegetation Loss", "km\u00b2", 4),
+            "vegetation_loss_km2": ("Vegetation Decline", "km\u00b2", 4),
             "vegetation_gain_km2": ("Vegetation Gain", "km\u00b2", 4),
             "initial_vegetation_km2": ("Initial Vegetated Area", "km\u00b2", 4),
             "net_change_km2": ("Net Change", "km\u00b2", 4),
@@ -831,6 +831,21 @@ NDDI_LEGEND = {"palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"
                 "labels": ["-0.5 (wet)", "0.25", "1.0 (severe drought)"], "unit": "NDDI"}
 MOISTURE_LEGEND = {"palette": ["#8b6b3d", "#c9a86a", "#a8c9d4", "#4a9ec9", "#1a4d7a"], "min": 0, "max": 0.5,
                      "labels": ["0.0 (dry)", "0.25", "0.5 m\u00b3/m\u00b3 (saturated)"], "unit": "Volumetric soil moisture"}
+
+
+def _moisture_legend_for(observed_range):
+    """Builds a soil-moisture legend matching the actual stretch used for
+    this specific AOI's thumbnail, rather than always showing the generic
+    fixed 0-0.5 legend regardless of what range was actually rendered."""
+    if not observed_range:
+        return MOISTURE_LEGEND
+    vmin, vmax = observed_range
+    mid = (vmin + vmax) / 2
+    return {
+        "palette": MOISTURE_LEGEND["palette"], "min": vmin, "max": vmax,
+        "labels": [f"{vmin:.3f} (drier)", f"{mid:.3f}", f"{vmax:.3f} m³/m³ (moister)"],
+        "unit": "Volumetric soil moisture — range fit to this AOI (2nd–98th percentile)",
+    }
 SAR_LEGEND = {"palette": ["#0a0a0a", "#4a4a4a", "#8a8a8a", "#c8c8c8", "#f5f5f5"], "min": -25, "max": 0,
                "labels": ["-25 dB (smooth/water)", "-12.5", "0 dB (rough/urban)"], "unit": "VH backscatter"}
 THERMAL_LEGEND = {"palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"], "min": 0, "max": 45,
@@ -1003,7 +1018,7 @@ def _worked_example_section(styles, analysis_type: str, m: Dict[str, Any]) -> Li
         loss = m.get("vegetation_loss_km2"); initial = m.get("initial_vegetation_km2"); pct = m.get("loss_pct")
         if loss is not None and initial:
             lines = [
-                f"Loss share = Vegetation Loss \u00f7 Initial Vegetated Area \u00d7 100",
+                f"Decline share = Vegetation Decline \u00f7 Initial Vegetated Area \u00d7 100",
                 f"= {loss:,.2f} km\u00b2 \u00f7 {initial:,.2f} km\u00b2 \u00d7 100 = {pct:,.2f}% "
                 f"(as reported in Section 5).",
             ]
@@ -1443,9 +1458,10 @@ AGRI_GLOSSARY = [
               "indicate denser, healthier vegetation."),
     ("SMAP", "NASA's Soil Moisture Active Passive mission; this report uses the L4 (SPL4SMGP) surface "
               "soil moisture product, updated every 3 hours globally."),
-    ("Confidence", "Reflects both how many of the three indicators had usable satellite data, and (once "
-                    "a region has enough farmer/officer feedback) that region's track record of past alert accuracy."),
-    ("Weighted Average", "The composite score = 0.40\u00d7Drought + 0.35\u00d7Vegetation Loss + "
+    ("Confidence (Data Completeness)", "Not a statistical certainty measure \u2014 reflects how many of "
+                    "the three indicators had usable satellite data, and (once a region has enough farmer/"
+                    "officer feedback) that region's track record of past alert accuracy."),
+    ("Weighted Average", "The composite score = 0.40\u00d7Drought + 0.35\u00d7Vegetation Decline + "
                           "0.25\u00d7Moisture Deficit, with weights automatically renormalized over "
                           "whichever indicators actually computed for this run."),
 ]
@@ -1494,6 +1510,7 @@ def build_agri_risk_report(
     ndvi_image_bytes: Optional[bytes] = None,
     nddi_image_bytes: Optional[bytes] = None,
     moisture_image_bytes: Optional[bytes] = None,
+    moisture_legend_range: Optional[Tuple[float, float]] = None,
     baseline_result: Optional[Dict[str, Any]] = None,
     llm_synthesis: Optional[str] = None,
 ) -> bytes:
@@ -1518,7 +1535,7 @@ def build_agri_risk_report(
         ("Region", region_name or "Unnamed AOI"),
         ("Analysis Period", f"{period.get('start_date', 'N/A')} to {period.get('end_date', 'N/A')}"),
         ("Composite Risk Score", f"{score} / 100  ({band.upper()})"),
-        ("Confidence", f"{confidence}%"),
+        ("Confidence (data completeness)", f"{confidence}%"),
     ])
     flow += _table_of_contents(styles, [
         ("1. Executive Summary", "Risk score, band, and key driver at a glance"),
@@ -1526,7 +1543,7 @@ def build_agri_risk_report(
         ("3. Satellite Imagery by Indicator", "True color, NDVI, NDDI, and soil moisture maps"),
         ("4. Methodology", "How the composite score is calculated"),
         ("5. Indicator Definitions & Thresholds", "What each sub-score measures"),
-        ("6. Sub-Score Breakdown", "Drought, vegetation loss, and moisture deficit scores"),
+        ("6. Sub-Score Breakdown", "Drought, vegetation decline, and moisture deficit scores"),
         ("7. Historical Context", "5-year seasonal baseline comparison"),
         ("8. Findings & Interpretation", "What the score indicates"),
         ("9. Data Quality & Confidence", "Data completeness and validation"),
@@ -1538,7 +1555,8 @@ def build_agri_risk_report(
 
     exec_paragraphs = [
         f"This AOI's composite agricultural risk score is <b>{score}/100 ({band.upper()})</b>, computed "
-        f"with {confidence}% confidence from {len(inputs_used)} of 3 underlying satellite indicators.",
+        f"from {len(inputs_used)} of 3 underlying satellite indicators (data-completeness reading: "
+        f"{confidence}%).",
         risk_result.get("reason", ""),
     ]
     if llm_synthesis:
@@ -1553,23 +1571,24 @@ def build_agri_risk_report(
         {"label": "True Color (current conditions)", "bytes": image_bytes,
          "caption": f"Sentinel-2, cloud-masked composite \u00b130 days around {end_date_str}"},
         {"label": "NDVI \u2014 Vegetation", "bytes": ndvi_image_bytes,
-         "caption": f"Sentinel-2, \u00b130 days around {end_date_str} \u00b7 drives the Vegetation Loss score",
+         "caption": f"Sentinel-2, \u00b130 days around {end_date_str} \u00b7 drives the Vegetation Decline score",
          "legend": NDVI_LEGEND},
         {"label": "NDDI \u2014 Drought", "bytes": nddi_image_bytes,
          "caption": f"Sentinel-2, \u00b130 days around {end_date_str} \u00b7 drives the Drought score",
          "legend": NDDI_LEGEND},
         {"label": "SMAP Soil Moisture", "bytes": moisture_image_bytes,
-         "caption": f"NASA SMAP L4, \u00b190 days around {end_date_str} \u00b7 drives the Moisture Deficit score",
-         "legend": MOISTURE_LEGEND},
+         "caption": f"NASA SMAP L4, \u00b190 days around {end_date_str} \u00b7 drives the Moisture Deficit score"
+                    + (" \u00b7 color scale fit to this AOI's actual observed range" if moisture_legend_range else ""),
+         "legend": _moisture_legend_for(moisture_legend_range)},
     ], section_num=3)
 
     flow.append(PageBreak())
     flow.append(Paragraph("4. Methodology", styles["section_head"]))
     flow.append(Paragraph(
         "The composite risk score combines three independently-computed satellite indicators \u2014 "
-        "drought stress (Sentinel-2 NDDI), vegetation loss (Sentinel-2 NDVI threshold change), and "
+        "drought stress (Sentinel-2 NDDI), vegetation decline (Sentinel-2 NDVI threshold change), and "
         "soil moisture deficit (SMAP) \u2014 into a single 0\u2013100 score. Each indicator is scored 0\u2013100 "
-        "and combined via a weighted average (drought 40%, vegetation loss 35%, moisture deficit 25%); "
+        "and combined via a weighted average (drought 40%, vegetation decline 35%, moisture deficit 25%); "
         "weights are automatically renormalized over whichever indicators successfully computed for this "
         "AOI and period. Confidence reflects both data completeness (how many of the three indicators "
         "were available) and, where the region has accumulated farmer/officer feedback on past alerts, "
@@ -1602,8 +1621,12 @@ def build_agri_risk_report(
     flow.append(_metadata_table(styles, [
         ("Drought (NDDI)", "NDDI = (NDVI \u2212 NDWI) / (NDVI + NDWI). Sub-score reflects the share of "
                             "the AOI with NDDI > 0.5 (drought-affected threshold)."),
-        ("Vegetation Loss (NDVI)", "Sub-score reflects the share of NDVI \u2265 0.20 (vegetated) area at "
-                                    "the start of the period that dropped below that threshold by the end."),
+        ("Vegetation Decline (NDVI)", "Sub-score reflects the share of NDVI \u2265 0.20 (vegetated) area at "
+                                    "the start of the period that dropped below that threshold by the end. This is "
+                                    "a threshold-crossing measurement, not a confirmed-cause diagnosis \u2014 it can "
+                                    "equally reflect normal seasonal change, harvesting, drought stress, temporary "
+                                    "disturbance, land-cover conversion, or a cloud/processing artifact. It should "
+                                    "not be read as confirmed permanent vegetation loss without further review."),
         ("Moisture Deficit (SMAP)", "Sub-score combines the magnitude of the soil-moisture drop over the "
                                       "period with the extent of area below the 0.10 m\u00b3/m\u00b3 dry-stress "
                                       "threshold at the end of the period."),
@@ -1613,8 +1636,17 @@ def build_agri_risk_report(
     flow.append(Spacer(1, 4))
 
     flow.append(Paragraph("6. Sub-Score Breakdown", styles["section_head"]))
+    # 'Vegetation Loss' (auto-generated from the internal key vegetation_loss)
+    # reads as if it measures confirmed, permanent loss. What it actually
+    # measures is a share of pixels crossing an NDVI threshold, which can
+    # equally reflect seasonal change, harvesting, drought stress, or a
+    # processing artifact — 'Vegetation Decline' is a more accurate label
+    # for what's shown here. The internal key stays vegetation_loss for API/
+    # storage compatibility; only the display label changes.
+    SUB_SCORE_LABELS = {"vegetation_loss": "Vegetation Decline"}
     sub_rows = [
-        (k.replace("_", " ").title(), _fmt_num(v, 1) if v is not None else "No data available", "/ 100")
+        (SUB_SCORE_LABELS.get(k, k.replace("_", " ").title()),
+         _fmt_num(v, 1) if v is not None else "No data available", "/ 100")
         for k, v in sub_scores.items()
     ]
     flow.append(_metrics_table(styles, sub_rows))
@@ -1653,7 +1685,7 @@ def build_agri_risk_report(
     flow.append(Paragraph(f"{section_num}. Findings & Interpretation", styles["section_head"]))
     flow.append(Paragraph(risk_result.get("reason", "No specific driver identified."), styles["body"]))
     flow.append(Paragraph(
-        f"This assessment carries a confidence of {confidence}%, reflecting "
+        f"This assessment's data-completeness reading is {confidence}%, reflecting "
         f"{'full' if len(inputs_used) == 3 else 'partial'} data availability across the three underlying "
         f"indicators" + (
             " and this region's accumulated alert-accuracy track record." if len(inputs_used) == 3 else "."

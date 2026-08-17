@@ -195,12 +195,24 @@ def get_nddi_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int =
     })
 
 
-def get_soil_moisture_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 90) -> Optional[bytes]:
+def get_soil_moisture_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 90) -> Optional[Dict[str, Any]]:
     """Colored SMAP soil-moisture map — the surface the moisture-deficit
     sub-score is computed from. Brown = dry, blue = moist. Uses NASA/SMAP/
     SPL4SMGP/008 (band sm_surface) — same dataset compute_soil_moisture in
     gee_client.py uses; the old NASA_USDA/HSL/SMAP10KM_soil_moisture is
-    deprecated and appears to have stopped receiving new imagery."""
+    deprecated and appears to have stopped receiving new imagery.
+
+    Uses a DYNAMIC min/max stretch computed from the actual observed values
+    in this AOI, rather than a fixed 0-0.5 range. A fixed wide stretch can
+    make a real, valid soil-moisture map look like one flat color when the
+    AOI's true value range is narrow (e.g. a large, uniformly dry region in
+    the dry season genuinely might only span ~0.05-0.15 m3/m3 — squashed
+    into a 0-0.5 scale, that whole range renders as barely-distinguishable
+    shades near the 'dry' end of the palette, which is what a flat-looking
+    SMAP thumbnail usually means: real but narrow variation, not a bug or
+    missing data). Returns the actual stretch bounds used so the caller can
+    build a legend that matches what's actually shown, instead of a
+    generic 0-0.5 legend that wouldn't reflect the image."""
     region = _polygon_geometry(aoi)
     center_dt = datetime.strptime(center_date, "%Y-%m-%d")
     start = ee.Date((center_dt - timedelta(days=days_window)).strftime("%Y-%m-%d"))
@@ -214,7 +226,26 @@ def get_soil_moisture_thumbnail(aoi: Dict[str, Any], center_date: str, days_wind
     if col.size().getInfo() == 0:
         return None
     composite = col.mean().clip(region)
-    return _fetch_thumb_bytes(composite, region, {
-        "min": 0, "max": 0.5,
-        "palette": ["#8b6b3d", "#c9a86a", "#a8c9d4", "#4a9ec9", "#1a4d7a"],
-    })
+
+    # 2nd/98th percentile rather than raw min/max, so a couple of outlier
+    # pixels (sensor noise, coastline/water-body edge effects) can't blow
+    # the stretch out and flatten the *real* signal right back out again.
+    try:
+        stats = composite.reduceRegion(
+            reducer=ee.Reducer.percentile([2, 98]), geometry=region, scale=10000,
+            maxPixels=1e9, bestEffort=True, tileScale=4,
+        ).getInfo()
+        vmin = stats.get("sm_surface_p2")
+        vmax = stats.get("sm_surface_p98")
+    except Exception as e:
+        logger.warning(f"soil moisture dynamic stretch failed, falling back to fixed range: {e}")
+        vmin, vmax = None, None
+
+    if vmin is None or vmax is None or vmax <= vmin:
+        vmin, vmax = 0.0, 0.5  # fallback to the previous fixed range
+
+    palette = ["#8b6b3d", "#c9a86a", "#a8c9d4", "#4a9ec9", "#1a4d7a"]
+    thumb_bytes = _fetch_thumb_bytes(composite, region, {"min": vmin, "max": vmax, "palette": palette})
+    if thumb_bytes is None:
+        return None
+    return {"bytes": thumb_bytes, "min": round(vmin, 4), "max": round(vmax, 4), "palette": palette}
