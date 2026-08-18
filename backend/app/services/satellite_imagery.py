@@ -226,26 +226,49 @@ def get_soil_moisture_thumbnail(aoi: Dict[str, Any], center_date: str, days_wind
     if col.size().getInfo() == 0:
         return None
     composite = col.mean().clip(region)
+    palette = ["#8b6b3d", "#c9a86a", "#a8c9d4", "#4a9ec9", "#1a4d7a"]
 
     # 2nd/98th percentile rather than raw min/max, so a couple of outlier
     # pixels (sensor noise, coastline/water-body edge effects) can't blow
     # the stretch out and flatten the *real* signal right back out again.
+    #
+    # This stats step is a separate, ADDITIONAL reduceRegion on top of what
+    # the thumbnail generation itself already needs — SMAP L4 is 3-hourly,
+    # so a +/-90-day window is up to ~1440 images to average first. Kept
+    # deliberately cheap (coarse scale, a short recent sub-window rather
+    # than the full heavy composite) so this extra step can't become the
+    # reason the whole thumbnail fails to render on a large/complex AOI —
+    # it only needs to be a good-enough estimate of the value range, not a
+    # precise one.
+    vmin, vmax = 0.0, 0.5
     try:
-        stats = composite.reduceRegion(
-            reducer=ee.Reducer.percentile([2, 98]), geometry=region, scale=10000,
-            maxPixels=1e9, bestEffort=True, tileScale=4,
+        stats_window_start = _cap_end_date((center_dt - timedelta(days=14)).strftime("%Y-%m-%d"))
+        stats_composite = (
+            ee.ImageCollection("NASA/SMAP/SPL4SMGP/008")
+            .filterBounds(region)
+            .filterDate(stats_window_start, end)
+            .select("sm_surface")
+            .mean()
+        )
+        stats = stats_composite.reduceRegion(
+            reducer=ee.Reducer.percentile([2, 98]), geometry=region, scale=50000,
+            maxPixels=1e9, bestEffort=True, tileScale=8,
         ).getInfo()
-        vmin = stats.get("sm_surface_p2")
-        vmax = stats.get("sm_surface_p98")
+        p2 = stats.get("sm_surface_p2")
+        p98 = stats.get("sm_surface_p98")
+        if p2 is not None and p98 is not None and float(p98) > float(p2):
+            vmin, vmax = float(p2), float(p98)
     except Exception as e:
-        logger.warning(f"soil moisture dynamic stretch failed, falling back to fixed range: {e}")
-        vmin, vmax = None, None
+        logger.warning(f"soil moisture dynamic stretch failed, using fixed 0-0.5 range: {e}")
 
-    if vmin is None or vmax is None or vmax <= vmin:
-        vmin, vmax = 0.0, 0.5  # fallback to the previous fixed range
-
-    palette = ["#8b6b3d", "#c9a86a", "#a8c9d4", "#4a9ec9", "#1a4d7a"]
     thumb_bytes = _fetch_thumb_bytes(composite, region, {"min": vmin, "max": vmax, "palette": palette})
+    if thumb_bytes is None and (vmin, vmax) != (0.0, 0.5):
+        # The dynamic-range attempt failed for some reason unrelated to the
+        # stats step (e.g. a transient fetch error) — retry once with the
+        # plain fixed range rather than giving up on the whole image.
+        logger.warning("soil moisture thumbnail fetch failed with dynamic range, retrying with fixed 0-0.5 range")
+        vmin, vmax = 0.0, 0.5
+        thumb_bytes = _fetch_thumb_bytes(composite, region, {"min": vmin, "max": vmax, "palette": palette})
     if thumb_bytes is None:
         return None
     return {"bytes": thumb_bytes, "min": round(vmin, 4), "max": round(vmax, 4), "palette": palette}
