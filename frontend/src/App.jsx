@@ -654,7 +654,9 @@ function PlaceSearchBar({ mapRef, drawGroupRef, aoiBoundsRef, onAreaDrawn, isMob
       map.fitBounds(bounds, { padding: [40, 40] });
     } catch (e) {}
 
-    onAreaDrawn(geometry);
+    onAreaDrawn(geometry, feature.properties?.display_name
+      ? feature.properties.display_name.split(',').slice(0, 2).join(',').trim()
+      : null);
     setOpen(false);
     setQuery(feature.properties?.display_name?.split(',')[0] || query);
     setFallbackWarning(isPointFallback
@@ -1038,7 +1040,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             </div>
           </div>
         )}
-        {tab === 'Agri' && <AgriPanel drawnAOI={drawnAOI} apiUrl={apiUrl} />}
+        {tab === 'Agri' && <AgriPanel drawnAOI={drawnAOI} apiUrl={apiUrl} searchedRegionName={aoiRegionName} />}
         {tab === 'Guide' && (
           <div style={{ display:'flex', flexDirection:'column', gap:14, fontSize:15, color:S.text2 }}>
             <div>
@@ -1113,6 +1115,16 @@ export default function App() {
   const [queryText, setQueryText] = useState('');
   const [selMetric, setSelMetric] = useState(null);
   const [drawnAOI, setDrawnAOI]   = useState(null);
+  const [aoiRegionName, setAoiRegionName] = useState(null); // set only via place search; cleared on manual draw/edit/delete
+
+  const handleManualAreaDrawn = useCallback((geom) => {
+    setDrawnAOI(geom);
+    setAoiRegionName(null); // manual draw/edit/delete — no searched name to attach
+  }, []);
+  const handlePlaceSelected = useCallback((geom, name) => {
+    setDrawnAOI(geom);
+    setAoiRegionName(name || null);
+  }, []);
   const [result, setResult]       = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError]         = useState(null);
@@ -1527,7 +1539,7 @@ export default function App() {
   );
 
   const mapEl = (
-    <VayuMap onAreaDrawn={setDrawnAOI} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} />
+    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} />
   );
 
   // Single tree for both layouts — the map element's position/type never changes
@@ -1541,7 +1553,7 @@ export default function App() {
         ? { position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1, overflow:'hidden' }
         : { flex:1, height:'100%', position:'relative' } }>
         {mapEl}
-        <PlaceSearchBar mapRef={mapRef} drawGroupRef={drawGroupRef} aoiBoundsRef={aoiBoundsRef} onAreaDrawn={setDrawnAOI} isMobile={isMobile} />
+        <PlaceSearchBar mapRef={mapRef} drawGroupRef={drawGroupRef} aoiBoundsRef={aoiBoundsRef} onAreaDrawn={handlePlaceSelected} isMobile={isMobile} />
         <MapOverlay result={result} isLoading={isLoading} drawnAOI={drawnAOI} isMobile={isMobile} />
       </div>
 
