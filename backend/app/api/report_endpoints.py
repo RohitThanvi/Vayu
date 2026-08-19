@@ -198,6 +198,11 @@ async def agri_risk_report(req: AgriRiskReportRequest):
 
     llm_synthesis = None
     try:
+        def _context_summary(result, keys):
+            if not result:
+                return None
+            return {k: result.get(k) for k in keys if k in result}
+
         context = {
             "risk_score": risk_result.get("risk_score"), "band": risk_result.get("band"),
             "confidence": risk_result.get("confidence"), "sub_scores": risk_result.get("sub_scores"),
@@ -207,6 +212,14 @@ async def agri_risk_report(req: AgriRiskReportRequest):
                 {"status": baseline_result.get("status"), "z_score": baseline_result.get("z_score")}
                 if baseline_result and baseline_result.get("seasonal_normal_ndvi") is not None else None
             ),
+            "regional_context_note": "The following groundwater/rainfall/temperature readings are "
+                "informational context and are NOT part of the composite risk score above.",
+            "groundwater_context": _context_summary(
+                groundwater_result, ["status", "trend", "slope_cm_per_year", "latest_anomaly_cm"]),
+            "rainfall_context": _context_summary(
+                precipitation_result, ["status", "condition", "anomaly_pct", "recent_total_mm", "historical_mean_mm"]),
+            "temperature_context": _context_summary(
+                temperature_result, ["status", "mean_lst_c", "min_lst_c", "max_lst_c"]),
         }
         llm_synthesis = await asyncio.to_thread(get_llm_synthesis, context)
     except Exception as e:
