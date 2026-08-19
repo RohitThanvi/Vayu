@@ -855,7 +855,7 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI,
+function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI, aoiRegionName,
   isLoading,error,result,jobStatus, onSubmit, history,onSelectHistory, vesselStats, onClose, isMobile,
   weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey }) {
   const [eIdx, setEIdx] = useState(0);
@@ -1516,7 +1516,7 @@ export default function App() {
 
   const sidebarEl = (
     <Sidebar tab={tab} setTab={setTab} queryText={queryText} setQueryText={setQueryText}
-      selMetric={selMetric} setSelMetric={setSelMetric} drawnAOI={drawnAOI}
+      selMetric={selMetric} setSelMetric={setSelMetric} drawnAOI={drawnAOI} aoiRegionName={aoiRegionName}
       isLoading={isLoading} error={error} result={result} jobStatus={jobStatus}
       onSubmit={handleSubmit} history={history}
       onSelectHistory={r => { setResult(r); clearLayers(); }}
