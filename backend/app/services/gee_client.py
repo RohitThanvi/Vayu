@@ -108,11 +108,13 @@ def _require_start_after(start_date: str, cutoff: str, dataset_name: str):
 
 
 def _mask_s2_clouds(image: ee.Image) -> ee.Image:
-    qa = image.select("QA60")
-    mask = (
-        qa.bitwiseAnd(1 << 10).eq(0)
-        .And(qa.bitwiseAnd(1 << 11).eq(0))
-    )
+    # QA60 stopped being reliably populated for Sentinel-2 scenes processed
+    # under baseline 04.00+ (after 2022-01-25) until Feb 2024, and even the
+    # "legacy-reconstructed" QA60 post-2024 is less reliable than SCL. Use the
+    # Scene Classification Layer instead: mask out cloud shadow (3), cloud
+    # medium/high probability (8, 9), and cirrus (10).
+    scl = image.select("SCL")
+    mask = scl.neq(3).And(scl.neq(8)).And(scl.neq(9)).And(scl.neq(10))
     return image.updateMask(mask).divide(10000)
 
 

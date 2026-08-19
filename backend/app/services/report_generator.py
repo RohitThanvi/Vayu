@@ -446,8 +446,10 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
             "Land surface temperature is derived from the Landsat thermal band (ST_B10) using the "
             "standard USGS Collection 2 scaling: LST(\u00b0C) = ST_B10 \u00d7 0.00341802 + 149.0 \u2212 273.15.",
             "Start- and end-period composites are built as the mean LST across all available scenes in "
-            "a one-year window centered on each comparison date. Urban heat island pixels are those "
-            "exceeding the AOI's end-period mean temperature by more than 2\u00b0C.",
+            "a one-year window \u2014 the start-period window runs forward from the start date, and the "
+            "end-period window runs backward from the end date, so both windows stay within the "
+            "requested analysis period. Urban heat island pixels are those exceeding the AOI's "
+            "end-period mean temperature by more than 2\u00b0C.",
         ],
         "metric_labels": {
             "start_mean_lst_c": ("Start Mean LST", "\u00b0C", 2),
@@ -1251,8 +1253,21 @@ GLOSSARY_COMMON = [
     ("km\u00b2", "Square kilometers, the unit used for all area measurements in this report."),
     ("Spatial Resolution", "The ground distance represented by one pixel in the source imagery (e.g. 10 m means each pixel covers a 10\u00d710 m ground area). Finer resolution allows detection of smaller features."),
     ("Cloud Masking", "A preprocessing step that excludes cloud- and cloud-shadow-contaminated pixels from a satellite scene before analysis, so cloud cover isn't mistaken for a ground feature."),
-    ("Median Composite", "A pixel-wise median taken across multiple satellite scenes over a time window, used to suppress the influence of any single anomalous (cloudy, shadowed, or noisy) scene."),
 ]
+
+GLOSSARY_MEDIAN_COMPOSITE = ("Median Composite", "A pixel-wise median taken across multiple satellite scenes over a time window, used to suppress the influence of any single anomalous (cloudy, shadowed, or noisy) scene.")
+GLOSSARY_MEAN_COMPOSITE = ("Mean Composite", "A pixel-wise average taken across multiple satellite scenes over a time window, used to smooth out noise and fill gaps from any single scene.")
+
+# analysis_type -> which compositing-method glossary entry actually applies,
+# since land_surface_temperature and soil_moisture use .mean(), not .median()
+_COMPOSITING_GLOSSARY_BY_TYPE = {
+    "land_surface_temperature": GLOSSARY_MEAN_COMPOSITE,
+    "soil_moisture": GLOSSARY_MEAN_COMPOSITE,
+}
+
+
+def _compositing_glossary_entry(analysis_type: str):
+    return _COMPOSITING_GLOSSARY_BY_TYPE.get(analysis_type, GLOSSARY_MEDIAN_COMPOSITE)
 
 CITATIONS_BY_SOURCE = {
     "sentinel2": "European Space Agency (ESA), Copernicus Sentinel-2 Mission, Level-2A Surface Reflectance. Available via Google Earth Engine: COPERNICUS/S2_SR_HARMONIZED.",
@@ -1331,10 +1346,12 @@ _DEFAULT_INTERPRETATION_HINT = (
 
 
 def _analysis_data_quality_rows(analysis_type: str, metrics: Dict[str, Any]) -> List[Tuple[str, str]]:
-    rows = [
-        ("Consistency Check", "Passed \u2014 reported change figures are internally consistent "
-                                "(gain \u2212 loss matches the reported net/final change) before this report was generated."),
-    ]
+    rows = []
+    if analysis_type in _CONSISTENCY_CHECKS:
+        rows.append(
+            ("Consistency Check", "Passed \u2014 reported change figures are internally consistent "
+                                    "(gain \u2212 loss matches the reported net/final change) before this report was generated.")
+        )
     if analysis_type == "flood_detection":
         ref = metrics.get("reference_scenes_used")
         flood = metrics.get("flood_period_scenes_used")
@@ -1430,12 +1447,21 @@ def build_analysis_report(
         flow.append(Paragraph("<i>Assessment summary:</i>", styles["meta_label"]))
         flow.extend(_render_multi_paragraph(styles, llm_synthesis))
 
+    if analysis_type in _CONSISTENCY_CHECKS:
+        dq_narrative = (
+            "Before this report was generated, the computed metrics passed an automated internal consistency "
+            "check (verifying reported gain/loss figures algebraically match the reported net or final change) "
+            "\u2014 a report failing this check is not produced. The table below lists what else is known about "
+            "this specific run's data completeness."
+        )
+    else:
+        dq_narrative = (
+            "This analysis type does not report a gain/loss breakdown, so no gain-loss consistency check "
+            "applies. The table below lists what is known about this specific run's data completeness."
+        )
     flow += _data_quality_section(
         styles, _analysis_data_quality_rows(analysis_type, metrics),
-        "Before this report was generated, the computed metrics passed an automated internal consistency "
-        "check (verifying reported gain/loss figures algebraically match the reported net or final change) "
-        "\u2014 a report failing this check is not produced. The table below lists what else is known about "
-        "this specific run's data completeness.",
+        dq_narrative,
         section_num=7)
 
     if extras.get("recommendations"):
@@ -1446,7 +1472,8 @@ def build_analysis_report(
         "appendix_head", parent=styles["report_heading"], fontSize=13, spaceBefore=0)))
     flow.append(Spacer(1, 8))
     if extras.get("glossary"):
-        flow += _glossary_section(styles, GLOSSARY_COMMON + extras["glossary"], section_num=9)
+        glossary_terms = GLOSSARY_COMMON + [_compositing_glossary_entry(analysis_type)] + extras["glossary"]
+        flow += _glossary_section(styles, glossary_terms, section_num=9)
     citation_keys = extras.get("citation_keys", [])
     if citation_keys:
         flow.append(Spacer(1, 8))
