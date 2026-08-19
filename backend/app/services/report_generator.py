@@ -852,6 +852,11 @@ SAR_LEGEND = {"palette": ["#0a0a0a", "#4a4a4a", "#8a8a8a", "#c8c8c8", "#f5f5f5"]
                "labels": ["-25 dB (smooth/water)", "-12.5", "0 dB (rough/urban)"], "unit": "VH backscatter"}
 THERMAL_LEGEND = {"palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"], "min": 0, "max": 45,
                     "labels": ["0\u00b0C", "22.5\u00b0C", "45\u00b0C"], "unit": "Land surface temperature"}
+PRECIP_LEGEND = {"palette": ["#8b6b3d", "#c9a86a", "#e8e88a", "#4a9ec9", "#1a4d7a"], "min": 0, "max": 400,
+                   "labels": ["0 mm (dry)", "200 mm", "400+ mm (wet)"], "unit": "Accumulated rainfall (CHIRPS)"}
+GROUNDWATER_LEGEND = {"palette": ["#8b6b3d", "#c9a86a", "#e8e88a", "#4a9ec9", "#1a4d7a"], "min": -20, "max": 20,
+                        "labels": ["-20 cm (depleted)", "0", "+20 cm (surplus)"],
+                        "unit": "GRACE terrestrial water storage anomaly"}
 
 
 def _risk_gauge(score: float) -> Drawing:
@@ -1280,6 +1285,8 @@ CITATIONS_BY_SOURCE = {
     "smap": "Entekhabi, D., Yueh, S., O'Neill, P.E. et al. NASA Soil Moisture Active Passive (SMAP) Mission, SPL4SMGP Level-4 Surface and Root Zone Soil Moisture. NASA Jet Propulsion Laboratory / Goddard Space Flight Center.",
     "srtm": "Farr, T.G., Rosen, P.A., Caro, E. et al. (2007). The Shuttle Radar Topography Mission. Reviews of Geophysics 45, RG2004. NASA/USGS/JPL.",
     "smap10km_deprecated": "Colliander, A. et al., NASA/USDA SMAP10KM downscaled soil moisture (legacy product, deprecated by data provider).",
+    "grace": "Landerer, F.W. et al. NASA/German Research Centre for Geosciences (GFZ) GRACE and GRACE-FO Mascon products, terrestrial water storage anomaly. Available via Google Earth Engine: NASA/GRACE/MASS_GRIDS_V04/LAND.",
+    "chirps": "Funk, C., Peterson, P., Landsfeld, M. et al. (2015). The climate hazards infrared precipitation with stations (CHIRPS) record. Scientific Data 2, 150066. UC Santa Barbara Climate Hazards Group. Available via Google Earth Engine: UCSB-CHG/CHIRPS/DAILY.",
 }
 
 
@@ -1500,6 +1507,16 @@ AGRI_GLOSSARY = [
     ("Weighted Average", "The composite score = 0.40\u00d7Drought + 0.35\u00d7Vegetation Decline + "
                           "0.25\u00d7Moisture Deficit, with weights automatically renormalized over "
                           "whichever indicators actually computed for this run."),
+    ("GRACE", "NASA/GFZ satellite mission measuring tiny changes in Earth's gravity field to estimate "
+               "terrestrial water storage anomalies (surface + soil + groundwater combined) at a coarse "
+               "~300 km grid \u2014 used here only as regional groundwater-trend context, not part of the "
+               "composite risk score."),
+    ("CHIRPS", "A global daily rainfall estimate blending satellite and rain-gauge station data, "
+                "~5.5 km resolution \u2014 used here only as regional rainfall context, not part of the "
+                "composite risk score."),
+    ("Land Surface Temperature (LST)", "Derived from the Landsat thermal band using the standard USGS "
+                "Collection 2 scaling \u2014 used here only as regional temperature context, not part of "
+                "the composite risk score."),
 ]
 
 
@@ -1538,6 +1555,123 @@ def _agri_recommendations(band: str, inputs_failed: List[str]) -> List[str]:
     return recs
 
 
+def _regional_context_section(styles, section_num: int, groundwater_result, precipitation_result,
+                                temperature_result, groundwater_image_bytes=None,
+                                precipitation_image_bytes=None, temperature_image_bytes=None) -> List:
+    """Groundwater, rainfall, and temperature context for the AOI.
+    Deliberately NOT part of the composite 0-100 risk score above: each of
+    these has a different resolution/cadence than the three indicators
+    that score is built from (GRACE ~300km/multi-year, CHIRPS ~5.5km/
+    seasonal, both coarser or slower-moving than the 3-month Sentinel-2/
+    SMAP window the score compares). Folding them into the same weighted
+    number would mix timescales rather than genuinely improve the score,
+    so they're reported here as separate, honestly-scoped context instead."""
+    flow = [Paragraph(f"{section_num}. Regional Environmental Context", styles["section_head"])]
+    flow.append(Paragraph(
+        "The three readings below \u2014 groundwater, rainfall, and land surface temperature \u2014 provide "
+        "additional regional context for this AOI. They are reported separately and are <b>not included "
+        "in the composite risk score</b> above: each is measured at a coarser resolution or slower "
+        "timescale than the three indicators (drought, vegetation decline, moisture deficit) the score is "
+        "built from, so combining them into one weighted number would mix incompatible timescales rather "
+        "than genuinely improve it.",
+        styles["caveat"]))
+    flow.append(Spacer(1, 6))
+
+    images = []
+    if groundwater_result and groundwater_result.get("status") == "ok":
+        gw = groundwater_result
+        images.append({
+            "label": "Groundwater Trend (GRACE)", "bytes": groundwater_image_bytes,
+            "caption": f"NASA GRACE/GRACE-FO, latest available anomaly \u00b7 {gw['resolution_note']}",
+            "legend": GROUNDWATER_LEGEND,
+            "interpretation": (
+                f"Trend over the recent record: <b>{gw['trend']}</b> "
+                f"({gw['slope_cm_per_year']:+.2f} cm/year). Latest anomaly: {gw['latest_anomaly_cm']:+.2f} cm "
+                f"(as of {gw['latest_date']}, {gw['points_used']} monthly points used)."
+            ),
+        })
+    if precipitation_result and precipitation_result.get("status") == "ok":
+        pr = precipitation_result
+        images.append({
+            "label": "Rainfall (CHIRPS)", "bytes": precipitation_image_bytes,
+            "caption": f"CHIRPS, {pr['recent_days']}-day accumulated total \u00b7 {pr['resolution_note']}",
+            "legend": PRECIP_LEGEND,
+            "interpretation": (
+                f"Recent {pr['recent_days']}-day total: {pr['recent_total_mm']} mm, vs. a "
+                f"{pr['years_used']}-year seasonal-normal average of {pr['historical_mean_mm']} mm for the "
+                f"same window \u2014 conditions are <b>{pr['condition']}</b>"
+                + (f" ({pr['anomaly_pct']:+.1f}% vs. normal)." if pr.get("anomaly_pct") is not None else ".")
+            ),
+        })
+    if temperature_result and temperature_result.get("status") == "ok":
+        tm = temperature_result
+        images.append({
+            "label": "Land Surface Temperature", "bytes": temperature_image_bytes,
+            "caption": f"Landsat 8/9 thermal, {tm['recent_days']}-day mean \u00b7 {tm['resolution_note']}",
+            "legend": THERMAL_LEGEND,
+            "interpretation": (
+                f"Mean land surface temperature over the recent {tm['recent_days']}-day window: "
+                f"{tm['mean_lst_c']}\u00b0C (range {tm['min_lst_c']}\u2013{tm['max_lst_c']}\u00b0C)."
+            ),
+        })
+
+    if images:
+        img_w = 78 * mm
+        cell_style = ParagraphStyle("ctx_grid_caption", parent=styles["footer"], alignment=TA_CENTER, spaceBefore=3)
+        body_style = ParagraphStyle("ctx_grid_body", parent=styles["body"], fontSize=8.5, leading=12)
+
+        def _cell(img):
+            content = [Image(io.BytesIO(img["bytes"]), width=img_w, height=img_w)] if img.get("bytes") else []
+            content.append(Paragraph(f"<b>{img['label']}</b>", cell_style))
+            if img.get("caption"):
+                content.append(Paragraph(img["caption"], cell_style))
+            if img.get("legend") and img.get("bytes"):
+                leg = img["legend"]
+                drawing = _gradient_legend(leg["palette"], leg["min"], leg["max"], leg["unit"],
+                                            tick_labels=leg.get("labels"), width=int(img_w))
+                drawing.hAlign = "CENTER"
+                content.append(Spacer(1, 3))
+                content.append(drawing)
+            if img.get("interpretation"):
+                content.append(Spacer(1, 3))
+                content.append(Paragraph(img["interpretation"], body_style))
+            return content
+
+        rows = []
+        for i in range(0, len(images), 2):
+            pair = images[i:i + 2]
+            row = [_cell(img) for img in pair]
+            if len(pair) == 1:
+                row.append("")
+            rows.append(row)
+        t = Table(rows, colWidths=[img_w + 4, img_w + 4])
+        t.setStyle(TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        flow.append(t)
+    else:
+        flow.append(Paragraph(
+            "No regional context data was available for this AOI/period (groundwater, rainfall, and "
+            "temperature all require sufficient satellite coverage over the requested window).",
+            styles["body"]))
+
+    unavailable_notes = []
+    for name, result in (("groundwater", groundwater_result), ("rainfall", precipitation_result),
+                          ("temperature", temperature_result)):
+        if result and result.get("status") != "ok" and result.get("note"):
+            unavailable_notes.append(f"{name.title()}: {result['note']}")
+    if unavailable_notes:
+        flow.append(Spacer(1, 4))
+        flow.append(Paragraph("<b>Not available for this run:</b> " + " \u00b7 ".join(unavailable_notes),
+                               styles["caveat"]))
+
+    flow.append(Spacer(1, 4))
+    return flow
+
+
 def build_agri_risk_report(
     aoi_geojson: Dict[str, Any],
     risk_result: Dict[str, Any],
@@ -1549,6 +1683,12 @@ def build_agri_risk_report(
     moisture_legend_range: Optional[Tuple[float, float]] = None,
     baseline_result: Optional[Dict[str, Any]] = None,
     llm_synthesis: Optional[str] = None,
+    groundwater_result: Optional[Dict[str, Any]] = None,
+    precipitation_result: Optional[Dict[str, Any]] = None,
+    temperature_result: Optional[Dict[str, Any]] = None,
+    groundwater_image_bytes: Optional[bytes] = None,
+    precipitation_image_bytes: Optional[bytes] = None,
+    temperature_image_bytes: Optional[bytes] = None,
 ) -> bytes:
     """Builds the agri risk-score PDF report from a compute_risk_score() result."""
     styles = _styles()
@@ -1581,12 +1721,13 @@ def build_agri_risk_report(
         ("5. Indicator Definitions & Thresholds", "What each sub-score measures"),
         ("6. Sub-Score Breakdown", "Drought, vegetation decline, and moisture deficit scores"),
         ("7. Historical Context", "5-year seasonal baseline comparison"),
-        ("8. Findings & Interpretation", "What the score indicates"),
-        ("9. Data Quality & Confidence", "Data completeness and validation"),
-        ("10. Recommendations", "Suggested next steps"),
-        ("11. Glossary & Formula Reference", "Terms and formulas used in this report"),
-        ("12. Data Sources & Citations", "Full citations for every dataset used"),
-        ("13. Limitations & Caveats", "What this assessment does not tell you"),
+        ("8. Regional Environmental Context", "Groundwater, rainfall, and temperature (not scored)"),
+        ("9. Findings & Interpretation", "What the score indicates"),
+        ("10. Data Quality & Confidence", "Data completeness and validation"),
+        ("11. Recommendations", "Suggested next steps"),
+        ("12. Glossary & Formula Reference", "Terms and formulas used in this report"),
+        ("13. Data Sources & Citations", "Full citations for every dataset used"),
+        ("14. Limitations & Caveats", "What this assessment does not tell you"),
     ])
 
     exec_paragraphs = [
@@ -1716,6 +1857,13 @@ def build_agri_risk_report(
         flow.append(Spacer(1, 4))
         section_num += 1
 
+    if any([groundwater_result, precipitation_result, temperature_result]):
+        flow.append(PageBreak())
+        flow += _regional_context_section(
+            styles, section_num, groundwater_result, precipitation_result, temperature_result,
+            groundwater_image_bytes, precipitation_image_bytes, temperature_image_bytes)
+        section_num += 1
+
     flow.append(Paragraph(f"{section_num}. Findings & Interpretation", styles["section_head"]))
     flow.append(Paragraph(risk_result.get("reason", "No specific driver identified."), styles["body"]))
     flow.append(Paragraph(
@@ -1754,7 +1902,14 @@ def build_agri_risk_report(
     section_num += 1
 
     flow.append(Spacer(1, 8))
-    flow += _citations_section(styles, [CITATIONS_BY_SOURCE["sentinel2"], CITATIONS_BY_SOURCE["smap"]], section_num=section_num)
+    citation_keys = ["sentinel2", "smap"]
+    if groundwater_result and groundwater_result.get("status") == "ok":
+        citation_keys.append("grace")
+    if precipitation_result and precipitation_result.get("status") in ("ok", "ok_no_baseline"):
+        citation_keys.append("chirps")
+    if temperature_result and temperature_result.get("status") == "ok":
+        citation_keys.append("landsat")
+    flow += _citations_section(styles, [CITATIONS_BY_SOURCE[k] for k in citation_keys], section_num=section_num)
     section_num += 1
 
     flow.append(Paragraph(f"{section_num}. Limitations & Caveats", styles["section_head"]))
