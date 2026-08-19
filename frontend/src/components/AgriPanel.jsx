@@ -12,7 +12,7 @@ const BAND_COLOR = { low: '#4a7c59', moderate: '#c9933a', high: '#c96a3a', sever
 
 function bandColor(band) { return BAND_COLOR[band] || S.text3; }
 
-export default function AgriPanel({ drawnAOI, apiUrl }) {
+export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
   const [view, setView] = useState('score'); // 'score' | 'watchlist' | 'rollup'
   const [scoreResult, setScoreResult] = useState(null);
   const [scoreLoading, setScoreLoading] = useState(false);
@@ -52,7 +52,7 @@ export default function AgriPanel({ drawnAOI, apiUrl }) {
     try {
       const resp = await fetch(`${apiUrl}/api/v1/report/agri-risk`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ aoi_geojson: drawnAOI }),
+        body: JSON.stringify({ aoi_geojson: drawnAOI, region_name: searchedRegionName || undefined }),
       });
       if (!resp.ok) throw new Error((await resp.json()).detail || 'Report generation failed');
       const blob = await resp.blob();
@@ -85,6 +85,12 @@ export default function AgriPanel({ drawnAOI, apiUrl }) {
 
   useEffect(() => { if (view === 'watchlist') loadRegions(); }, [view, loadRegions]);
   useEffect(() => { if (view === 'rollup') loadRollup(rollupRole); }, [view, rollupRole, loadRollup]);
+  // Pre-fill the watchlist name field from a searched place, so the user
+  // doesn't have to retype "Jodhpur, Rajasthan" after already searching it
+  // — only when they haven't started typing their own name for this AOI.
+  useEffect(() => {
+    if (searchedRegionName && !regionName) setRegionName(searchedRegionName);
+  }, [searchedRegionName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const createRegion = async () => {
     if (!drawnAOI || !regionName.trim()) return;
