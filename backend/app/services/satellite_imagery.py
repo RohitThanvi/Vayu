@@ -143,6 +143,86 @@ def get_sar_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 
     return _fetch_thumb_bytes(composite, region, {"min": -25, "max": 0})
 
 
+def get_lst_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 90) -> Optional[bytes]:
+    """Colored Landsat thermal (LST) map — the surface the temperature
+    context reading is computed from. Blue = cooler, red = hotter."""
+    from datetime import datetime as _dt
+    region = _polygon_geometry(aoi)
+    center_dt = _dt.strptime(center_date, "%Y-%m-%d")
+    start = ee.Date((center_dt - timedelta(days=days_window)).strftime("%Y-%m-%d"))
+    end = _cap_end_date(center_date)
+
+    def _collection(coll_id):
+        return (
+            ee.ImageCollection(coll_id)
+            .filterBounds(region)
+            .filterDate(start, end)
+            .filter(ee.Filter.lt("CLOUD_COVER", 20))
+        )
+
+    col = _collection("LANDSAT/LC08/C02/T1_L2")
+    if col.size().getInfo() == 0:
+        col = _collection("LANDSAT/LC09/C02/T1_L2")
+    if col.size().getInfo() == 0:
+        return None
+
+    lst = col.map(
+        lambda img: img.select("ST_B10").multiply(0.00341802).add(149.0).subtract(273.15).rename("LST_C")
+    ).mean().clip(region)
+    return _fetch_thumb_bytes(lst, region, {
+        "min": 0, "max": 45,
+        "palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"],
+    })
+
+
+def get_precipitation_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 90) -> Optional[bytes]:
+    """Colored CHIRPS rainfall-accumulation map over the window. Brown = dry
+    (little accumulated rainfall), blue = wet (high accumulated rainfall)."""
+    from datetime import datetime as _dt
+    region = _polygon_geometry(aoi)
+    center_dt = _dt.strptime(center_date, "%Y-%m-%d")
+    start = (center_dt - timedelta(days=days_window)).strftime("%Y-%m-%d")
+    end = center_dt.strftime("%Y-%m-%d")
+
+    col = (
+        ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+        .filterBounds(region)
+        .filterDate(start, end)
+    )
+    if col.size().getInfo() == 0:
+        return None
+    total = col.sum().clip(region)
+    return _fetch_thumb_bytes(total, region, {
+        "min": 0, "max": 400,
+        "palette": ["#8b6b3d", "#c9a86a", "#e8e88a", "#4a9ec9", "#1a4d7a"],
+    })
+
+
+def get_groundwater_thumbnail(aoi: Dict[str, Any], center_date: str) -> Optional[bytes]:
+    """Colored GRACE terrestrial-water-storage-anomaly map — coarse
+    (~300km grid), so this shows the regional trend context, not
+    parcel-level detail. Brown = depleted anomaly, blue = surplus anomaly."""
+    from datetime import datetime as _dt
+    region = _polygon_geometry(aoi)
+    center_dt = _dt.strptime(center_date, "%Y-%m-%d")
+    start = (center_dt - timedelta(days=180)).strftime("%Y-%m-%d")
+    end = center_dt.strftime("%Y-%m-%d")
+
+    col = (
+        ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/LAND")
+        .filterBounds(region)
+        .filterDate(start, end)
+        .select("lwe_thickness_csr")
+    )
+    if col.size().getInfo() == 0:
+        return None
+    latest = col.sort("system:time_start", False).first().clip(region)
+    return _fetch_thumb_bytes(latest, region, {
+        "min": -20, "max": 20,
+        "palette": ["#8b6b3d", "#c9a86a", "#e8e88a", "#4a9ec9", "#1a4d7a"],
+    })
+
+
 def get_thumbnail_for_analysis(analysis_type: str, aoi: Dict[str, Any], date: str) -> Optional[bytes]:
     if analysis_type == "flood_detection":
         return get_sar_thumbnail(aoi, date)

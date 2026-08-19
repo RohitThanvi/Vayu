@@ -10,9 +10,12 @@ from ..services import gee_client
 from ..services.report_generator import build_analysis_report, build_agri_risk_report
 from ..services.agri.risk_scoring import compute_risk_score
 from ..services.agri.baseline import compute_seasonal_baseline
+from ..services.agri.groundwater import compute_groundwater_trend
+from ..services.agri.precipitation import compute_precipitation_context
 from ..services.satellite_imagery import (
     get_thumbnail_for_analysis, get_optical_thumbnail,
     get_ndvi_thumbnail, get_nddi_thumbnail, get_soil_moisture_thumbnail,
+    get_lst_thumbnail, get_precipitation_thumbnail, get_groundwater_thumbnail,
 )
 from ..services.llm_client import get_llm_synthesis
 from .. schemas import MetricType
@@ -152,6 +155,47 @@ async def agri_risk_report(req: AgriRiskReportRequest):
     except Exception as e:
         logger.warning(f"agri risk report baseline fetch failed, continuing without it: {e}")
 
+    # Regional context — groundwater, rainfall, temperature. Deliberately
+    # NOT part of the composite risk score (different resolution/cadence
+    # than the 3-month indicators the score is built from); reported
+    # separately in their own section instead.
+    as_of = risk_result.get("period", {}).get("end_date")
+    groundwater_result = None
+    precipitation_result = None
+    temperature_result = None
+    groundwater_bytes = None
+    precipitation_bytes = None
+    temperature_bytes = None
+    try:
+        context_results = await asyncio.gather(
+            asyncio.to_thread(compute_groundwater_trend, req.aoi_geojson),
+            asyncio.to_thread(compute_precipitation_context, req.aoi_geojson, as_of),
+            asyncio.to_thread(gee_client.compute_temperature_context, req.aoi_geojson, as_of),
+            return_exceptions=True,
+        )
+        labels = ("groundwater", "precipitation", "temperature")
+        groundwater_result, precipitation_result, temperature_result = (
+            r if not isinstance(r, Exception) else None for r in context_results
+        )
+        for label, r in zip(labels, context_results):
+            if isinstance(r, Exception):
+                logger.warning(f"agri risk report {label} context fetch failed, continuing without it: {r}")
+        if req.include_imagery:
+            image_results = await asyncio.gather(
+                asyncio.to_thread(get_groundwater_thumbnail, req.aoi_geojson, as_of),
+                asyncio.to_thread(get_precipitation_thumbnail, req.aoi_geojson, as_of),
+                asyncio.to_thread(get_lst_thumbnail, req.aoi_geojson, as_of),
+                return_exceptions=True,
+            )
+            groundwater_bytes, precipitation_bytes, temperature_bytes = (
+                r if not isinstance(r, Exception) else None for r in image_results
+            )
+            for label, r in zip(labels, image_results):
+                if isinstance(r, Exception):
+                    logger.warning(f"agri risk report {label} thumbnail failed, continuing without it: {r}")
+    except Exception as e:
+        logger.warning(f"agri risk report regional context fetch failed, continuing without it: {e}")
+
     llm_synthesis = None
     try:
         context = {
@@ -174,6 +218,9 @@ async def agri_risk_report(req: AgriRiskReportRequest):
             image_bytes=image_bytes, ndvi_image_bytes=ndvi_bytes, nddi_image_bytes=nddi_bytes,
             moisture_image_bytes=moisture_bytes, moisture_legend_range=moisture_legend_range,
             baseline_result=baseline_result, llm_synthesis=llm_synthesis,
+            groundwater_result=groundwater_result, precipitation_result=precipitation_result,
+            temperature_result=temperature_result, groundwater_image_bytes=groundwater_bytes,
+            precipitation_image_bytes=precipitation_bytes, temperature_image_bytes=temperature_bytes,
         )
     except Exception as e:
         logger.error(f"agri risk report generation failed: {e}", exc_info=True)

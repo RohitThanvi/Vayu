@@ -543,6 +543,62 @@ def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) 
     }
 
 
+def compute_temperature_context(aoi: Dict, as_of: str = None, recent_days: int = 90) -> Dict:
+    """Recent land-surface-temperature reading for an AOI (mean/min/max over
+    a single rolling window), for use as regional context alongside a risk
+    report — NOT the two-window before/after change framing
+    compute_land_surface_temperature() uses for the standalone LST report.
+    Uses the same Landsat 8/9 ST_B10 source and Celsius conversion."""
+    logger.info(f"GEE: temperature_context as_of={as_of}")
+    region = _polygon_geometry(aoi)
+    end_dt = ee.Date(as_of) if as_of else ee.Date(datetime.datetime.utcnow().strftime("%Y-%m-%d"))
+    start_dt = end_dt.advance(-recent_days, "day")
+
+    def _collection(start, end):
+        col = (
+            ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+            .filterBounds(region)
+            .filterDate(start, end)
+            .filter(ee.Filter.lt("CLOUD_COVER", 20))
+        )
+        if col.size().getInfo() == 0:
+            col = (
+                ee.ImageCollection("LANDSAT/LC09/C02/T1_L2")
+                .filterBounds(region)
+                .filterDate(start, end)
+                .filter(ee.Filter.lt("CLOUD_COVER", 20))
+            )
+        return col
+
+    col = _collection(start_dt, end_dt)
+    if col.size().getInfo() == 0:
+        return {"status": "no_data", "note": "No cloud-free Landsat 8/9 thermal imagery found for this AOI/period."}
+
+    lst = col.map(
+        lambda img: img.select("ST_B10").multiply(0.00341802).add(149.0).subtract(273.15).rename("LST_C")
+    ).mean()
+
+    stats = lst.reduceRegion(
+        reducer=ee.Reducer.mean().combine(ee.Reducer.min(), sharedInputs=True)
+                                 .combine(ee.Reducer.max(), sharedInputs=True),
+        geometry=region, scale=100, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
+
+    mean_c = stats.get("LST_C_mean")
+    if mean_c is None:
+        return {"status": "no_data", "note": "No usable Landsat thermal pixels for this AOI/period."}
+
+    return {
+        "status": "ok",
+        "mean_lst_c": round(mean_c, 2),
+        "min_lst_c": round(stats.get("LST_C_min") or 0, 2),
+        "max_lst_c": round(stats.get("LST_C_max") or 0, 2),
+        "recent_days": recent_days,
+        "resolution_note": "Landsat 8/9 thermal band, ~100 m (resampled) resolution.",
+        "source": "LANDSAT/LC08-LC09/C02/T1_L2 (ST_B10)",
+    }
+
+
 def compute_deforestation(aoi: Dict, start_date: str, end_date: str) -> Dict:
     """Forest loss using Hansen Global Forest Watch."""
     logger.info(f"GEE: deforestation {start_date} → {end_date}")
