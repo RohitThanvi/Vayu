@@ -160,6 +160,15 @@ def _calc_area_km2(mask: ee.Image, region: ee.Geometry, scale: int = 100) -> flo
     return result / 1_000_000
 
 
+def _region_area_km2(region: ee.Geometry) -> float:
+    """Total AOI area in km², independent of any mask. Used to convert an
+    absolute affected-area reading (km²) into a share of the AOI — an
+    absolute km² figure alone means very different things for a 20 km² AOI
+    vs. a 2,000 km² one, so any 'severity' score derived from area must be
+    normalized against this, not used as a raw capped number."""
+    return (region.area(maxError=1).divide(1_000_000).getInfo()) or 0
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # METRIC FUNCTIONS
 # ═════════════════════════════════════════════════════════════════════════════
@@ -451,6 +460,9 @@ def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
 
     drought_km2 = _calc_area_km2(drought_mask, region)
     severe_km2 = _calc_area_km2(severe_drought_mask, region)
+    region_area_km2 = _region_area_km2(region)
+    drought_affected_pct = round(min(max(drought_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
+    severe_drought_pct = round(min(max(severe_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
 
     avg_nddi_start = start_nddi.reduceRegion(
         reducer=ee.Reducer.mean(), geometry=region, scale=30, maxPixels=1e9,
@@ -465,6 +477,9 @@ def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
         "metrics": {
             "drought_affected_km2": round(drought_km2, 4),
             "severe_drought_km2": round(severe_km2, 4),
+            "region_area_km2": round(region_area_km2, 4),
+            "drought_affected_pct": drought_affected_pct,
+            "severe_drought_pct": severe_drought_pct,
             "avg_nddi_start": round(avg_nddi_start, 4),
             "avg_nddi_end": round(avg_nddi_end, 4),
             "nddi_change": round(avg_nddi_end - avg_nddi_start, 4),
@@ -693,11 +708,14 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
         # dry area" — reported as null, not 0.0, so it isn't mistaken for a
         # verified low-risk reading downstream.
         dry_km2 = None
+        dry_pct = None
         dry_mask = ee.Image(0).clip(region)  # valid, empty mask — keeps ee_image usable downstream
     else:
         end_sm_img = end_window.mean()
         dry_mask = end_sm_img.lt(0.1)
         dry_km2 = round(_calc_area_km2(dry_mask, region, scale=10000), 4)
+        region_area_km2 = _region_area_km2(region)
+        dry_pct = round(min(max(dry_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
 
     return {
         "metrics": {
@@ -705,6 +723,7 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
             "end_avg_soil_moisture": round(end_mean, 4) if end_mean is not None else None,
             "moisture_change": round(end_mean - start_mean, 4) if data_available else None,
             "dry_stress_area_km2": dry_km2,
+            "dry_stress_pct": dry_pct,
             "end_min_sm": round((end_stats or {}).get("ssm_min"), 4) if (end_stats or {}).get("ssm_min") is not None else None,
             "end_max_sm": round((end_stats or {}).get("ssm_max"), 4) if (end_stats or {}).get("ssm_max") is not None else None,
             "data_available": data_available,

@@ -42,15 +42,18 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
 
 
 def _drought_subscore(drought_metrics: Dict[str, Any]) -> float:
-    """0-100: share of the AOI under drought stress (NDDI > 0.5)."""
+    """0-100: share of the AOI under drought stress (NDDI > 0.5). Uses
+    drought_affected_pct (area-normalized against the AOI's own total
+    area) whenever available; only falls back to a raw, non-normalized
+    km²-based estimate if the AOI-area computation itself failed, since
+    an absolute km² figure means very different things for a small AOI
+    vs. a large one and should never be the primary basis for this score."""
     affected = drought_metrics.get("drought_affected_pct")
-    if affected is None:
-        # fall back to computing from area fields if pct wasn't returned
-        affected_km2 = drought_metrics.get("drought_affected_km2", 0) or 0
-        # can't get pct without total area here; treat presence of any
-        # affected area conservatively
-        return _clamp(min(affected_km2, 50) * 2) if affected_km2 else 0.0
-    return _clamp(affected * 100 if affected <= 1 else affected)
+    if affected is not None:
+        return _clamp(affected)
+    affected_km2 = drought_metrics.get("drought_affected_km2", 0) or 0
+    logger.warning("risk_scoring: drought_affected_pct missing, falling back to un-normalized km² estimate")
+    return _clamp(min(affected_km2, 50) * 2) if affected_km2 else 0.0
 
 
 def _vegetation_subscore(veg_metrics: Dict[str, Any]) -> float:
@@ -61,16 +64,24 @@ def _vegetation_subscore(veg_metrics: Dict[str, Any]) -> float:
 
 def _moisture_subscore(moisture_metrics: Dict[str, Any]) -> Optional[float]:
     """0-100: how far soil moisture has dropped, and how dry the end state is.
-    Returns None (not 0) when SMAP had no real coverage for this AOI/window —
-    a missing reading must never look identical to a verified low-risk one."""
+    Uses dry_stress_pct (area-normalized against the AOI's own total area)
+    whenever available; only falls back to a raw, non-normalized km²-based
+    estimate if the AOI-area computation itself failed. Returns None (not 0)
+    when SMAP had no real coverage for this AOI/window — a missing reading
+    must never look identical to a verified low-risk one."""
     if not moisture_metrics.get("data_available", True):
         return None
     change = moisture_metrics.get("moisture_change", 0) or 0
+    dry_pct = moisture_metrics.get("dry_stress_pct")
     dry_km2 = moisture_metrics.get("dry_stress_area_km2")
-    if dry_km2 is None:
+    if dry_pct is None and dry_km2 is None:
         return None
     drop_component = _clamp(max(0, -change) * 500)  # moisture is a small fraction (m3/m3)
-    dry_component = _clamp(min(dry_km2, 50) * 2)
+    if dry_pct is not None:
+        dry_component = _clamp(dry_pct)
+    else:
+        logger.warning("risk_scoring: dry_stress_pct missing, falling back to un-normalized km² estimate")
+        dry_component = _clamp(min(dry_km2, 50) * 2)
     return _clamp((drop_component + dry_component) / 2)
 
 
@@ -156,7 +167,8 @@ def compute_risk_score(aoi: Dict[str, Any], as_of: Optional[str] = None,
         "low"
     )
 
-    confidence = _confidence(available, errors, region_id)
+    confidence_info = _confidence(available, errors, region_id)
+    confidence = confidence_info["value"]
 
     reason = _explain(composite, band, sub_scores, drought_metrics, veg_metrics, moisture_metrics)
 
@@ -166,6 +178,11 @@ def compute_risk_score(aoi: Dict[str, Any], as_of: Optional[str] = None,
         "risk_score": composite,
         "band": band,
         "confidence": confidence,
+        "confidence_basis": {
+            "completeness_pct": confidence_info["completeness"],
+            "track_record_used": confidence_info["track_record_used"],
+            "feedback_count": confidence_info["feedback_count"],
+        },
         "reason": reason,
         "sub_scores": sub_scores,
         "inputs_used": list(available.keys()),
@@ -185,24 +202,38 @@ def compute_risk_score(aoi: Dict[str, Any], as_of: Optional[str] = None,
     }
 
 
-def _confidence(available: Dict[str, float], errors: list, region_id: Optional[str]) -> float:
+def _confidence(available: Dict[str, float], errors: list, region_id: Optional[str]) -> Dict[str, Any]:
     """
     Confidence score per the ground-truth/trust requirement: never claim
     false precision. Starts from data completeness (fewer failed inputs =
     higher confidence), then folds in the region's actual track record from
     farmer/officer feedback if there's enough history to matter — this is
     the compounding trust loop, not a static number.
+
+    Returns a dict (not just the number) so callers — like the report
+    text — can accurately state WHY confidence is what it is, instead of
+    assuming "all 3 indicators available" implies feedback history was
+    used, which is only true when it actually was.
     """
     completeness = len(available) / 3.0
     base = 0.55 + 0.45 * completeness  # 0.55-1.0 depending on data completeness
+    track_record_used = False
+    feedback_count = 0
 
     if region_id:
         track_record = db.feedback_accuracy_rate(region_id=region_id)
+        feedback_count = track_record["total_feedback"]
         if track_record["total_feedback"] >= 5:
             # blend in real accuracy once there's enough feedback to be meaningful
             base = round((base + track_record["accuracy_rate"]) / 2, 4)
+            track_record_used = True
 
-    return round(_clamp(base, 0.0, 1.0) * 100, 1)  # expressed as 0-100 for consistency with score
+    return {
+        "value": round(_clamp(base, 0.0, 1.0) * 100, 1),  # 0-100 for consistency with score
+        "completeness": round(completeness * 100, 1),
+        "track_record_used": track_record_used,
+        "feedback_count": feedback_count,
+    }
 
 
 def _explain(score: float, band: str, sub_scores: Dict, drought_m: Dict, veg_m: Dict, moist_m: Dict) -> str:
