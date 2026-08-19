@@ -16,8 +16,11 @@ here doesn't preclude it, it just isn't needed for a single-analysis report.
 
 import io
 import os
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -1158,11 +1161,42 @@ def _table_of_contents(styles, sections: List[Tuple[str, str]]) -> List:
     return flow
 
 
+def _sanitize_llm_text(text: str) -> str:
+    """Replace Unicode punctuation the report's base-14 Helvetica font
+    (WinAnsi encoding only) can't render — these silently become '\u25a0'
+    tofu boxes in the PDF instead of raising an error, so the bug is
+    invisible until someone reads the actual PDF output. LLM output is the
+    only source of this text that isn't hand-written by this codebase, so
+    it's the only place this class of character can sneak in."""
+    replacements = {
+        "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-",  # hyphens/dashes
+        "\u2018": "'", "\u2019": "'", "\u201a": "'",   # single quotes
+        "\u201c": '"', "\u201d": '"', "\u201e": '"',   # double quotes
+        "\u2026": "...",  # ellipsis
+        "\u2212": "-",    # minus sign
+        "\u00a0": " ",    # non-breaking space
+        "\u200b": "",     # zero-width space
+    }
+    for src, dst in replacements.items():
+        text = text.replace(src, dst)
+    # Anything still outside Latin-1 (WinAnsi's coverage) after the explicit
+    # swaps above is an unanticipated character — drop it rather than let
+    # it render as a black box, and log so it can be added above later.
+    cleaned = "".join(ch if ord(ch) < 256 else "" for ch in text)
+    if cleaned != text:
+        logger.warning(
+            "report_generator: stripped unsupported Unicode character(s) from LLM text "
+            "not covered by the explicit replacement table"
+        )
+    return cleaned
+
+
 def _render_multi_paragraph(styles, text: str, style_key: str = "body") -> List:
     """Splits LLM-generated multi-paragraph text (paragraphs separated by a
     blank line) into separate Paragraph flowables — a single reportlab
     Paragraph does not render '\\n\\n' as visible paragraph breaks, it just
     collapses to whitespace, so a real paragraph split has to happen here."""
+    text = _sanitize_llm_text(text)
     parts = [p.strip() for p in text.split("\n\n") if p.strip()]
     if not parts:
         parts = [text.strip()]
@@ -1866,12 +1900,26 @@ def build_agri_risk_report(
 
     flow.append(Paragraph(f"{section_num}. Findings & Interpretation", styles["section_head"]))
     flow.append(Paragraph(risk_result.get("reason", "No specific driver identified."), styles["body"]))
+    confidence_basis = risk_result.get("confidence_basis") or {}
+    track_record_used = confidence_basis.get("track_record_used", False)
+    feedback_count = confidence_basis.get("feedback_count", 0)
+    completeness_clause = "full" if len(inputs_used) == 3 else "partial"
+    if track_record_used:
+        basis_clause = (
+            f" and this region's accumulated alert-accuracy track record "
+            f"({feedback_count} prior feedback entries)."
+        )
+    elif feedback_count:
+        basis_clause = (
+            f" This region has {feedback_count} prior feedback entr"
+            f"{'y' if feedback_count == 1 else 'ies'}, not yet enough (5+ required) to factor into confidence."
+        )
+    else:
+        basis_clause = " This is a one-off assessment with no watchlist feedback history to draw on yet."
     flow.append(Paragraph(
         f"This assessment's data-completeness reading is {confidence}%, reflecting "
-        f"{'full' if len(inputs_used) == 3 else 'partial'} data availability across the three underlying "
-        f"indicators" + (
-            " and this region's accumulated alert-accuracy track record." if len(inputs_used) == 3 else "."
-        ),
+        f"{completeness_clause} data availability across the three underlying indicators."
+        + basis_clause,
         styles["body"]))
     if llm_synthesis:
         flow.append(Spacer(1, 4))
@@ -1883,7 +1931,11 @@ def build_agri_risk_report(
         styles,
         [("Indicators Available", f"{len(inputs_used)} of 3 ({', '.join(inputs_used) if inputs_used else 'none'})"),
          ("Indicators Unavailable", ', '.join(inputs_failed) if inputs_failed else "None"),
-         ("Confidence Basis", "Data completeness" + (", plus regional feedback history" if len(inputs_used) == 3 else ""))],
+         ("Confidence Basis", "Data completeness"
+             + (f", plus regional feedback history ({feedback_count} entries)" if track_record_used else "")
+             + (" (feedback history not yet used \u2014 fewer than 5 entries so far)"
+                if feedback_count and not track_record_used else "")
+             + (" (no watchlist feedback history for this AOI yet)" if not feedback_count else ""))],
         "This assessment's confidence figure is not a single opaque number \u2014 it is derived from exactly "
         "how many of the three underlying indicators had usable satellite data for this AOI/period, shown "
         "below, plus (once this region has enough farmer/officer feedback) its historical alert accuracy.",
