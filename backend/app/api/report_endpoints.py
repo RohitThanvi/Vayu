@@ -199,9 +199,21 @@ async def agri_risk_report(req: AgriRiskReportRequest):
     llm_synthesis = None
     try:
         def _context_summary(result, keys):
+            """Drops the internal 'status' field's uninformative common case
+            ('ok' just means data was retrieved, not that conditions are
+            fine) — passing it through let the LLM narrate nonsense like
+            'rainfall is described as ok yet well below normal', treating a
+            data-availability flag as if it were a condition judgement.
+            Only surfaces status when it's something actually worth telling
+            the model about (no_data / ok_no_baseline), explicitly labeled
+            as a data-availability note rather than a condition."""
             if not result:
                 return None
-            return {k: result.get(k) for k in keys if k in result}
+            out = {k: result.get(k) for k in keys if k in result and k != "status"}
+            status = result.get("status")
+            if status and status != "ok":
+                out["data_availability_note"] = status  # e.g. "no_data" — NOT a condition descriptor
+            return out or None
 
         context = {
             "risk_score": risk_result.get("risk_score"), "band": risk_result.get("band"),
@@ -209,17 +221,21 @@ async def agri_risk_report(req: AgriRiskReportRequest):
             "reason": risk_result.get("reason"), "region_name": req.region_name or "the AOI",
             "period": risk_result.get("period"),
             "seasonal_context": (
-                {"status": baseline_result.get("status"), "z_score": baseline_result.get("z_score")}
+                {
+                    "metric": "NDVI (vegetation greenness) seasonal anomaly \u2014 NOT a temperature reading",
+                    "classification": baseline_result.get("status"),  # e.g. "normal" / "below_normal"
+                    "z_score": baseline_result.get("z_score"),
+                }
                 if baseline_result and baseline_result.get("seasonal_normal_ndvi") is not None else None
             ),
             "regional_context_note": "The following groundwater/rainfall/temperature readings are "
                 "informational context and are NOT part of the composite risk score above.",
             "groundwater_context": _context_summary(
-                groundwater_result, ["status", "trend", "slope_cm_per_year", "latest_anomaly_cm"]),
+                groundwater_result, ["trend", "slope_cm_per_year", "latest_anomaly_cm"]),
             "rainfall_context": _context_summary(
-                precipitation_result, ["status", "condition", "anomaly_pct", "recent_total_mm", "historical_mean_mm"]),
+                precipitation_result, ["condition", "anomaly_pct", "recent_total_mm", "historical_mean_mm"]),
             "temperature_context": _context_summary(
-                temperature_result, ["status", "mean_lst_c", "min_lst_c", "max_lst_c"]),
+                temperature_result, ["mean_lst_c", "min_lst_c", "max_lst_c"]),
         }
         llm_synthesis = await asyncio.to_thread(get_llm_synthesis, context)
     except Exception as e:

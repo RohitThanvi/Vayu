@@ -17,6 +17,7 @@ here doesn't preclude it, it just isn't needed for a single-analysis report.
 import io
 import os
 import logging
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1162,31 +1163,52 @@ def _table_of_contents(styles, sections: List[Tuple[str, str]]) -> List:
 
 
 def _sanitize_llm_text(text: str) -> str:
-    """Replace Unicode punctuation the report's base-14 Helvetica font
-    (WinAnsi encoding only) can't render — these silently become '\u25a0'
-    tofu boxes in the PDF instead of raising an error, so the bug is
-    invisible until someone reads the actual PDF output. LLM output is the
-    only source of this text that isn't hand-written by this codebase, so
-    it's the only place this class of character can sneak in."""
+    """Replace Unicode characters the report's base-14 Helvetica font
+    (WinAnsi encoding only) can't render. Two failure modes matter here,
+    found by inspecting actual generated reports:
+    (1) tofu boxes ('\u25a0') for punctuation like a non-breaking hyphen
+        (U+2011) that has no WinAnsi slot at all;
+    (2) words silently running together ('19August2025', '100percent')
+        when an earlier version of this function used a fixed whitelist —
+        any Unicode space variant NOT in that whitelist (e.g. thin space
+        U+2009, narrow no-break space U+202F) fell through to the generic
+        'strip anything outside Latin-1' branch and was deleted instead of
+        being converted to a real space, silently gluing words together.
+    Fixed here by classifying every out-of-range character by its Unicode
+    general category rather than an incomplete hand-picked list: any
+    'space separator' (Zs) becomes a plain space; hyphen/dash-like
+    punctuation is normalized to '-'; the rest is dropped only as a last
+    resort, with a log line so a genuinely new pattern doesn't fail silently
+    the way the space-stripping did."""
     replacements = {
-        "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-",  # hyphens/dashes
         "\u2018": "'", "\u2019": "'", "\u201a": "'",   # single quotes
         "\u201c": '"', "\u201d": '"', "\u201e": '"',   # double quotes
         "\u2026": "...",  # ellipsis
-        "\u2212": "-",    # minus sign
-        "\u00a0": " ",    # non-breaking space
-        "\u200b": "",     # zero-width space
+        "\u2212": "-",    # minus sign (Unicode category Sm, not covered by the Pd/dash check below)
+        "\u200b": "", "\u200c": "", "\u200d": "",       # zero-width space/joiners
     }
     for src, dst in replacements.items():
         text = text.replace(src, dst)
-    # Anything still outside Latin-1 (WinAnsi's coverage) after the explicit
-    # swaps above is an unanticipated character — drop it rather than let
-    # it render as a black box, and log so it can be added above later.
-    cleaned = "".join(ch if ord(ch) < 256 else "" for ch in text)
-    if cleaned != text:
+
+    out_chars = []
+    dropped_any = False
+    for ch in text:
+        if ord(ch) < 256:
+            out_chars.append(ch)
+            continue
+        category = unicodedata.category(ch)
+        if category == "Zs":  # any Unicode space separator, not just NBSP
+            out_chars.append(" ")
+        elif category == "Pd":  # any dash/hyphen punctuation (en/em dash, non-breaking hyphen, etc.)
+            out_chars.append("-")
+        else:
+            dropped_any = True  # last resort — log rather than silently vanish
+    cleaned = "".join(out_chars)
+    if dropped_any:
         logger.warning(
-            "report_generator: stripped unsupported Unicode character(s) from LLM text "
-            "not covered by the explicit replacement table"
+            "report_generator: dropped Unicode character(s) from LLM text with no safe "
+            "WinAnsi equivalent (category outside space/dash) \u2014 worth checking the raw "
+            "LLM output if this recurs"
         )
     return cleaned
 
@@ -1900,6 +1922,28 @@ def build_agri_risk_report(
 
     flow.append(Paragraph(f"{section_num}. Findings & Interpretation", styles["section_head"]))
     flow.append(Paragraph(risk_result.get("reason", "No specific driver identified."), styles["body"]))
+
+    # The line above is entirely deterministic and computed before the
+    # regional-context indicators even run, so it structurally has no way
+    # to know about them — but a reader seeing "broadly stable" right above
+    # a "well below normal" rainfall reading in Section 8 reasonably reads
+    # that as the report contradicting itself. Flag the tension explicitly
+    # here instead of leaving it for the reader to reconcile.
+    context_flags = []
+    if precipitation_result and precipitation_result.get("condition") in ("below normal", "well below normal"):
+        context_flags.append(f"rainfall is {precipitation_result['condition']}")
+    if temperature_result and temperature_result.get("status") == "ok" and temperature_result.get("mean_lst_c", 0) >= 42:
+        context_flags.append(f"mean land surface temperature is elevated ({temperature_result['mean_lst_c']}\u00b0C)")
+    if groundwater_result and groundwater_result.get("status") == "ok" and groundwater_result.get("trend") == "declining":
+        context_flags.append("groundwater is on a declining trend")
+    if context_flags:
+        flow.append(Paragraph(
+            f"<i>Worth noting alongside this score:</i> {'; '.join(context_flags)} (see Section "
+            f"{section_num - 1}, Regional Environmental Context, above). These are not part of the "
+            f"composite score \u2014 see the explanation in that section for why \u2014 but a low composite "
+            f"score does not mean every signal for this AOI looks favorable, and these are worth "
+            f"weighing alongside the score rather than assuming it accounts for them.",
+            styles["caveat"]))
     confidence_basis = risk_result.get("confidence_basis") or {}
     track_record_used = confidence_basis.get("track_record_used", False)
     feedback_count = confidence_basis.get("feedback_count", 0)
