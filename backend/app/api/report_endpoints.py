@@ -74,13 +74,15 @@ async def analysis_report(req: AnalysisReportRequest):
 
     before_bytes, after_bytes = None, None
     before_image_meta, after_image_meta = None, None
+    change_map_bytes = None
+    wants_change_map = req.analysis_type in ("vegetation_change", "builtup_change", "water_change")
     if req.include_imagery:
         if req.analysis_type == "flood_detection":
-            results = await asyncio.gather(
+            calls = [
                 asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.start_date),
                 asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.end_date),
-                return_exceptions=True,
-            )
+            ]
+            results = await asyncio.gather(*calls, return_exceptions=True)
             before_bytes = results[0] if not isinstance(results[0], Exception) else None
             after_bytes = results[1] if not isinstance(results[1], Exception) else None
         else:
@@ -92,11 +94,20 @@ async def analysis_report(req: AnalysisReportRequest):
             # regardless of what was actually achievable for that date (e.g.
             # a monsoon-season date can genuinely have far less cloud-free
             # coverage available than a dry-season one).
-            results = await asyncio.gather(
+            #
+            # The change-map fetch (when applicable) runs in this SAME
+            # gather, not after it — it's an independent GEE computation
+            # from the before/after imagery, so running it sequentially
+            # afterward would add a full extra round-trip of latency to
+            # every vegetation/builtup/water report for no reason.
+            calls = [
                 asyncio.to_thread(get_optical_thumbnail_with_coverage, req.aoi_geojson, req.start_date),
                 asyncio.to_thread(get_optical_thumbnail_with_coverage, req.aoi_geojson, req.end_date),
-                return_exceptions=True,
-            )
+            ]
+            if wants_change_map:
+                calls.append(asyncio.to_thread(
+                    get_change_map_thumbnail, req.analysis_type, req.aoi_geojson, req.start_date, req.end_date))
+            results = await asyncio.gather(*calls, return_exceptions=True)
             before_meta_raw = results[0] if not isinstance(results[0], Exception) else None
             after_meta_raw = results[1] if not isinstance(results[1], Exception) else None
             before_bytes = before_meta_raw["bytes"] if before_meta_raw else None
@@ -109,23 +120,15 @@ async def analysis_report(req: AnalysisReportRequest):
                 {"window_days": after_meta_raw["window_days"], "valid_pct": after_meta_raw["valid_pct"]}
                 if after_meta_raw else None
             )
-        for label, r in zip(("before", "after"), results):
+            if wants_change_map:
+                change_map_bytes = results[2] if not isinstance(results[2], Exception) else None
+        labels = ("before", "after", "change_map") if wants_change_map else ("before", "after")
+        for label, r in zip(labels, results):
             if isinstance(r, Exception):
                 # Imagery is a nice-to-have on top of the metrics/findings, which
                 # are already computed above — never fail the whole report over
                 # a thumbnail fetch issue.
                 logger.warning(f"report {label} imagery fetch failed, continuing without it: {r}")
-
-    change_map_bytes = None
-    if req.include_imagery and req.analysis_type in ("vegetation_change", "builtup_change", "water_change"):
-        # A third map alongside the before/after snapshots — highlights
-        # WHERE gain/loss/unchanged happened directly, rather than making
-        # the reader mentally diff two separate images themselves.
-        try:
-            change_map_bytes = await asyncio.to_thread(
-                get_change_map_thumbnail, req.analysis_type, req.aoi_geojson, req.start_date, req.end_date)
-        except Exception as e:
-            logger.warning(f"report change-map imagery fetch failed, continuing without it: {e}")
 
     llm_synthesis = None
     try:
