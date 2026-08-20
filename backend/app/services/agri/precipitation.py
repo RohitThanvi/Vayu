@@ -13,6 +13,7 @@ exact field.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
@@ -23,6 +24,12 @@ from ..gee_client import _polygon_geometry
 logger = logging.getLogger(__name__)
 
 CHIRPS_SCALE_M = 5566  # native ~0.05° grid
+# GEE's Python client calls block on network I/O and release the GIL while
+# waiting, so a small thread pool gives real wall-clock concurrency here —
+# not fake threading. Capped moderately (not one thread per year) to avoid
+# hammering the GEE API with a burst of ~11 simultaneous requests from one
+# report.
+_MAX_CONCURRENT_WINDOWS = 5
 
 
 def _window_total_mm(chirps: "ee.ImageCollection", region: "ee.Geometry", start: str, end: str) -> Optional[float]:
@@ -43,32 +50,53 @@ def compute_precipitation_context(
     """Recent rainfall total for the AOI vs. a same-calendar-window
     historical average, expressed as an anomaly. Reports 'no_data' /
     'ok_no_baseline' rather than guessing when coverage or history is
-    insufficient — same no-false-precision principle as elsewhere."""
+    insufficient — same no-false-precision principle as elsewhere.
+
+    Fetches the recent window and every historical year CONCURRENTLY via a
+    thread pool rather than one at a time — the previous sequential version
+    issued up to ~22 blocking round-trips (2 per window × up to 11 windows)
+    back to back, a measured contributor to agri-report timeouts. Each
+    window is still one call, but they now happen in parallel instead of
+    queued behind each other."""
     region = _polygon_geometry(aoi)
     end_dt = datetime.strptime(as_of, "%Y-%m-%d") if as_of else datetime.utcnow()
     recent_start = end_dt - timedelta(days=recent_days)
 
     chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterBounds(region)
 
-    recent_total = _window_total_mm(
-        chirps, region, recent_start.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d"))
+    # Build every window's (start, end) date pair upfront, then fetch them
+    # all concurrently — key 0 is the recent window, 1..years_back are the
+    # historical comparison years.
+    windows: Dict[int, tuple] = {
+        0: (recent_start.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")),
+    }
+    for y in range(1, years_back + 1):
+        try:
+            hist_end = end_dt.replace(year=end_dt.year - y)
+        except ValueError:
+            hist_end = end_dt.replace(year=end_dt.year - y, day=28)  # Feb 29 in a non-leap year
+        hist_start = hist_end - timedelta(days=recent_days)
+        windows[y] = (hist_start.strftime("%Y-%m-%d"), hist_end.strftime("%Y-%m-%d"))
+
+    def _fetch(key: int) -> tuple:
+        start, end = windows[key]
+        try:
+            return key, _window_total_mm(chirps, region, start, end)
+        except Exception as e:
+            logger.warning(f"precipitation context: window {key} fetch failed: {e}")
+            return key, None
+
+    with ThreadPoolExecutor(max_workers=_MAX_CONCURRENT_WINDOWS) as pool:
+        fetched = dict(pool.map(_fetch, windows.keys()))
+
+    recent_total = fetched[0]
     if recent_total is None:
         return {
             "status": "no_data",
             "note": "CHIRPS rainfall coverage unavailable for this AOI/period.",
         }
 
-    historical_totals = []
-    for y in range(1, years_back + 1):
-        try:
-            hist_end = end_dt.replace(year=end_dt.year - y)
-        except ValueError:
-            # Feb 29 in a non-leap historical year
-            hist_end = end_dt.replace(year=end_dt.year - y, day=28)
-        hist_start = hist_end - timedelta(days=recent_days)
-        val = _window_total_mm(chirps, region, hist_start.strftime("%Y-%m-%d"), hist_end.strftime("%Y-%m-%d"))
-        if val is not None:
-            historical_totals.append(val)
+    historical_totals = [fetched[y] for y in range(1, years_back + 1) if fetched.get(y) is not None]
 
     if len(historical_totals) < 3:
         return {
