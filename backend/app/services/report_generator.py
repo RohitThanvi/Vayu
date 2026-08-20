@@ -129,12 +129,21 @@ def _builtup_findings(m: Dict) -> List[str]:
     initial = m.get("initial_builtup_km2", 0) or 0
     final = m.get("final_builtup_km2", initial + gain - loss)
     net = final - initial
+    aoi_area = m.get("region_area_km2")
+    final_pct_aoi = m.get("final_builtup_pct_of_aoi")
     p1 = (
         f"Dynamic World land-cover classification identifies {gain:,.2f} km\u00b2 of newly built-up land "
         f"and {loss:,.2f} km\u00b2 reverting from built-up to another class over the period, against an "
         f"initial built-up extent of {initial:,.2f} km\u00b2 \u2014 a net change of {net:+,.2f} km\u00b2 "
         f"(final built-up extent: {final:,.2f} km\u00b2)."
     )
+    if aoi_area and final_pct_aoi is not None:
+        p1 += (
+            f" In context of the whole AOI ({aoi_area:,.1f} km\u00b2), built-up land now covers "
+            f"{final_pct_aoi:.1f}% of it \u2014 worth keeping in view for a large AOI, where even a "
+            f"substantial absolute km\u00b2 figure can represent a small share of the total area, "
+            f"concentrated in specific parts of it rather than reflecting the AOI as a whole."
+        )
     p2 = (
         "Built-up gain concentrated at the urban fringe is consistent with peri-urban expansion and "
         "densification, a common and generally expected pattern for growing settlements; built-up loss "
@@ -294,8 +303,10 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
             "Vegetated extent is derived from the Normalized Difference Vegetation Index "
             "(NDVI = (NIR \u2212 Red) / (NIR + Red)), computed from Sentinel-2 bands B8 (NIR) and B4 (Red).",
             "Cloud-masked median composites are built independently for the start and end of the "
-            "analysis window, each drawn from a full year centered on the respective date to ensure "
-            "adequate cloud-free coverage. Pixels with NDVI \u2265 0.20 are classified as vegetated.",
+            "analysis window \u2014 the start-period composite runs forward one year from the start date, "
+            "and the end-period composite runs backward one year from the end date, so both stay within "
+            "the requested analysis period and never require imagery from after the end date. "
+            "Pixels with NDVI \u2265 0.20 are classified as vegetated.",
             "Loss is defined as pixels vegetated in the start composite but not the end composite; gain "
             "is the reverse. Areas are computed via a 30 m-scale pixel-area reduction over the AOI.",
         ],
@@ -321,9 +332,11 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
             "Built-up extent is derived from the Dynamic World near-real-time land cover classifier, "
             "which assigns each pixel to one of nine classes via a deep-learning model trained on "
             "Sentinel-2 imagery.",
-            "The modal (most frequent) classification across all available scenes in a one-year window "
-            "centered on each comparison date is used as the composite label for that period, reducing "
-            "the influence of any single misclassified scene.",
+            "The modal (most frequent) classification across all available scenes is used as the "
+            "composite label for each period, reducing the influence of any single misclassified scene "
+            "\u2014 the start-period window runs forward one year from the start date, and the end-period "
+            "window runs backward one year from the end date, so both stay within the requested analysis "
+            "period and never require imagery from after the end date.",
             "Change is computed as the difference between the start- and end-period built-up masks; "
             "areas are computed via a pixel-area reduction over the AOI.",
         ],
@@ -333,7 +346,10 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
             "initial_builtup_km2": ("Initial Built-Up Area", "km\u00b2", 4),
             "net_change_km2": ("Net Change", "km\u00b2", 4),
             "final_builtup_km2": ("Final Built-Up Area", "km\u00b2", 4),
-            "gain_pct": ("Gain (% of initial)", "%", 4),
+            "gain_pct": ("Gain (% of initial built-up area)", "%", 4),
+            "region_area_km2": ("Total AOI Area", "km\u00b2", 4),
+            "initial_builtup_pct_of_aoi": ("Initial Built-Up (% of whole AOI)", "%", 4),
+            "final_builtup_pct_of_aoi": ("Final Built-Up (% of whole AOI)", "%", 4),
         },
         "findings_fn": _builtup_findings,
         "limitations": (
@@ -1318,17 +1334,33 @@ GLOSSARY_COMMON = [
 
 GLOSSARY_MEDIAN_COMPOSITE = ("Median Composite", "A pixel-wise median taken across multiple satellite scenes over a time window, used to suppress the influence of any single anomalous (cloudy, shadowed, or noisy) scene.")
 GLOSSARY_MEAN_COMPOSITE = ("Mean Composite", "A pixel-wise average taken across multiple satellite scenes over a time window, used to smooth out noise and fill gaps from any single scene.")
+GLOSSARY_MODAL_COMPOSITE = ("Modal Composite", "The single most-frequently-occurring classification across all scenes in the time window, used instead of a single date to reduce the influence of any one misclassified scene. Used for categorical land-cover class data, not continuous values (unlike a median or mean composite).")
 
 # analysis_type -> which compositing-method glossary entry actually applies,
-# since land_surface_temperature and soil_moisture use .mean(), not .median()
+# verified against each compute_*() function's actual reducer rather than
+# assumed — a categorical classifier (Dynamic World, JRC water) uses
+# .mode(), not .median(); SAR backscatter uses .mean(); some analyses
+# (fire detection's burned-area union, deforestation's single Hansen GFC
+# lookup) don't do windowed scene compositing at all, so they map to None
+# rather than getting an inapplicable entry. builtup_change maps to None
+# because it already supplies its own correctly-worded "Modal Composite"
+# entry directly in its ANALYSIS_EXTRAS glossary list — mapping it here
+# too would print the term twice.
 _COMPOSITING_GLOSSARY_BY_TYPE = {
-    "land_surface_temperature": GLOSSARY_MEAN_COMPOSITE,
-    "soil_moisture": GLOSSARY_MEAN_COMPOSITE,
+    "land_surface_temperature": GLOSSARY_MEAN_COMPOSITE,   # .mean() — gee_client.py compute_temperature_context / compute_land_surface_temperature
+    "soil_moisture": GLOSSARY_MEAN_COMPOSITE,               # .mean() — compute_soil_moisture
+    "flood_detection": GLOSSARY_MEAN_COMPOSITE,             # .mean() — compute_flood_detection (SAR backscatter)
+    "water_change": GLOSSARY_MODAL_COMPOSITE,               # .mode() — compute_water_change (JRC categorical water class)
+    "builtup_change": None,                                  # .mode() — already has its own entry, see comment above
+    "fire_detection": None,                                  # .max() union over the period, not a representative-scene composite
+    "deforestation": None,                                   # single Hansen GFC year-of-loss lookup, no windowed composite
 }
 
 
 def _compositing_glossary_entry(analysis_type: str):
-    return _COMPOSITING_GLOSSARY_BY_TYPE.get(analysis_type, GLOSSARY_MEDIAN_COMPOSITE)
+    if analysis_type in _COMPOSITING_GLOSSARY_BY_TYPE:
+        return _COMPOSITING_GLOSSARY_BY_TYPE[analysis_type]  # may legitimately be None
+    return GLOSSARY_MEDIAN_COMPOSITE  # vegetation_change, drought_index — both confirmed .median()
 
 CITATIONS_BY_SOURCE = {
     "sentinel2": "European Space Agency (ESA), Copernicus Sentinel-2 Mission, Level-2A Surface Reflectance. Available via Google Earth Engine: COPERNICUS/S2_SR_HARMONIZED.",
@@ -1433,6 +1465,8 @@ def build_analysis_report(
     metrics: Dict[str, Any],
     before_image_bytes: Optional[bytes] = None,
     after_image_bytes: Optional[bytes] = None,
+    before_image_meta: Optional[Dict[str, Any]] = None,
+    after_image_meta: Optional[Dict[str, Any]] = None,
     llm_synthesis: Optional[str] = None,
 ) -> bytes:
     """Builds one of the 9 satellite-analysis PDF reports. Returns raw PDF bytes."""
@@ -1485,15 +1519,40 @@ def build_analysis_report(
     if analysis_type == "flood_detection":
         img_source_caption = "Sentinel-1 SAR (VH polarization), \u00b115 days around each date"
         img_legend = SAR_LEGEND
+        before_caption, after_caption = img_source_caption, img_source_caption
     else:
-        img_source_caption = "Sentinel-2, cloud-masked true-color composite, \u00b130 days around each date"
         img_legend = None
+
+        def _optical_caption(meta: Optional[Dict[str, Any]]) -> str:
+            # Honest about what actually happened for this specific image,
+            # not a fixed claim — the code widens the search window when a
+            # ±30-day window doesn't have enough cloud-free coverage (e.g. a
+            # monsoon-season date can genuinely have far less available than
+            # a dry-season one), and a caption that always says "±30 days,
+            # cloud-free" regardless overclaims exactly when the image looks
+            # worst and the caveat matters most.
+            base = "Sentinel-2, cloud-masked true-color composite"
+            if not meta:
+                return base + " (window/coverage unknown)"
+            window = meta.get("window_days", 30)
+            valid_pct = meta.get("valid_pct")
+            cap = f"{base}, \u00b1{window} days around this date"
+            if valid_pct is not None:
+                cap += f" \u00b7 {valid_pct:.0f}% of the AOI had valid (cloud-free) pixels in this composite"
+                if valid_pct < 60:
+                    cap += " \u2014 residual cloud/haze contamination is likely visible"
+            if window > 30:
+                cap += f" (widened from the default \u00b130 days due to limited cloud-free coverage nearer the date)"
+            return cap
+
+        before_caption = _optical_caption(before_image_meta)
+        after_caption = _optical_caption(after_image_meta)
     interpretation = _IMAGE_INTERPRETATION_HINTS.get(analysis_type, _DEFAULT_INTERPRETATION_HINT)
     flow += _full_page_imagery_section(styles, [
         {"label": f"Start of Period ({start_date})", "bytes": before_image_bytes,
-         "caption": img_source_caption, "legend": img_legend, "interpretation": interpretation},
+         "caption": before_caption, "legend": img_legend, "interpretation": interpretation},
         {"label": f"End of Period ({end_date})", "bytes": after_image_bytes,
-         "caption": img_source_caption, "legend": img_legend, "interpretation": interpretation},
+         "caption": after_caption, "legend": img_legend, "interpretation": interpretation},
     ], section_num=3)
 
     flow += _methodology_section(styles, spec["sources"], spec["methodology"])
@@ -1535,7 +1594,8 @@ def build_analysis_report(
         "appendix_head", parent=styles["report_heading"], fontSize=13, spaceBefore=0)))
     flow.append(Spacer(1, 8))
     if extras.get("glossary"):
-        glossary_terms = GLOSSARY_COMMON + [_compositing_glossary_entry(analysis_type)] + extras["glossary"]
+        compositing_entry = _compositing_glossary_entry(analysis_type)
+        glossary_terms = GLOSSARY_COMMON + ([compositing_entry] if compositing_entry else []) + extras["glossary"]
         flow += _glossary_section(styles, glossary_terms, section_num=9)
     citation_keys = extras.get("citation_keys", [])
     if citation_keys:

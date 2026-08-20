@@ -230,6 +230,14 @@ def compute_builtup_change(aoi: Dict, start_date: str, end_date: str) -> Dict:
     loss_km2 = _calc_area_km2(loss_mask, region)
     initial_km2 = _calc_area_km2(start_mask, region)
     gain_pct = (gain_km2 / initial_km2 * 100) if initial_km2 > 0 else 0
+    final_km2 = initial_km2 + gain_km2 - loss_km2
+    region_area_km2 = _region_area_km2(region)
+    # % of the whole AOI, not just % of the initial built-up area — for a
+    # large regional AOI (a district/tehsil boundary rather than a compact
+    # urban footprint), "+574 km²" reads very differently once you know
+    # whether that's 3% of the AOI or 30% of it.
+    initial_pct_of_aoi = round(initial_km2 / region_area_km2 * 100, 4) if region_area_km2 > 0 else None
+    final_pct_of_aoi = round(final_km2 / region_area_km2 * 100, 4) if region_area_km2 > 0 else None
 
     logger.info(f"GEE: builtup gain={gain_km2:.2f} km²")
     return {
@@ -237,9 +245,12 @@ def compute_builtup_change(aoi: Dict, start_date: str, end_date: str) -> Dict:
             "builtup_gain_km2": round(gain_km2, 4),
             "builtup_loss_km2": round(loss_km2, 4),
             "initial_builtup_km2": round(initial_km2, 4),
-            "final_builtup_km2": round(initial_km2 + gain_km2 - loss_km2, 4),
+            "final_builtup_km2": round(final_km2, 4),
             "net_change_km2": round(gain_km2 - loss_km2, 4),
             "gain_pct": round(gain_pct, 4),
+            "region_area_km2": round(region_area_km2, 4),
+            "initial_builtup_pct_of_aoi": initial_pct_of_aoi,
+            "final_builtup_pct_of_aoi": final_pct_of_aoi,
         },
         "ee_image": gain_mask,
         "ee_geometry": region,
