@@ -230,6 +230,65 @@ def get_groundwater_thumbnail(aoi: Dict[str, Any], center_date: str) -> Optional
     })
 
 
+def get_change_map_thumbnail(analysis_type: str, aoi: Dict[str, Any], start_date: str, end_date: str) -> Optional[bytes]:
+    """A single map highlighting WHERE gain/loss/unchanged happened, not
+    just two separate before/after snapshots the reader has to compare by
+    eye. Mirrors each compute_*() function's exact gain_mask/loss_mask
+    logic in gee_client.py (same windowing, same thresholds) rather than
+    reusing its internal ee.Image objects — matches this file's existing
+    pattern (get_ndvi_thumbnail etc. also independently recompute rather
+    than reach into gee_client's internals), which keeps this module able
+    to build thumbnails from just an AOI/date pair without gee_client
+    needing to change its return contract for every analysis type.
+    Only supports the three analysis types that are genuinely a gain/loss
+    binary classification change (vegetation_change, builtup_change,
+    water_change) — flood_detection and deforestation are extent/event
+    detections, not a two-period classification diff, and don't fit this
+    same gain/loss/unchanged framing."""
+    from .gee_client import _polygon_geometry as _pg, _cap_end_date as _ced, _sentinel2_ndvi_composite
+
+    region = _pg(aoi)
+    start_ee = ee.Date(start_date)
+    end_ee = _ced(end_date)
+
+    if analysis_type == "vegetation_change":
+        start_ndvi = _sentinel2_ndvi_composite(region, start_ee, start_ee.advance(1, "year"))
+        end_ndvi = _sentinel2_ndvi_composite(region, end_ee.advance(-1, "year"), end_ee)
+        threshold = 0.2
+        start_state = start_ndvi.gte(threshold).unmask(0)
+        end_state = end_ndvi.gte(threshold).unmask(0)
+        loss_mask = start_state.And(end_state.Not())
+        gain_mask = end_state.And(start_state.Not())
+    elif analysis_type == "builtup_change":
+        BUILT_UP = 6
+        dw = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterBounds(region)
+        start_img = dw.filterDate(start_ee, start_ee.advance(1, "year")).mode()
+        end_img = dw.filterDate(end_ee.advance(-1, "year"), end_ee).mode()
+        start_state = start_img.select("label").eq(BUILT_UP)
+        end_state = end_img.select("label").eq(BUILT_UP)
+        gain_mask = end_state.And(start_state.Not())
+        loss_mask = start_state.And(end_state.Not())
+    elif analysis_type == "water_change":
+        jrc = ee.ImageCollection("JRC/GSW1_4/MonthlyHistory").filterBounds(region)
+        start_state = jrc.filterDate(start_ee, start_ee.advance(1, "year")).mode().eq(2)
+        end_state = jrc.filterDate(end_ee.advance(-1, "year"), end_ee).mode().eq(2)
+        gain_mask = end_state.And(start_state.Not())
+        loss_mask = start_state.And(end_state.Not())
+    else:
+        return None  # not a gain/loss-shaped analysis type
+
+    # 0 = unchanged, 1 = gain, 2 = loss — a categorical (not continuous)
+    # image, visualized with a discrete 3-color palette rather than a
+    # gradient legend (a gradient would misleadingly imply intermediate
+    # values exist, which they don't for a binary classification diff).
+    # No mask applied beyond clip() — unchanged (0) pixels should render
+    # too, not be hidden, so the whole AOI stays visible.
+    change_img = ee.Image(0).where(gain_mask, 1).where(loss_mask, 2).clip(region)
+    return _fetch_thumb_bytes(change_img, region, {
+        "min": 0, "max": 2, "palette": ["#e8e4d8", "#2e8b3f", "#c0392b"],
+    })
+
+
 def get_thumbnail_for_analysis(analysis_type: str, aoi: Dict[str, Any], date: str) -> Optional[bytes]:
     if analysis_type == "flood_detection":
         return get_sar_thumbnail(aoi, date)
