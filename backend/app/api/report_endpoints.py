@@ -7,13 +7,13 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from ..services import gee_client
-from ..services.report_generator import build_analysis_report, build_agri_risk_report
+from ..services.report_generator import build_analysis_report, build_agri_risk_report, ANALYSIS_SPECS
 from ..services.agri.risk_scoring import compute_risk_score
 from ..services.agri.baseline import compute_seasonal_baseline
 from ..services.agri.groundwater import compute_groundwater_trend
 from ..services.agri.precipitation import compute_precipitation_context
 from ..services.satellite_imagery import (
-    get_thumbnail_for_analysis, get_optical_thumbnail,
+    get_thumbnail_for_analysis, get_optical_thumbnail, get_optical_thumbnail_with_coverage,
     get_ndvi_thumbnail, get_nddi_thumbnail, get_soil_moisture_thumbnail,
     get_lst_thumbnail, get_precipitation_thumbnail, get_groundwater_thumbnail,
 )
@@ -72,14 +72,42 @@ async def analysis_report(req: AnalysisReportRequest):
             raise HTTPException(status_code=422, detail=f"Could not compute analysis for report: {e}")
 
     before_bytes, after_bytes = None, None
+    before_image_meta, after_image_meta = None, None
     if req.include_imagery:
-        results = await asyncio.gather(
-            asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.start_date),
-            asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.end_date),
-            return_exceptions=True,
-        )
-        before_bytes = results[0] if not isinstance(results[0], Exception) else None
-        after_bytes = results[1] if not isinstance(results[1], Exception) else None
+        if req.analysis_type == "flood_detection":
+            results = await asyncio.gather(
+                asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.start_date),
+                asyncio.to_thread(get_thumbnail_for_analysis, req.analysis_type, req.aoi_geojson, req.end_date),
+                return_exceptions=True,
+            )
+            before_bytes = results[0] if not isinstance(results[0], Exception) else None
+            after_bytes = results[1] if not isinstance(results[1], Exception) else None
+        else:
+            # Optical types go through the coverage-returning variant directly
+            # (bypassing the byte-only dispatcher) so the report caption can
+            # say what actually happened — whether the ±30-day window had to
+            # widen, and how much of the AOI ended up with valid pixels —
+            # instead of unconditionally claiming a clean ±30-day composite
+            # regardless of what was actually achievable for that date (e.g.
+            # a monsoon-season date can genuinely have far less cloud-free
+            # coverage available than a dry-season one).
+            results = await asyncio.gather(
+                asyncio.to_thread(get_optical_thumbnail_with_coverage, req.aoi_geojson, req.start_date),
+                asyncio.to_thread(get_optical_thumbnail_with_coverage, req.aoi_geojson, req.end_date),
+                return_exceptions=True,
+            )
+            before_meta_raw = results[0] if not isinstance(results[0], Exception) else None
+            after_meta_raw = results[1] if not isinstance(results[1], Exception) else None
+            before_bytes = before_meta_raw["bytes"] if before_meta_raw else None
+            after_bytes = after_meta_raw["bytes"] if after_meta_raw else None
+            before_image_meta = (
+                {"window_days": before_meta_raw["window_days"], "valid_pct": before_meta_raw["valid_pct"]}
+                if before_meta_raw else None
+            )
+            after_image_meta = (
+                {"window_days": after_meta_raw["window_days"], "valid_pct": after_meta_raw["valid_pct"]}
+                if after_meta_raw else None
+            )
         for label, r in zip(("before", "after"), results):
             if isinstance(r, Exception):
                 # Imagery is a nice-to-have on top of the metrics/findings, which
@@ -89,9 +117,26 @@ async def analysis_report(req: AnalysisReportRequest):
 
     llm_synthesis = None
     try:
+        # Pass the same hedged, deterministic findings text and stated
+        # limitations the PDF itself shows — without this, the model had
+        # nothing but bare numbers to work from and would invent its own
+        # certainty language ("fresh construction", "confirms rapid
+        # urbanization") that the deterministic text deliberately avoids
+        # ("not direct confirmation of a physical construction... event").
+        # The system prompt below tells it to stay within that framing;
+        # this is what gives it something concrete to stay within.
+        spec = ANALYSIS_SPECS.get(req.analysis_type, {})
+        deterministic_findings = None
+        try:
+            if spec.get("findings_fn"):
+                deterministic_findings = " ".join(spec["findings_fn"](metrics))
+        except Exception:
+            pass  # findings_fn is best-effort context for the LLM, not required
         context = {
             "analysis_type": req.analysis_type, "metrics": metrics,
             "period": {"start_date": req.start_date, "end_date": req.end_date},
+            "deterministic_findings": deterministic_findings,
+            "stated_limitations": spec.get("limitations"),
         }
         llm_synthesis = await asyncio.to_thread(get_llm_synthesis, context)
     except Exception as e:
@@ -102,6 +147,7 @@ async def analysis_report(req: AnalysisReportRequest):
             analysis_type=req.analysis_type, aoi_geojson=req.aoi_geojson,
             start_date=req.start_date, end_date=req.end_date, metrics=metrics,
             before_image_bytes=before_bytes, after_image_bytes=after_bytes,
+            before_image_meta=before_image_meta, after_image_meta=after_image_meta,
             llm_synthesis=llm_synthesis,
         )
     except Exception as e:

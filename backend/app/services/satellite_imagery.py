@@ -73,15 +73,15 @@ def _fetch_thumb_bytes(image: ee.Image, region: ee.Geometry, vis_params: Dict[st
         return None
 
 
-def get_optical_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 30) -> Optional[bytes]:
-    """Sentinel-2 true-color (B4/B3/B2) cloud-masked median composite,
-    centered on center_date. Used for most analysis types — the imagery a
-    person would recognize as "what the satellite actually saw".
-
-    Progressively widens the date window if cloud cover leaves too little
-    valid data across the AOI — a large, irregular multi-vertex AOI can
-    genuinely fail to get adequate cloud-free coverage in a narrow window,
-    which would otherwise silently produce a mostly-blank thumbnail."""
+def get_optical_thumbnail_with_coverage(aoi: Dict[str, Any], center_date: str, days_window: int = 30) -> Optional[Dict[str, Any]]:
+    """Same composite as get_optical_thumbnail(), but also returns how it
+    was actually built: the window the code ended up using (may be wider
+    than requested — see the widening loop below) and the fraction of the
+    AOI that ended up with valid (non-masked) pixels. A report caption that
+    unconditionally says 'cloud-masked composite \u00b130 days' regardless of
+    what actually happened silently overclaims when the window had to widen
+    or coverage stayed poor even after widening — this lets the caller be
+    honest about which happened instead."""
     region = _polygon_geometry(aoi)
     center_dt = datetime.strptime(center_date, "%Y-%m-%d")
 
@@ -104,20 +104,27 @@ def get_optical_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: in
             logger.info(f"optical thumbnail: only {valid_frac:.0%} valid coverage at \u00b1{window}d, widening window")
             continue
 
-        return _fetch_thumb_bytes(
+        thumb_bytes = _fetch_thumb_bytes(
             composite, region,
-            # _mask_s2_clouds() (applied above via the collection .map()) already
-            # divides surface reflectance by 10000, rescaling it from the raw
-            # ~0-10000 DN range down to ~0.0-1.0. Stretching against a 0-3000 max
-            # (the RAW scale) here was the actual bug: every real pixel value
-            # (~0.0-0.4) was negligible against 3000 and rendered as pure black,
-            # with only rare saturated/anomalous pixels bright enough to show as
-            # white flecks — exactly the black-with-white-speckle pattern seen in
-            # the report. 0.3 is the standard stretch max for the already-rescaled
-            # 0-1 reflectance range.
             {"bands": ["B4", "B3", "B2"], "min": 0, "max": 0.3, "gamma": 1.3},
         )
+        if thumb_bytes is None:
+            continue
+        return {"bytes": thumb_bytes, "window_days": window, "valid_pct": round(valid_frac * 100, 1)}
     return None
+
+
+def get_optical_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 30) -> Optional[bytes]:
+    """Sentinel-2 true-color (B4/B3/B2) cloud-masked median composite,
+    centered on center_date. Used for most analysis types — the imagery a
+    person would recognize as "what the satellite actually saw".
+
+    Thin wrapper over get_optical_thumbnail_with_coverage() (bytes only,
+    for callers that don't need the window/coverage metadata) — kept
+    separate rather than duplicating the widening/stretch logic so the two
+    can't drift out of sync."""
+    result = get_optical_thumbnail_with_coverage(aoi, center_date, days_window)
+    return result["bytes"] if result else None
 
 
 def get_sar_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int = 15) -> Optional[bytes]:
