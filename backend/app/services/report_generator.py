@@ -809,6 +809,27 @@ def _lerp_color(c1: str, c2: str, t: float):
     return colors.Color(r1 + (r2 - r1) * t, g1 + (g2 - g1) * t, b1 + (b2 - b1) * t)
 
 
+def _discrete_legend(entries: List[Tuple[str, str]], width: int = 300, height: int = 22) -> Drawing:
+    """A row of color swatch + label pairs, for a categorical (not
+    continuous) map — e.g. gain/loss/unchanged. Deliberately NOT a gradient
+    bar like _gradient_legend(): a gradient implies intermediate values
+    exist between the categories, which is false for a discrete
+    classification (there is no 'halfway between gain and loss')."""
+    d = Drawing(width, height)
+    swatch = 12
+    gap_after_swatch = 4
+    group_gap = 20
+    x = 4
+    for color, label in entries:
+        d.add(Rect(x, height / 2 - swatch / 2, swatch, swatch,
+                    fillColor=colors.HexColor(color), strokeColor=colors.HexColor("#5c6673"), strokeWidth=0.5))
+        x += swatch + gap_after_swatch
+        d.add(String(x, height / 2 - 3, label, fontSize=8, fillColor=colors.HexColor("#2b2f36"),
+                      textAnchor="start", fontName="Helvetica"))
+        x += len(label) * 4.6 + group_gap  # rough width estimate for Helvetica 8pt
+    return d
+
+
 def _gradient_legend(palette: List[str], vmin: float, vmax: float, unit: str,
                       tick_labels: Optional[List[str]] = None, width: int = 300, height: int = 34) -> Drawing:
     """A horizontal color-gradient legend bar (min -> max) with tick labels
@@ -877,6 +898,17 @@ PRECIP_LEGEND = {"palette": ["#8b6b3d", "#c9a86a", "#e8e88a", "#4a9ec9", "#1a4d7
 GROUNDWATER_LEGEND = {"palette": ["#8b6b3d", "#c9a86a", "#e8e88a", "#4a9ec9", "#1a4d7a"], "min": -20, "max": 20,
                         "labels": ["-20 cm (depleted)", "0", "+20 cm (surplus)"],
                         "unit": "GRACE terrestrial water storage anomaly"}
+
+# analysis_type -> (gain_metric_key, loss_metric_key, noun) — used to build
+# the change-map interpretation text with this run's actual gain/loss
+# figures, and to gate which analysis types get a change map at all (only
+# the three that are genuinely a two-period binary classification diff;
+# flood_detection/deforestation are extent detections, not this shape).
+_CHANGE_MAP_LABELS = {
+    "vegetation_change": ("vegetation_gain_km2", "vegetation_loss_km2", "vegetated (NDVI \u2265 0.20) cover"),
+    "builtup_change": ("builtup_gain_km2", "builtup_loss_km2", "built-up classification"),
+    "water_change": ("water_gain_km2", "water_loss_km2", "surface water"),
+}
 
 
 def _risk_gauge(score: float) -> Drawing:
@@ -1279,6 +1311,11 @@ def _full_page_imagery_section(styles, images: List[Dict[str, Any]], section_num
             d.hAlign = "CENTER"
             block.append(Spacer(1, 3))
             block.append(d)
+        if img.get("discrete_legend"):
+            d = _discrete_legend(img["discrete_legend"], width=int(img_w))
+            d.hAlign = "CENTER"
+            block.append(Spacer(1, 3))
+            block.append(d)
         if img.get("interpretation"):
             block.append(Spacer(1, 5))
             block.append(Paragraph(img["interpretation"], styles["body"]))
@@ -1467,6 +1504,7 @@ def build_analysis_report(
     after_image_bytes: Optional[bytes] = None,
     before_image_meta: Optional[Dict[str, Any]] = None,
     after_image_meta: Optional[Dict[str, Any]] = None,
+    change_map_bytes: Optional[bytes] = None,
     llm_synthesis: Optional[str] = None,
 ) -> bytes:
     """Builds one of the 9 satellite-analysis PDF reports. Returns raw PDF bytes."""
@@ -1548,12 +1586,37 @@ def build_analysis_report(
         before_caption = _optical_caption(before_image_meta)
         after_caption = _optical_caption(after_image_meta)
     interpretation = _IMAGE_INTERPRETATION_HINTS.get(analysis_type, _DEFAULT_INTERPRETATION_HINT)
-    flow += _full_page_imagery_section(styles, [
+    imagery_blocks = [
         {"label": f"Start of Period ({start_date})", "bytes": before_image_bytes,
          "caption": before_caption, "legend": img_legend, "interpretation": interpretation},
         {"label": f"End of Period ({end_date})", "bytes": after_image_bytes,
          "caption": after_caption, "legend": img_legend, "interpretation": interpretation},
-    ], section_num=3)
+    ]
+    if change_map_bytes and analysis_type in _CHANGE_MAP_LABELS:
+        gain_key, loss_key, noun = _CHANGE_MAP_LABELS[analysis_type]
+        gain_val, loss_val = metrics.get(gain_key), metrics.get(loss_key)
+        if gain_val is not None and loss_val is not None:
+            change_interpretation = (
+                f"Green marks pixels that gained {noun} between the two periods ({gain_val:,.2f} km\u00b2 "
+                f"total); red marks pixels that lost it ({loss_val:,.2f} km\u00b2 total); the neutral "
+                f"background is unchanged. This map makes the spatial pattern of change visible directly "
+                f"\u2014 concentrated at the edge of an existing cluster reads very differently than "
+                f"scattered across the AOI, even when the total area is the same."
+            )
+        else:
+            change_interpretation = (
+                f"Green marks pixels that gained {noun} between the two periods, red marks pixels that "
+                f"lost it, and the neutral background is unchanged."
+            )
+        imagery_blocks.append({
+            "label": "Change Map (Gain / Loss / Unchanged)", "bytes": change_map_bytes,
+            "caption": "Built using the same windowing, thresholds, and classification logic as the "
+                       "metrics above (independently recomputed, not read back from the same "
+                       "in-memory result), so it should always match the numbers in Section 5.",
+            "discrete_legend": [("#e8e4d8", "Unchanged"), ("#2e8b3f", "Gain"), ("#c0392b", "Loss")],
+            "interpretation": change_interpretation,
+        })
+    flow += _full_page_imagery_section(styles, imagery_blocks, section_num=3)
 
     flow += _methodology_section(styles, spec["sources"], spec["methodology"])
     flow += _worked_example_section(styles, analysis_type, metrics)

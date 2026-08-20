@@ -14,6 +14,7 @@ from ..services.agri.groundwater import compute_groundwater_trend
 from ..services.agri.precipitation import compute_precipitation_context
 from ..services.satellite_imagery import (
     get_thumbnail_for_analysis, get_optical_thumbnail, get_optical_thumbnail_with_coverage,
+    get_change_map_thumbnail,
     get_ndvi_thumbnail, get_nddi_thumbnail, get_soil_moisture_thumbnail,
     get_lst_thumbnail, get_precipitation_thumbnail, get_groundwater_thumbnail,
 )
@@ -115,6 +116,17 @@ async def analysis_report(req: AnalysisReportRequest):
                 # a thumbnail fetch issue.
                 logger.warning(f"report {label} imagery fetch failed, continuing without it: {r}")
 
+    change_map_bytes = None
+    if req.include_imagery and req.analysis_type in ("vegetation_change", "builtup_change", "water_change"):
+        # A third map alongside the before/after snapshots — highlights
+        # WHERE gain/loss/unchanged happened directly, rather than making
+        # the reader mentally diff two separate images themselves.
+        try:
+            change_map_bytes = await asyncio.to_thread(
+                get_change_map_thumbnail, req.analysis_type, req.aoi_geojson, req.start_date, req.end_date)
+        except Exception as e:
+            logger.warning(f"report change-map imagery fetch failed, continuing without it: {e}")
+
     llm_synthesis = None
     try:
         # Pass the same hedged, deterministic findings text and stated
@@ -148,6 +160,7 @@ async def analysis_report(req: AnalysisReportRequest):
             start_date=req.start_date, end_date=req.end_date, metrics=metrics,
             before_image_bytes=before_bytes, after_image_bytes=after_bytes,
             before_image_meta=before_image_meta, after_image_meta=after_image_meta,
+            change_map_bytes=change_map_bytes,
             llm_synthesis=llm_synthesis,
         )
     except Exception as e:
