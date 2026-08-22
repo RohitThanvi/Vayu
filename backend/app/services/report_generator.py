@@ -1491,6 +1491,22 @@ def _analysis_data_quality_rows(analysis_type: str, metrics: Dict[str, Any]) -> 
             rows.append(("Reference-Period Scenes", f"{ref} SAR scenes"))
         if flood is not None:
             rows.append(("Flood-Period Scenes", f"{flood} SAR scenes"))
+    if not rows:
+        # A table with zero rows crashes reportlab outright (ValueError:
+        # "must have at least a row and column") rather than rendering
+        # empty — confirmed the hard way: every analysis type with no
+        # consistency check AND no flood-specific scene counts (5 of the 9
+        # types) hit exactly this and would 500 on every real request,
+        # never caught because this path wasn't tested end-to-end after
+        # the consistency check was made conditional. This fallback row
+        # guarantees at least one row always exists, for these 5 types and
+        # for any future analysis_type this function doesn't yet know
+        # about, so a missing case here degrades to an accurate disclosure
+        # instead of crashing the whole report.
+        rows.append(
+            ("Data Quality Checks", "No automated consistency check applies to this analysis type "
+                                     "(it has no gain/loss relationship to verify algebraically).")
+        )
     return rows
 
 
@@ -1580,7 +1596,7 @@ def build_analysis_report(
                 if valid_pct < 60:
                     cap += " \u2014 residual cloud/haze contamination is likely visible"
             if window > 30:
-                cap += f" (widened from the default \u00b130 days due to limited cloud-free coverage nearer the date)"
+                cap += " (widened from the default \u00b130 days due to limited cloud-free coverage nearer the date)"
             return cap
 
         before_caption = _optical_caption(before_image_meta)

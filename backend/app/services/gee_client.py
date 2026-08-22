@@ -230,14 +230,26 @@ def compute_builtup_change(aoi: Dict, start_date: str, end_date: str) -> Dict:
     loss_km2 = _calc_area_km2(loss_mask, region)
     initial_km2 = _calc_area_km2(start_mask, region)
     gain_pct = (gain_km2 / initial_km2 * 100) if initial_km2 > 0 else 0
-    final_km2 = initial_km2 + gain_km2 - loss_km2
+    # Clamped at 0: mathematically, classifier noise could in principle
+    # produce loss_km2 > initial_km2 + gain_km2 (an edge case, not expected
+    # in practice) — an area can never be physically negative, so a raw
+    # unclamped value here would be a nonsensical number in the PDF rather
+    # than a meaningful "loss exceeded gain" signal (which net_change_km2,
+    # unclamped, already conveys correctly on its own).
+    final_km2 = max(initial_km2 + gain_km2 - loss_km2, 0)
     region_area_km2 = _region_area_km2(region)
     # % of the whole AOI, not just % of the initial built-up area — for a
     # large regional AOI (a district/tehsil boundary rather than a compact
     # urban footprint), "+574 km²" reads very differently once you know
     # whether that's 3% of the AOI or 30% of it.
-    initial_pct_of_aoi = round(initial_km2 / region_area_km2 * 100, 4) if region_area_km2 > 0 else None
-    final_pct_of_aoi = round(final_km2 / region_area_km2 * 100, 4) if region_area_km2 > 0 else None
+    # Clamped 0-100: _calc_area_km2 (raster pixel-sum) and _region_area_km2
+    # (exact vector geodesic area) are two different computation methods
+    # that can legitimately disagree slightly at boundary pixels (a pixel
+    # straddling the AOI edge counts fully in the raster sum despite only
+    # partially overlapping the true polygon) — without clamping, that can
+    # surface as a nonsensical >100% built-up figure in the PDF.
+    initial_pct_of_aoi = round(min(max(initial_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
+    final_pct_of_aoi = round(min(max(final_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
 
     logger.info(f"GEE: builtup gain={gain_km2:.2f} km²")
     return {
