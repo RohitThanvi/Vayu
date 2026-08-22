@@ -145,8 +145,12 @@ async def analysis_report(req: AnalysisReportRequest):
         try:
             if spec.get("findings_fn"):
                 deterministic_findings = " ".join(spec["findings_fn"](metrics))
-        except Exception:
-            pass  # findings_fn is best-effort context for the LLM, not required
+        except Exception as e:
+            # Best-effort context enrichment for the LLM prompt, not required
+            # for the report itself — but logged (not silently swallowed) so
+            # a genuine findings_fn bug is still visible in production, even
+            # though it won't fail the request.
+            logger.debug(f"deterministic_findings context build failed for {req.analysis_type}, continuing without it: {e}")
         context = {
             "analysis_type": req.analysis_type, "metrics": metrics,
             "period": {"start_date": req.start_date, "end_date": req.end_date},

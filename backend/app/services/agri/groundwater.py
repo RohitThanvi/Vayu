@@ -92,7 +92,9 @@ def compute_groundwater_trend(aoi: Dict[str, Any], years_back: int = 5) -> Dict[
     series.sort(key=lambda pair: pair[0])
 
     if len(series) < 2:
-        return {"status": "insufficient_data", "points": len(series)}
+        return {"status": "insufficient_data", "points": len(series),
+                "note": f"Only {len(series)} valid monthly GRACE readings found for this AOI/period \u2014 "
+                        f"not enough to fit a reliable trend line."}
 
     # simple linear trend (least squares slope) over the series, in cm/year
     n = len(series)
