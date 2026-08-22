@@ -1143,6 +1143,7 @@ export default function App() {
   const aoiBoundsRef    = useRef(null);
   const intelLayerRef   = useRef(null);   // LayerGroup for intel markers
   const intelMarkersRef = useRef({});     // id -> marker, for dedup
+  const intelOrderRef   = useRef([]);     // ids in insertion order, oldest first — for eviction
   const vesselLayerRef  = useRef(null);   // LayerGroup for vessel markers
   const vesselMarkersRef = useRef({});    // mmsi -> marker
   const vesselTrailsRef = useRef({});     // mmsi -> { points:[[lat,lon],...], polyline }
@@ -1174,6 +1175,26 @@ export default function App() {
       );
       intelLayerRef.current.addLayer(marker);
       intelMarkersRef.current[event.id] = marker;
+      intelOrderRef.current.push(event.id);
+
+      // Bug fix: this callback fires for every event the WebSocket has ever
+      // pushed for the life of the tab — with no bound, that's an unbounded
+      // number of permanent Leaflet markers (earthquakes/fires/GDELT/ACLED
+      // are a genuinely continuous live feed), even though useIntelFeed's
+      // own event LIST already correctly caps at MAX_LOCAL_EVENTS (500) —
+      // the map markers were never subject to that same cap. This is very
+      // likely the main cause of the tab getting slower the longer it's
+      // left open: strictly-growing DOM node count that never shrinks.
+      // Mirror the same 500 cap here, evicting the oldest marker first.
+      const MAX_INTEL_MARKERS = 500;
+      while (intelOrderRef.current.length > MAX_INTEL_MARKERS) {
+        const oldestId = intelOrderRef.current.shift();
+        const oldMarker = intelMarkersRef.current[oldestId];
+        if (oldMarker) {
+          try { intelLayerRef.current.removeLayer(oldMarker); } catch (e) {}
+          delete intelMarkersRef.current[oldestId];
+        }
+      }
     } catch(e) {}
   }, []);
 
@@ -1195,11 +1216,25 @@ export default function App() {
       if (typeof v.lat !== 'number' || typeof v.lon !== 'number') return;
       seen.add(v.mmsi);
 
-      // ── Marker: update position+rotation, or create new ──────────────────
+      // ── Marker: update position, and rotation/icon only if it actually
+      //    changed (rebuilding the icon unconditionally every tick — up to
+      //    2000 vessels every 8s — forces Leaflet to tear down and rebuild
+      //    that marker's DOM element from scratch even when nothing visibly
+      //    changed; over a long session that's the single biggest source of
+      //    the tab getting slower the longer it stays open) ────────────────
       const existing = vesselMarkersRef.current[v.mmsi];
       if (existing) {
         existing.setLatLng([v.lat, v.lon]);
-        try { existing.setIcon(createVesselMarker(v).options.icon); } catch(e) {}
+        const iconKey = VESSEL_ICON_FOR_CATEGORY[v.category] || 'SHIP_CARGO';
+        const cog = typeof v.cog === 'number' ? v.cog : 0;
+        const rotation = iconKey === 'BARREL' ? 0 : cog;
+        if (existing._vayuIconKey !== iconKey || existing._vayuRotation !== rotation) {
+          try {
+            existing.setIcon(createVesselMarker(v).options.icon);
+            existing._vayuIconKey = iconKey;
+            existing._vayuRotation = rotation;
+          } catch (e) {}
+        }
       } else {
         try {
           const marker = createVesselMarker(v);
@@ -1215,6 +1250,9 @@ export default function App() {
             { permanent:false, direction:'top', opacity:1 }
           );
           vesselLayerRef.current.addLayer(marker);
+          const iconKeyInit = VESSEL_ICON_FOR_CATEGORY[v.category] || 'SHIP_CARGO';
+          marker._vayuIconKey = iconKeyInit;
+          marker._vayuRotation = iconKeyInit === 'BARREL' ? 0 : (typeof v.cog === 'number' ? v.cog : 0);
           vesselMarkersRef.current[v.mmsi] = marker;
         } catch(e) {}
       }
