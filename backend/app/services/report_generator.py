@@ -120,7 +120,20 @@ def _vegetation_findings(m: Dict) -> List[str]:
         "inter-annual vegetation variability rather than a structural land-cover change, though localized "
         "field verification is still recommended before drawing operational conclusions."
     )
-    return [p1, p2]
+    findings = [p1, p2]
+    if m.get("small_base_caveat"):
+        aoi_pct = m.get("vegetation_pct_of_aoi")
+        findings.append(
+            f"CAVEAT \u2014 the initial vegetated extent ({initial:,.2f} km\u00b2) is only "
+            f"{aoi_pct:.2f}% of this AOI's total area, meaning loss_pct above is a percentage computed "
+            f"against a very small base. On a small base, a handful of pixels crossing the 0.20 NDVI "
+            f"threshold between the two comparison snapshots \u2014 plausible from ordinary seasonal timing "
+            f"differences (e.g. lake level, snowmelt timing) rather than any real land-cover change \u2014 "
+            f"can swing this percentage by tens of points. Treat the loss_pct figure with reduced "
+            f"confidence for an AOI this sparsely vegetated; the absolute km\u00b2 figures above are more "
+            f"reliable than the percentage for a case like this."
+        )
+    return findings
 
 
 def _builtup_findings(m: Dict) -> List[str]:
@@ -195,7 +208,22 @@ def _flood_findings(m: Dict) -> List[str]:
         "most common of these but does not replace ground verification for damage assessment or "
         "emergency response decisions."
     )
-    return [p1, p2]
+    findings = [p1, p2]
+    if m.get("long_window_caveat"):
+        days = m.get("flood_period_days")
+        findings.append(
+            f"CAVEAT \u2014 this analysis period spans {days:,} days, well beyond a typical short flood-event "
+            f"window. This method was designed to compare a tight pre-event reference against the event "
+            f"window itself (\"did X flood between date A and date B\", where that window IS the event); "
+            f"over a long window, the flood-period composite blends multiple full seasonal cycles together, "
+            f"and ordinary seasonal backscatter change \u2014 snow/ice cover forming and melting, lake "
+            f"freeze-thaw, monsoon-driven wetting and drying \u2014 can be indistinguishable from a real flood "
+            f"signal to this algorithm, especially at high-altitude, high-latitude, or strongly seasonal "
+            f"AOIs. The figure above should be treated with reduced confidence for a window this long \u2014 "
+            f"for a genuine flood assessment, re-run this analysis with start_date set to shortly before "
+            f"the suspected event, not a broad multi-month or multi-year range."
+        )
+    return findings
 
 
 def _fire_findings(m: Dict) -> List[str]:
@@ -316,6 +344,8 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
             "initial_vegetation_km2": ("Initial Vegetated Area", "km\u00b2", 4),
             "net_change_km2": ("Net Change", "km\u00b2", 4),
             "loss_pct": ("Loss (% of initial)", "%", 4),
+            "region_area_km2": ("Total AOI Area", "km\u00b2", 4),
+            "vegetation_pct_of_aoi": ("Initial Vegetated (% of whole AOI)", "%", 4),
         },
         "findings_fn": _vegetation_findings,
         "limitations": (
@@ -398,13 +428,19 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
             "raw_backscatter_drop_km2": ("Backscatter-Drop Area (unfiltered)", "km\u00b2", 4),
             "reference_scenes_used": ("Reference-Period SAR Scenes", "", 0),
             "flood_period_scenes_used": ("Flood-Period SAR Scenes", "", 0),
+            "flood_period_days": ("Flood-Period Window Length", "days", 0),
         },
         "findings_fn": _flood_findings,
         "limitations": (
             "SAR flood mapping follows UN-SPIDER standard methodology but remains an approximation; "
             "vegetation canopy can mask flooding beneath it (radar cannot see through dense canopy to "
             "standing water at the surface), and urban flooding is systematically under-detected due to "
-            "complex backscatter from building structures."
+            "complex backscatter from building structures. This method is designed for a short, "
+            "event-scoped analysis window (a tight pre-event reference vs. the event window itself) \u2014 "
+            "running it over a long window (many months or years) risks misreading ordinary seasonal "
+            "backscatter change (snow/ice cover, lake freeze-thaw, monsoon wetting/drying) as flooding; "
+            "see the Findings section for a specific caveat when this run's window is long enough for "
+            "that risk to apply."
         ),
     },
     "fire_detection": {
@@ -2082,6 +2118,25 @@ def build_agri_risk_report(
             f"composite score \u2014 see the explanation in that section for why \u2014 but a low composite "
             f"score does not mean every signal for this AOI looks favorable, and these are worth "
             f"weighing alongside the score rather than assuming it accounts for them.",
+            styles["caveat"]))
+
+    # Separate concern from the context-tension caveat above: the
+    # vegetation sub-score's underlying loss_pct is a percentage computed
+    # against the AOI's initial vegetated area, not the whole AOI. For a
+    # mostly-barren AOI, that base can be tiny, making the percentage (and
+    # therefore this sub-score) statistically fragile — flagged explicitly
+    # rather than letting a volatile percentage read as a stable signal.
+    veg_metrics = (risk_result.get("raw_metrics") or {}).get("vegetation") or {}
+    if veg_metrics.get("small_base_caveat"):
+        aoi_pct = veg_metrics.get("vegetation_pct_of_aoi")
+        initial_km2 = veg_metrics.get("initial_vegetation_km2")
+        flow.append(Paragraph(
+            f"<i>Vegetation Decline sub-score caveat:</i> the initial vegetated extent this sub-score is "
+            f"based on ({initial_km2:,.2f} km\u00b2) is only {aoi_pct:.2f}% of this AOI's total area. On a "
+            f"base this small, a handful of pixels crossing the NDVI vegetation threshold between the two "
+            f"comparison periods \u2014 plausible from ordinary seasonal timing differences rather than any "
+            f"real land-cover change \u2014 can swing the underlying percentage sharply. Treat the Vegetation "
+            f"Decline sub-score with reduced confidence for an AOI this sparsely vegetated.",
             styles["caveat"]))
     confidence_basis = risk_result.get("confidence_basis") or {}
     track_record_used = confidence_basis.get("track_record_used", False)

@@ -194,6 +194,26 @@ def compute_vegetation_change(aoi: Dict, start_date: str, end_date: str) -> Dict
     initial_km2 = _calc_area_km2(start_veg, region)
     loss_pct = (loss_km2 / initial_km2 * 100) if initial_km2 > 0 else 0
 
+    # Confirmed via analysis of a real production report (Aksai Chin, an
+    # arid high-altitude region with essentially no vegetation): loss_pct
+    # is computed against initial_km2 (the vegetated fraction at the
+    # START of the period), NOT the whole AOI. When an AOI is mostly
+    # barren (baseline NDVI near zero), initial_km2 can be a tiny sliver
+    # -- a lake fringe, a few oasis pixels -- and a percentage computed
+    # against a near-zero base is statistically fragile: a handful of
+    # pixels crossing the 0.20 threshold between two seasonal snapshots
+    # (plausible from lake-level or snowmelt-timing differences a year
+    # apart) can swing loss_pct by tens of percentage points despite being
+    # scientifically meaningless for the AOI as a whole. Flagged here, not
+    # silently suppressed, so the report can disclose the fragility rather
+    # than presenting a volatile percentage with the same confidence as a
+    # stable one computed over a substantial vegetated base area.
+    region_area_km2 = _region_area_km2(region)
+    vegetation_pct_of_aoi = (
+        round(min(max(initial_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
+    )
+    small_base_caveat = vegetation_pct_of_aoi is not None and vegetation_pct_of_aoi < 2.0
+
     logger.info(f"GEE: vegetation loss={loss_km2:.2f} km², gain={gain_km2:.2f} km²")
     return {
         "metrics": {
@@ -202,6 +222,9 @@ def compute_vegetation_change(aoi: Dict, start_date: str, end_date: str) -> Dict
             "initial_vegetation_km2": round(initial_km2, 4),
             "net_change_km2": round(gain_km2 - loss_km2, 4),
             "loss_pct": round(loss_pct, 4),
+            "region_area_km2": round(region_area_km2, 4),
+            "vegetation_pct_of_aoi": vegetation_pct_of_aoi,
+            "small_base_caveat": small_base_caveat,
         },
         "ee_image": loss_mask,
         "ee_geometry": region,
@@ -406,6 +429,25 @@ def compute_flood_detection(aoi: Dict, start_date: str, end_date: str) -> Dict:
     flood_km2 = _calc_area_km2(flood_mask, region, scale=30)
     raw_km2 = _calc_area_km2(raw_flood_mask, region, scale=30)
 
+    # Confirmed via analysis of a real production report (Aksai Chin, a
+    # permafrost/glacial high-altitude region with no known flood): running
+    # this over a multi-year window instead of a short event window
+    # produces a false-positive-prone result. The method's own design
+    # (see docstring) compares a tight ~30-day pre-event reference against
+    # the requested window's mean -- built for "did X flood between date A
+    # and date B" where that window IS the event. When the window instead
+    # spans many months/years, flood_col.mean() blends multiple full
+    # seasonal cycles (snow/ice cover, lake freeze-thaw, monsoon-driven
+    # wetting) into one composite, and *normal* seasonal backscatter drop
+    # relative to one specific reference snapshot is indistinguishable from
+    # a real flood signal to this algorithm -- especially at high-latitude/
+    # high-altitude or monsoon-climate AOIs where seasonal variability is
+    # large. Flagged here (not silently corrected) so the report can
+    # disclose it rather than presenting a long-window result with the same
+    # confidence as a genuine short-event query.
+    flood_period_days = (end_ee.difference(start_ee, "day")).getInfo()
+    long_window_caveat = flood_period_days > 90
+
     return {
         "metrics": {
             "flood_area_km2": round(flood_km2, 4),
@@ -416,6 +458,8 @@ def compute_flood_detection(aoi: Dict, start_date: str, end_date: str) -> Dict:
             "raw_backscatter_drop_km2": round(raw_km2, 4),
             "reference_scenes_used": ref_count,
             "flood_period_scenes_used": flood_count,
+            "flood_period_days": round(flood_period_days),
+            "long_window_caveat": long_window_caveat,
         },
         "ee_image": flood_mask,
         "ee_geometry": region,
