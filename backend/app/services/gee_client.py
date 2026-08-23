@@ -392,8 +392,19 @@ def compute_flood_detection(aoi: Dict, start_date: str, end_date: str) -> Dict:
 
     flood_mask = raw_flood_mask.And(permanent_water.Not()).And(steep_terrain.Not())
 
-    flood_km2 = _calc_area_km2(flood_mask, region, scale=10)
-    raw_km2 = _calc_area_km2(raw_flood_mask, region, scale=10)
+    # Area calc at scale=30, not the SAR data's native 10m: the speckle
+    # filter above already smooths the signal with a 50m kernel, so the
+    # *effective* resolution of what's actually being measured here is
+    # ~50m, not 10m -- summing area at native 10m resolution was false
+    # precision, not real accuracy, while costing ~9x the pixels. That
+    # extra cost is what actually broke this: flood_mask combines three
+    # different-resolution sources (SAR ~10m, JRC water ~30m, SRTM ~30m)
+    # via .And(), and reducing that combined image at scale=10 over a
+    # large AOI was timing out GEE's interactive compute budget outright
+    # (a genuine timeout, not a resolvable-by-bestEffort pixel-count cap) --
+    # confirmed from a real production error log, not a hypothetical.
+    flood_km2 = _calc_area_km2(flood_mask, region, scale=30)
+    raw_km2 = _calc_area_km2(raw_flood_mask, region, scale=30)
 
     return {
         "metrics": {

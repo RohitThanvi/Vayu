@@ -43,7 +43,7 @@ function formatCoord(lat, lon) {
   return `${la} ${lo}`;
 }
 
-export default function IntelPanel({ apiUrl, aoi, onEventClick, onNewEvent, isMobile, onClose }) {
+export default function IntelPanel({ apiUrl, aoi, onEventClick, onNewEvent, selectedEvent, onCloseDetail, isMobile, onClose }) {
   const { events, connected, stats, setFilter, clear } = useIntelFeed(apiUrl, onNewEvent);
 
   const [activeSources, setActiveSources]     = useState(new Set(ALL_SOURCES));
@@ -80,6 +80,8 @@ export default function IntelPanel({ apiUrl, aoi, onEventClick, onNewEvent, isMo
 
   return (
     <div style={{ ...styles.panel, ...(isMobile ? { minWidth: 0, maxWidth: "none", width: "100%" } : {}) }}>
+      <div style={{ display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden",
+                    flex: selectedEvent ? "1 1 50%" : "1 1 100%" }}>
       {/* Header */}
       <div style={styles.header}>
         <div style={styles.headerLeft}>
@@ -174,6 +176,58 @@ export default function IntelPanel({ apiUrl, aoi, onEventClick, onNewEvent, isMo
             onClick={() => onEventClick && onEventClick(event)}
           />
         ))}
+      </div>
+      </div>
+      {selectedEvent && (
+        <EventDetailPanel event={selectedEvent} onClose={onCloseDetail} />
+      )}
+    </div>
+  );
+}
+
+function EventDetailPanel({ event, onClose }) {
+  const srcColor = SOURCE_COLORS[event.source] || "#4a5568";
+  const sevColor = SEVERITY_COLORS[event.severity] || "#2a3a4a";
+  // Generic renderer over whatever the backend put in event.meta — works for
+  // any source (USGS magnitude/depth, FIRMS FRP/confidence, GDELT
+  // theme/tone/domain, ACLED fatalities/actor) without a per-source template
+  // that needs updating every time a source adds or changes a field.
+  const metaEntries = Object.entries(event.meta || {}).filter(
+    ([k, v]) => v !== null && v !== undefined && v !== "" && k !== "url"
+  );
+  const sourceUrl = event.meta?.url;
+
+  return (
+    <div style={{ ...styles.detailPanel, borderTop: `2px solid ${sevColor}` }}>
+      <div style={styles.detailHeader}>
+        <span style={{ color: srcColor, fontSize: 13, letterSpacing: 1.5, fontWeight: 700 }}>
+          {event.tag}
+        </span>
+        <button style={styles.closeBtn} onClick={onClose} aria-label="Close event detail">✕</button>
+      </div>
+      <div style={styles.detailBody}>
+        <div style={styles.detailTitle}>{event.title}</div>
+        <div style={styles.detailMeta}>
+          {formatCoord(event.lat, event.lon)} &middot; {timeAgo(event.ts)}
+        </div>
+        <div style={styles.detailText}>{event.detail}</div>
+        {metaEntries.length > 0 && (
+          <div style={styles.detailFieldsGrid}>
+            {metaEntries.map(([k, v]) => (
+              <div key={k} style={styles.detailField}>
+                <span style={styles.detailFieldLabel}>
+                  {k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                </span>
+                <span style={styles.detailFieldValue}>{String(v)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {sourceUrl && (
+          <a href={sourceUrl} target="_blank" rel="noopener noreferrer" style={styles.detailLink}>
+            Read Source Article &#8599;
+          </a>
+        )}
       </div>
     </div>
   );
@@ -291,7 +345,7 @@ const styles = {
   metricLabel: { fontSize: 12, color: "#ffffff", letterSpacing: 1, opacity: 0.7 },
   metricVal: { fontSize: 14, fontWeight: 700, letterSpacing: 0.5, color: "#ffffff" },
   eventList: {
-    overflowY: "auto", flex: 1,
+    overflowY: "auto", flex: 1, minHeight: 0,
   },
   emptyState: {
     padding: "24px 12px", textAlign: "center",
@@ -313,4 +367,40 @@ const styles = {
     fontSize: 13, color: "#ffffff", lineHeight: 1.6, marginBottom: 4, opacity: 0.85,
   },
   cardCoord: { fontSize: 12, color: "#ffffff", letterSpacing: 0.5, opacity: 0.55 },
+  detailPanel: {
+    display: "flex", flexDirection: "column",
+    flex: "1 1 50%", minHeight: 0, overflow: "hidden",
+    background: "#0d1117",
+  },
+  detailHeader: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "8px 12px", borderBottom: "1px solid #1e2530", flexShrink: 0,
+  },
+  detailBody: {
+    overflowY: "auto", padding: "10px 12px", flex: 1,
+  },
+  detailTitle: {
+    fontSize: 15, color: "#ffffff", lineHeight: 1.5, marginBottom: 4, fontWeight: 600,
+  },
+  detailMeta: {
+    fontSize: 12, color: "#ffffff", opacity: 0.55, letterSpacing: 0.5, marginBottom: 10,
+  },
+  detailText: {
+    fontSize: 13, color: "#ffffff", lineHeight: 1.7, opacity: 0.9, marginBottom: 12,
+  },
+  detailFieldsGrid: {
+    display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 10px",
+    borderTop: "1px solid #111519", paddingTop: 10, marginBottom: 10,
+  },
+  detailField: { display: "flex", flexDirection: "column" },
+  detailFieldLabel: {
+    fontSize: 11, color: "#ffffff", opacity: 0.5, letterSpacing: 0.8, textTransform: "uppercase",
+  },
+  detailFieldValue: {
+    fontSize: 13, color: "#ffffff", marginTop: 2, wordBreak: "break-word",
+  },
+  detailLink: {
+    display: "inline-block", fontSize: 13, color: "#6fb6ff",
+    textDecoration: "none", letterSpacing: 0.5, marginTop: 4,
+  },
 };
