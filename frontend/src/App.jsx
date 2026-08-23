@@ -1115,6 +1115,7 @@ export default function App() {
   const [queryText, setQueryText] = useState('');
   const [selMetric, setSelMetric] = useState(null);
   const [drawnAOI, setDrawnAOI]   = useState(null);
+  const [selectedIntelEvent, setSelectedIntelEvent] = useState(null); // opens the intel-detail split panel
   const [aoiRegionName, setAoiRegionName] = useState(null); // set only via place search; cleared on manual draw/edit/delete
 
   const handleManualAreaDrawn = useCallback((geom) => {
@@ -1176,6 +1177,7 @@ export default function App() {
       intelLayerRef.current.addLayer(marker);
       intelMarkersRef.current[event.id] = marker;
       intelOrderRef.current.push(event.id);
+      marker.on('click', () => setSelectedIntelEvent(event));
 
       // Bug fix: this callback fires for every event the WebSocket has ever
       // pushed for the life of the tab — with no bound, that's an unbounded
@@ -1454,6 +1456,7 @@ export default function App() {
   }, [satelliteLayers]);
 
   const handleEventClick = useCallback((event) => {
+    setSelectedIntelEvent(event);
     if (!mapRef.current) return;
     setMobilePanel('map');
     mapRef.current.flyTo([event.lat, event.lon], 7, { duration: 1.2 });
@@ -1571,6 +1574,8 @@ export default function App() {
       aoi={drawnAOI}
       onEventClick={handleEventClick}
       onNewEvent={addIntelMarker}
+      selectedEvent={selectedIntelEvent}
+      onCloseDetail={() => setSelectedIntelEvent(null)}
       isMobile={isMobile}
       onClose={() => setMobilePanel('map')}
     />
