@@ -675,7 +675,7 @@ function PlaceSearchBar({ mapRef, drawGroupRef, aoiBoundsRef, onAreaDrawn, isMob
           onChange={e => { setQuery(e.target.value); setFallbackWarning(null); }}
           onFocus={() => { if (results.length) setOpen(true); }}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
-          placeholder="Search a place (e.g. Churu, Rajasthan)..."
+          placeholder="Search a place..."
           style={{
             width: '100%', boxSizing: 'border-box', padding: '9px 12px',
             background: 'rgba(18,21,26,0.95)', border: '1px solid #262b33', borderRadius: 4,
