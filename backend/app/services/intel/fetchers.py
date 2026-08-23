@@ -268,22 +268,88 @@ async def fetch_gdelt(client: httpx.AsyncClient) -> list[dict]:
                 if not themes_raw or not locations_raw:
                     continue
 
-                themes = [t.split(",")[0] for t in themes_raw.split(";") if t]
+                # Both fields include a character offset into the source
+                # article ("ThemeName,CharOffset;..." and
+                # "...#Lat#Lon#FeatureID#CharOffset;...") — previously
+                # discarded (themes: t.split(",")[0] dropped it; locations:
+                # parsing stopped at field 6/lon). Without it, the code
+                # picked "the first disaster-keyword theme" and "the first
+                # parseable location" INDEPENDENTLY from the article's full
+                # theme/location lists — since one GKG row is a WHOLE
+                # article that can mention many unrelated places and
+                # themes throughout its text, this could pair a theme from
+                # one part of the article with a location mentioned
+                # somewhere else entirely unrelated (confirmed real-world
+                # case: a story's disaster theme paired with a passing,
+                # unrelated place-name mention elsewhere in the same
+                # article — headline and map location end up describing
+                # different things, and the attached URL is for the whole
+                # article, not specifically either one). Using the offsets
+                # to pick the location mentioned NEAREST to the matched
+                # theme's position in the text is a standard GDELT
+                # correlation heuristic and meaningfully reduces (though,
+                # since it's proximity not guaranteed co-reference, doesn't
+                # perfectly eliminate) this class of mismatch.
+                theme_candidates = []  # (name, char_offset or None)
+                for t in themes_raw.split(";"):
+                    if not t:
+                        continue
+                    parts = t.split(",")
+                    name = parts[0]
+                    offset = None
+                    if len(parts) > 1:
+                        try:
+                            offset = int(parts[1])
+                        except ValueError:
+                            pass
+                    theme_candidates.append((name, offset))
+
+                themes = [name for name, _ in theme_candidates]
                 if not any(any(kw in t.upper() for kw in GDELT_THEME_KEYWORDS) for t in themes):
                     continue
 
-                lat = lon = None
-                loc_name = ""
+                loc_candidates = []  # (name, lat, lon, char_offset or None)
                 for loc in locations_raw.split(";"):
                     fields = loc.split("#")
                     if len(fields) >= 7:
                         try:
-                            lat = float(fields[5])
-                            lon = float(fields[6])
-                            loc_name = fields[1]
-                            break
+                            lat_c = float(fields[5])
+                            lon_c = float(fields[6])
                         except ValueError:
                             continue
+                        offset_c = None
+                        if len(fields) >= 8:
+                            try:
+                                offset_c = int(fields[7])
+                            except ValueError:
+                                pass
+                        loc_candidates.append((fields[1], lat_c, lon_c, offset_c))
+                if not loc_candidates:
+                    continue
+
+                # Prefer the first disaster-keyword theme that has a usable
+                # offset (needed for proximity matching); fall back to the
+                # plain first-match if none of them do.
+                matched_theme, theme_offset = None, None
+                for name, offset in theme_candidates:
+                    if any(kw in name.upper() for kw in GDELT_THEME_KEYWORDS):
+                        matched_theme, theme_offset = name, offset
+                        if offset is not None:
+                            break
+
+                if theme_offset is not None and any(o is not None for _, _, _, o in loc_candidates):
+                    # Pick the location whose offset is closest to the
+                    # matched theme's offset — locations with no offset
+                    # available are treated as maximally far so they lose
+                    # to any location that does have proximity data.
+                    loc_name, lat, lon, _ = min(
+                        loc_candidates,
+                        key=lambda c: abs(c[3] - theme_offset) if c[3] is not None else float("inf"),
+                    )
+                else:
+                    # No offset data available for correlation (older/
+                    # non-Enhanced rows) — same behavior as before this fix.
+                    loc_name, lat, lon, _ = loc_candidates[0]
                 if lat is None or lon is None:
                     continue
 
@@ -297,7 +363,7 @@ async def fetch_gdelt(client: httpx.AsyncClient) -> list[dict]:
 
                 domain = row[3] if len(row) > 3 else "unknown"
                 url = row[4] if len(row) > 4 else ""
-                matched_theme = _gdelt_pick_theme(themes)
+                matched_theme = matched_theme or _gdelt_pick_theme(themes)
                 clean_theme = matched_theme.replace("_", " ").replace("CRISISLEX", "").strip().title() or "News Event"
 
                 severity = "critical" if tone < -5 else "warn" if tone < -2 else "info"
@@ -305,7 +371,13 @@ async def fetch_gdelt(client: httpx.AsyncClient) -> list[dict]:
                     source="GDELT",
                     tag=f"NEWS · {matched_theme.split('_')[0][:18].upper()}",
                     title=f"{clean_theme} — {loc_name}",
-                    detail=f"Coverage from {domain}. Theme: {matched_theme}. Tone: {tone:.2f}.",
+                    detail=(
+                        f"Coverage from {domain}. Theme: {matched_theme}. Tone: {tone:.2f}. "
+                        f"Theme and location are automatically extracted from the source article and "
+                        f"matched by proximity within its text, not manually verified — for a long or "
+                        f"multi-story article, the linked page may cover more than just this specific "
+                        f"item."
+                    ),
                     lat=lat,
                     lon=lon,
                     severity=severity,
