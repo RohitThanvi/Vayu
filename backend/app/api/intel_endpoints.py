@@ -152,8 +152,11 @@ async def intel_websocket(websocket: WebSocket):
     logger.info(f"WebSocket connected: {websocket.client}")
 
     try:
-        # Send snapshot of recent events immediately
-        snapshot = intel_store.get_all(limit=50)
+        # Send snapshot of recent events immediately — per-source fair
+        # share, not a plain "last 50 overall" that a noisy source can
+        # dominate (see get_snapshot()'s docstring for the confirmed
+        # real-world case this fixes: GDELT events being crowded out).
+        snapshot = intel_store.get_snapshot()
         await websocket.send_json({
             "type": "snapshot",
             "count": len(snapshot),
