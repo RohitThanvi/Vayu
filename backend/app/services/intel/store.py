@@ -144,6 +144,31 @@ class IntelStore:
     def get_all(self, limit: int = 200) -> list[dict]:
         return list(self._events)[:limit]
 
+    def get_snapshot(self, per_source_limit: int = 15, total_limit: int = 60) -> list[dict]:
+        """Initial-connection snapshot, guaranteeing every source that has
+        events gets a fair share of the slots — get_all()'s plain 'last N
+        overall' can starve a lower-volume source out entirely. Confirmed
+        real case: GDELT only matches a narrow set of disaster/conflict
+        themes (far fewer events per poll than USGS's global 5-min
+        earthquake feed or FIRMS's frequently-numerous fire detections),
+        so its events could sit further back in the deque and never appear
+        in a plain top-50 slice, even though they're genuinely present and
+        recent — a freshly-connected client would then see zero GDELT
+        markers until the next live GDELT push, which could be several
+        minutes away depending on where its poll cycle currently sits.
+        Takes each source's most recent per_source_limit events, merges,
+        and returns newest-first, capped at total_limit overall."""
+        by_source: dict[str, list[dict]] = {}
+        for event in self._events:  # already newest-first (appendleft)
+            src = event.get("source", "unknown")
+            bucket = by_source.setdefault(src, [])
+            if len(bucket) < per_source_limit:
+                bucket.append(event)
+
+        merged = [e for bucket in by_source.values() for e in bucket]
+        merged.sort(key=lambda e: e.get("ts", ""), reverse=True)
+        return merged[:total_limit]
+
     def get_stats(self) -> dict:
         source_counts = {}
         severity_counts = {"info": 0, "warn": 0, "critical": 0}
