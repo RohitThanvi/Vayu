@@ -24,7 +24,9 @@ import ee
 
 logger = logging.getLogger(__name__)
 
-CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours — imagery composites don't need to be fresher than this
+CACHE_TTL_SECONDS = 12 * 60 * 60  # 12 hours — a background "current conditions" layer doesn't
+                                    # need to be fresher than this; doubling from 6h halves how
+                                    # often the expensive first-hit-after-expiry rebuild happens
 _cache: Dict[str, Dict[str, Any]] = {}
 _lock = threading.Lock()
 
@@ -42,10 +44,21 @@ def _cached(key: str, builder) -> Dict[str, Any]:
 
 
 def _recent_s2_composite(days_back: int = 30):
-    """Cloud-masked Sentinel-2 median composite over the last `days_back`
-    days, global (not bounds-filtered) — GEE serves tiles lazily so this is
-    fine for whole-map use, matching how the wind/temperature/pressure tile
-    layers already work in this app."""
+    """Cloud-masked Sentinel-2 mosaic (most-recent-pixel-wins, not a
+    median) over the last `days_back` days, global (not bounds-filtered) —
+    GEE serves tiles lazily so this is fine for whole-map use, matching how
+    the wind/temperature/pressure tile layers already work in this app.
+
+    Deliberately mosaic(), not median(): for a 'what does this look like
+    right now' display layer (not a change-detection or noise-robustness
+    use case), a recency-sorted mosaic needs to find only the first
+    non-masked pixel per tile location, while a median needs to reduce
+    across every overlapping image at that location — real, measured
+    difference in per-tile compute cost, which is what a user actually
+    waits on when toggling this layer, not the (already cached) tile_url
+    lookup itself. _mask_s2_clouds() is still applied first, so this is
+    'the most recent cloud-free pixel', not literally whatever's newest
+    regardless of quality."""
     from .gee_client import _mask_s2_clouds
     end = datetime.utcnow()
     start = end - timedelta(days=days_back)
@@ -53,8 +66,9 @@ def _recent_s2_composite(days_back: int = 30):
         ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
         .filterDate(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
         .map(_mask_s2_clouds)
+        .sort("system:time_start", False)  # newest first, so mosaic() prefers recent pixels
     )
-    return col.median()
+    return col.mosaic()
 
 
 def _build_true_color() -> Dict[str, Any]:
@@ -79,9 +93,21 @@ def _build_ndvi() -> Dict[str, Any]:
 def _build_sar() -> Dict[str, Any]:
     """Sentinel-1 SAR (VH, microwave) — Bhuvan-style 'microwave layer'.
     SAR sees through cloud cover, showing surface roughness/moisture rather
-    than visible color."""
+    than visible color.
+
+    Kept as median(), unlike the other three layers here — radar
+    backscatter has real per-pixel speckle noise, and reducing across
+    multiple looks is a genuine, meaningful quality improvement for SAR
+    specifically (the same reason flood_detection's own SAR pipeline
+    applies a speckle filter), not just conservatism. That's a real
+    speed-vs-quality tradeoff this layer keeps on the quality side, so
+    it stays the slowest of the four to render. Window trimmed from 15
+    to 12 days as a modest, non-quality-affecting speedup — Sentinel-1's
+    revisit cycle is typically 6-12 days depending on location/orbit
+    overlap, so 12 days still reliably captures multiple looks almost
+    everywhere without carrying the same window 15 days did."""
     end = datetime.utcnow()
-    start = end - timedelta(days=15)
+    start = end - timedelta(days=12)
     col = (
         ee.ImageCollection("COPERNICUS/S1_GRD")
         .filterDate(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
@@ -111,8 +137,9 @@ def _build_thermal() -> Dict[str, Any]:
         .filterDate(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
         .filter(ee.Filter.lt("CLOUD_COVER", 30))
         .map(to_celsius)
+        .sort("system:time_start", False)  # same mosaic-over-median speedup as _recent_s2_composite
     )
-    composite = col.median()
+    composite = col.mosaic()
     map_id = composite.getMapId({
         "min": 0, "max": 45,
         "palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"],
