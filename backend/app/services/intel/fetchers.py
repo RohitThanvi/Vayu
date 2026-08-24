@@ -239,7 +239,7 @@ async def fetch_gdelt(client: httpx.AsyncClient) -> list[dict]:
             return []
 
         if gkg_url == _gdelt_last_url:
-            logger.debug("GDELT: file unchanged since last poll, skipping")
+            logger.info("GDELT: file unchanged since last poll (GDELT publishes every ~15 min, we poll every 10), skipping")
             return []
         _gdelt_last_url = gkg_url
 

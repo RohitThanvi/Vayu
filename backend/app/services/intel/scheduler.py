@@ -103,7 +103,7 @@ class IntelScheduler:
                 async with httpx.AsyncClient(follow_redirects=True) as client:
                     events = await fetch_usgs(client, since_minutes=10)
                 await intel_store.ingest(events)
-                logger.debug(f"USGS poll: {len(events)} events")
+                logger.info(f"USGS poll: {len(events)} events")
             except Exception as e:
                 logger.error(f"USGS poll error: {e}")
             await asyncio.sleep(INTERVAL_USGS)
@@ -115,7 +115,7 @@ class IntelScheduler:
                 async with httpx.AsyncClient(follow_redirects=True) as client:
                     events = await fetch_firms(client)
                 await intel_store.ingest(events)
-                logger.debug(f"FIRMS poll: {len(events)} events")
+                logger.info(f"FIRMS poll: {len(events)} events")
             except Exception as e:
                 logger.error(f"FIRMS poll error: {e}")
             await asyncio.sleep(INTERVAL_FIRMS)
@@ -128,7 +128,7 @@ class IntelScheduler:
                 async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
                     events = await fetch_gdelt(client)
                 await intel_store.ingest(events)
-                logger.debug(f"GDELT poll: {len(events)} events")
+                logger.info(f"GDELT poll: {len(events)} events")
             except Exception as e:
                 logger.error(f"GDELT poll error: {e}")
             await asyncio.sleep(INTERVAL_GDELT)
@@ -145,7 +145,7 @@ class IntelScheduler:
                         days_back=1,
                     )
                 await intel_store.ingest(events)
-                logger.debug(f"ACLED poll: {len(events)} events")
+                logger.info(f"ACLED poll: {len(events)} events")
             except Exception as e:
                 logger.error(f"ACLED poll error: {e}")
             await asyncio.sleep(INTERVAL_ACLED)
