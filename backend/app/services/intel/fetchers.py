@@ -241,10 +241,36 @@ async def fetch_gdelt(client: httpx.AsyncClient) -> list[dict]:
         if gkg_url == _gdelt_last_url:
             logger.info("GDELT: file unchanged since last poll (GDELT publishes every ~15 min, we poll every 10), skipping")
             return []
-        _gdelt_last_url = gkg_url
 
-        zresp = await client.get(gkg_url, timeout=45)
-        zresp.raise_for_status()
+        # NOTE: _gdelt_last_url is intentionally NOT updated here yet — see
+        # below. Updating it before confirming the fetch succeeded was a
+        # real bug: if the zip 404s (GDELT's manifest can point to a
+        # filename slightly before that file finishes publishing to their
+        # CDN — a known, external timing lag, not something Vayu controls),
+        # the file would already be marked "seen", and the NEXT poll could
+        # see the same still-current manifest entry and skip it as
+        # "unchanged" — permanently losing that whole 15-minute window's
+        # events instead of just delaying by one cycle.
+        zresp = None
+        for attempt in (1, 2):
+            try:
+                zresp = await client.get(gkg_url, timeout=45)
+                zresp.raise_for_status()
+                break
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404 and attempt == 1:
+                    # Likely GDELT's own manifest-vs-CDN publish lag (typically
+                    # resolves within well under a minute) rather than a real
+                    # problem — one short retry usually recovers within the
+                    # same poll instead of waiting the full next 10-minute cycle.
+                    logger.info(f"GDELT: {gkg_url} not yet available (likely publish lag), retrying once in 20s")
+                    await asyncio.sleep(20)
+                    continue
+                raise
+        if zresp is None:
+            return []
+
+        _gdelt_last_url = gkg_url  # only mark as seen once the fetch actually succeeded
 
         import zipfile, io, csv
         zf = zipfile.ZipFile(io.BytesIO(zresp.content))
