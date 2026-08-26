@@ -577,13 +577,63 @@ async def fetch_acled(
 
 
 # ── OpenSky Network aircraft snapshot ────────────────────────────────────────
-# Free, keyless global state-vector snapshot. Anonymous tier is rate-limited
-# (OpenSky recommends no more than one call per ~10s; the scheduler polls far
-# less often than that — see INTERVAL_AIRCRAFT). Returns aircraft dicts in
-# aircraft_store's shape, not IntelEvents — this is a snapshot poll like the
-# AIS bridge, not a discrete-event source, so it's consumed directly by
-# aircraft_store.load_snapshot() rather than going through intel_store.
+# OpenSky retired unauthenticated/basic-auth access for practical purposes —
+# anonymous requests are now aggressively rate-limited and data-center IPs
+# (which is exactly what Render is) get squeezed hardest. This is confirmed:
+# the initial keyless version of this fetcher logged "OpenSky fetch error:"
+# with an EMPTY exception message on Render, which is the fingerprint of a
+# connection-level rejection (not a clean 4xx with a body) rather than a
+# real network outage.
+#
+# Still entirely free: OpenSky now requires the OAuth2 client-credentials
+# flow (Log in at opensky-network.org -> Account -> API Clients -> create
+# one, no card involved) instead of a plain API key, mirroring how ACLED's
+# email+password OAuth flow already works in this file (see
+# _get_acled_token above) -- same shape, different provider. Set
+# OPENSKY_CLIENT_ID / OPENSKY_CLIENT_SECRET; if unset, falls back to the
+# old anonymous request (works, just unreliable from a data-center IP).
 OPENSKY_URL = "https://opensky-network.org/api/states/all"
+OPENSKY_TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
+
+# Module-level token cache: {"access_token": str, "expires_at": datetime}
+_opensky_token_cache: dict = {}
+
+
+async def _get_opensky_token(client: httpx.AsyncClient, client_id: str, client_secret: str) -> str | None:
+    global _opensky_token_cache
+    now = datetime.utcnow()
+
+    cached = _opensky_token_cache.get("access_token")
+    expires_at = _opensky_token_cache.get("expires_at")
+    if cached and expires_at and now < expires_at:
+        return cached
+
+    try:
+        resp = await client.post(
+            OPENSKY_TOKEN_URL,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        token = data.get("access_token")
+        expires_in = data.get("expires_in", 1800)   # OpenSky tokens are short-lived, ~30min
+        if token:
+            _opensky_token_cache = {
+                "access_token": token,
+                "expires_at": now + timedelta(seconds=expires_in - 60),  # refresh 1min early
+            }
+            logger.info("OpenSky: OAuth token acquired")
+        return token
+    except Exception as e:
+        logger.error(f"OpenSky OAuth error: {type(e).__name__}: {e}")
+        return None
+
 
 # OpenSky state vector array indices (per their documented schema) —
 # named here so the parsing below isn't a wall of magic numbers.
@@ -593,7 +643,11 @@ _OS_ON_GROUND, _OS_VELOCITY, _OS_HEADING = 8, 9, 10
 _OS_VERT_RATE = 11
 
 
-async def fetch_opensky(client: httpx.AsyncClient) -> list[dict]:
+async def fetch_opensky(
+    client: httpx.AsyncClient,
+    client_id: str = "",
+    client_secret: str = "",
+) -> list[dict]:
     """Fetch the current global OpenSky state-vector snapshot.
 
     Skips entries with no position fix (lat/lon null — aircraft OpenSky
@@ -601,12 +655,25 @@ async def fetch_opensky(client: httpx.AsyncClient) -> list[dict]:
     those can't be plotted, same as vessel_store only keeping entries with
     lat/lon set.
     """
+    headers = {}
+    if client_id and client_secret:
+        token = await _get_opensky_token(client, client_id, client_secret)
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        # If the token fetch failed, fall through and try anonymously
+        # rather than giving up the whole poll cycle — better a thin
+        # anonymous result than nothing.
+
     try:
-        resp = await client.get(OPENSKY_URL, timeout=20)
+        resp = await client.get(OPENSKY_URL, headers=headers, timeout=20)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        logger.error(f"OpenSky fetch error: {e}")
+        # type(e).__name__ matters here: a prior version of this log line
+        # printed just "{e}", which came back completely blank for a
+        # connection-level rejection on Render (see comment above) and
+        # gave no signal to debug from. Always log the exception type too.
+        logger.error(f"OpenSky fetch error: {type(e).__name__}: {e}")
         return []
 
     states = data.get("states") or []

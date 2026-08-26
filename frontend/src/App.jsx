@@ -1,7 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { Analytics } from '@vercel/analytics/react';
 import IntelPanel from './components/IntelPanel';
 import AgriPanel from './components/AgriPanel';
+// Lazy-loaded: three.js is a large dependency (pulls the main bundle from
+// ~290KB to ~830KB) that only the Orbital tab needs — code-splitting it
+// means everyone else's initial load stays fast, and it's only fetched
+// the first time someone actually opens that tab.
+const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
 import { useVesselTracker } from './hooks/useVesselTracker';
 import { useAircraftTracker } from './hooks/useAircraftTracker';
 import { useSatelliteTracker } from './hooks/useSatelliteTracker';
@@ -48,11 +53,30 @@ const WEATHER_LAYERS = {
 const SATELLITE_MIN_ZOOM = 6;
 
 const SATELLITE_LAYERS = {
-  true_color: { label: 'True Color',      icon: 'map',    opacity: 0.85, desc: 'Sentinel-2, recent ~30 days' },
+  // True Color is NOT a GEE live-compute layer like the other three — it's
+  // a pre-rendered, pre-tiled global mosaic (EOX Sentinel-2 cloudless,
+  // s2maps.eu), fetched directly from EOX's own tile server with no
+  // backend round-trip at all. That's *why* it has no minZoom restriction
+  // below (EOX_TRUE_COLOR_URL) while the other three genuinely need one —
+  // it's not live per-tile compute, so there's no world-zoom cost to gate.
+  // Free for non-commercial use; requires attribution, shown in the UI
+  // note wherever this layer is toggled (see EOX_ATTRIBUTION).
+  true_color: { label: 'True Color',      icon: 'map',    opacity: 0.9,  desc: 'Sentinel-2 cloudless global mosaic (EOX), any zoom' },
   ndvi:       { label: 'NDVI Vegetation', icon: 'leaf',   opacity: 0.75, desc: 'Vegetation health index' },
   sar:        { label: 'SAR / Microwave', icon: 'radio',  opacity: 0.75, desc: 'Sentinel-1, sees through cloud cover' },
   thermal:    { label: 'Thermal / IR',    icon: 'thermo', opacity: 0.75, desc: 'Landsat surface temperature' },
 };
+
+// Pre-rendered, pre-tiled global Sentinel-2 cloudless mosaic — free,
+// keyless, works at every zoom level with no per-tile compute (unlike the
+// other three GEE-backed layers). See SATELLITE_LAYERS.true_color comment.
+const EOX_TRUE_COLOR_URL = 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg';
+const EOX_ATTRIBUTION = 'Sentinel-2 cloudless \u2013 s2maps.eu by EOX IT Services GmbH';
+
+// Only these three genuinely need the low-zoom gate (live GEE compute,
+// see global_layers.py) — True Color is pre-tiled and exempt.
+const GEE_GATED_LAYERS = new Set(['ndvi', 'sar', 'thermal']);
+
 
 // Official OpenWeatherMap Weather Maps 1.0 color stops (openweathermap.org/map_legend),
 // so the legend shown in the app matches exactly what the tiles are actually
@@ -476,14 +500,15 @@ function SatelliteLayerToggles({ active, onToggle, loadingKey, currentZoom }) {
       {zoomBlocked && (
         <div style={{ fontSize:11, color:S.text3, fontFamily:S.mono, marginBottom:9, padding:'8px 10px',
           border:`1px solid ${S.border}`, borderRadius:3, background:S.surface2, lineHeight:1.4 }}>
-          Zoom in to load satellite layers — these render per-tile from live imagery and world view is too large an area to compute.
+          Zoom in to load NDVI / SAR / Thermal — these render per-tile from live imagery and world view is too large an area to compute. True Color is a pre-rendered mosaic and works at any zoom.
         </div>
       )}
       <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
         {Object.entries(SATELLITE_LAYERS).map(([key, meta]) => {
           const on = !!active[key];
           const loading = loadingKey === key;
-          const disabled = loading || (zoomBlocked && !on);
+          const gated = GEE_GATED_LAYERS.has(key);
+          const disabled = loading || (gated && zoomBlocked && !on);
           return (
             <button key={key} onClick={() => onToggle(key)} disabled={disabled}
               style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44, width:'100%',
@@ -501,6 +526,7 @@ function SatelliteLayerToggles({ active, onToggle, loadingKey, currentZoom }) {
               <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{loading ? '...' : (on ? 'ON' : 'OFF')}</span>
             </button>
           );
+
         })}
       </div>
     </div>
@@ -993,6 +1019,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
     { id:'Maritime', icon:'anchor' },
     { id:'Weather',  icon:'thermo' },
     { id:'Agri',     icon:'leaf' },
+    { id:'Orbital',  icon:'satellite-dish' },
     { id:'Guide',    icon:'book' },
   ];
   return (
@@ -1171,6 +1198,19 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
           </div>
         )}
         {tab === 'Agri' && <AgriPanel drawnAOI={drawnAOI} apiUrl={apiUrl} searchedRegionName={aoiRegionName} />}
+        {tab === 'Orbital' && (
+          <div style={{ padding:'16px 14px', display:'flex', flexDirection:'column', gap:12 }}>
+            <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, textTransform:'uppercase' }}>Orbital View</div>
+            <div style={{ fontSize:13, color:S.text2, lineHeight:1.6 }}>
+              A 3D Earth view showing live satellite positions — space stations and the brightest visual-magnitude
+              satellites, from the same CelesTrak orbital elements used on the 2D map, propagated live in your
+              browser (SGP4).
+            </div>
+            <div style={{ fontSize:12, color:S.text3, lineHeight:1.6 }}>
+              Drag to rotate, scroll to zoom. Red points are space stations, violet points are other tracked satellites.
+            </div>
+          </div>
+        )}
         {tab === 'Guide' && (
           <div style={{ display:'flex', flexDirection:'column', gap:14, fontSize:15, color:S.text2 }}>
             <div>
@@ -1655,12 +1695,28 @@ export default function App() {
       return;
     }
 
-    // Turning on: below SATELLITE_MIN_ZOOM, GEE's per-tile compute for a
-    // world-view area effectively never resolves (see global_layers.py) —
-    // refuse to even start the fetch rather than leaving the user staring
-    // at a loading state for 2+ minutes. The toggle button itself is
-    // already disabled at this zoom (SatelliteLayerToggles), this is the
-    // belt-and-suspenders guard against any other call path.
+    // True Color is a pre-tiled global mosaic (EOX), not live GEE compute —
+    // no backend round-trip, no minZoom, no loading state needed. See the
+    // comment on SATELLITE_LAYERS.true_color for why this is architecturally
+    // different from the other three.
+    if (key === 'true_color') {
+      const meta = SATELLITE_LAYERS.true_color;
+      const tl = L.tileLayer(EOX_TRUE_COLOR_URL, {
+        opacity: meta.opacity, zIndex: 4, maxZoom: 18,
+        attribution: EOX_ATTRIBUTION,
+      }).addTo(mapRef.current);
+      satelliteTileRefs.current.true_color = tl;
+      setSatelliteLayers(prev => ({ ...prev, true_color: true }));
+      return;
+    }
+
+    // Turning on NDVI/SAR/Thermal: below SATELLITE_MIN_ZOOM, GEE's per-tile
+    // compute for a world-view area effectively never resolves (see
+    // global_layers.py) — refuse to even start the fetch rather than
+    // leaving the user staring at a loading state for 2+ minutes. The
+    // toggle button itself is already disabled at this zoom
+    // (SatelliteLayerToggles), this is the belt-and-suspenders guard
+    // against any other call path.
     if (mapRef.current.getZoom() < SATELLITE_MIN_ZOOM) return;
 
     // Fetch the cached tile URL first, then add the layer — the
@@ -1828,9 +1884,27 @@ export default function App() {
       <div style={ isMobile
         ? { position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1, overflow:'hidden' }
         : { flex:1, height:'100%', position:'relative' } }>
-        {mapEl}
-        <PlaceSearchBar mapRef={mapRef} drawGroupRef={drawGroupRef} aoiBoundsRef={aoiBoundsRef} onAreaDrawn={handlePlaceSelected} isMobile={isMobile} />
-        <MapOverlay result={result} isLoading={isLoading} drawnAOI={drawnAOI} isMobile={isMobile} />
+        {/* mapEl stays mounted even while the Orbital tab is active — just
+            hidden — so switching tabs never remounts (and thus never
+            destroys) the underlying Leaflet map instance, same reasoning
+            as the mobile/desktop layout comment above. */}
+        <div style={{ display: tab === 'Orbital' ? 'none' : 'contents' }}>
+          {mapEl}
+          <PlaceSearchBar mapRef={mapRef} drawGroupRef={drawGroupRef} aoiBoundsRef={aoiBoundsRef} onAreaDrawn={handlePlaceSelected} isMobile={isMobile} />
+          <MapOverlay result={result} isLoading={isLoading} drawnAOI={drawnAOI} isMobile={isMobile} />
+        </div>
+        {tab === 'Orbital' && (
+          <div style={{ position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1 }}>
+            <Suspense fallback={
+              <div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center',
+                fontFamily:'monospace', fontSize:13, color:'#7a8088', background:'#05070a' }}>
+                Loading orbital view…
+              </div>
+            }>
+              <OrbitalGlobe apiUrl={API_URL} />
+            </Suspense>
+          </div>
+        )}
       </div>
 
       {!isMobile && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{intelPanelEl}</div>}

@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     AIS_BRIDGE_URL: str = ""
     AIS_BRIDGE_API_KEY: str = ""
 
+    # OpenSky aircraft tracking (free — register at opensky-network.org,
+    # Account -> API Clients, uses OAuth2 client-credentials. Falls back to
+    # anonymous access if unset, which works but is unreliable from a
+    # data-center IP — see fetchers.py fetch_opensky for why)
+    OPENSKY_CLIENT_ID: str = ""
+    OPENSKY_CLIENT_SECRET: str = ""
+
     # Job TTL
     JOB_TTL_SECONDS: int = 3600
 
