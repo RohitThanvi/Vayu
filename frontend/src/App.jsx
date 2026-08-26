@@ -1149,7 +1149,6 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
           <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
             <WeatherLayerToggles active={weatherLayers} onToggle={onToggleWeather} />
             <div style={{ fontSize:13, color:S.text3, lineHeight:1.6 }}>
-              Each layer can be switched on independently — click a button to toggle it on the map, click again to remove it. The gradient bar under an active layer is its real color-to-value key. Note: on the temperature scale, purple is the <em>cold</em> end (below −40°C) — Antarctica showing purple is correct, not a bug.
             </div>
             {!OWM_API_KEY && (
               <div style={{ background:'rgba(201,147,58,0.06)', border:'1px solid rgba(201,147,58,0.25)', padding:'10px 12px', fontSize:13, color:S.text2, lineHeight:1.6 }}>
@@ -1159,13 +1158,11 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:14 }}>
               <SatelliteLayerToggles active={satelliteLayers} onToggle={onToggleSatelliteLayer} loadingKey={satelliteLoadingKey} currentZoom={mapZoom} />
               <div style={{ fontSize:13, color:S.text3, lineHeight:1.6, marginTop:9 }}>
-                Whole-map satellite imagery layers, similar to ISRO Bhuvan's layer switcher — the first toggle of each layer takes a few seconds to build server-side, then stays cached for 6 hours.
               </div>
             </div>
             <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:14 }}>
               <TrackingLayerToggles active={trackingLayers} onToggle={onToggleTrackingLayer} />
               <div style={{ fontSize:13, color:S.text3, lineHeight:1.6, marginTop:9 }}>
-                Live aircraft and satellite positions from free, keyless public sources — off by default, only fetched while toggled on.
               </div>
             </div>
             <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:14 }}>
@@ -1188,10 +1185,10 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:12 }}>
               <div style={{ fontSize:15, fontFamily:S.mono, color:S.accent, letterSpacing:2, marginBottom:10, textTransform:'uppercase' }}>Live Intel Sources</div>
               {[
-                ['USGS','Earthquakes M3.5+, global, every 5 min'],
-                ['NASA FIRMS','Active fire hotspots, every 15 min'],
-                ['GDELT','Geolocated news events, every 10 min'],
-                ['ACLED','Armed conflict events (key required)'],
+                ['USGS','Earthquakes M3.5+, global'],
+                ['NASA FIRMS','Active fire hotspots'],
+                ['GDELT','Geolocated news events'],
+                ['ACLED','Armed conflict events'],
               ].map(([src,desc]) => (
                 <div key={src} style={{ marginBottom:8 }}>
                   <div style={{ fontSize:15, fontFamily:S.mono, color:INTEL_COLORS[src]?.border||S.accent, marginBottom:2 }}>{src}</div>
