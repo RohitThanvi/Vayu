@@ -3,6 +3,8 @@ import { Analytics } from '@vercel/analytics/react';
 import IntelPanel from './components/IntelPanel';
 import AgriPanel from './components/AgriPanel';
 import { useVesselTracker } from './hooks/useVesselTracker';
+import { useAircraftTracker } from './hooks/useAircraftTracker';
+import { useSatelliteTracker } from './hooks/useSatelliteTracker';
 
 const MOBILE_BREAKPOINT = 860;
 
@@ -38,6 +40,13 @@ const WEATHER_LAYERS = {
 
 // Bhuvan/GEE-Explorer-style toggleable satellite imagery layers — each
 // backed by a cached GEE tile URL fetched from /api/v1/layers/{key}.
+// GEE's per-tile compute cost for these four layers is structurally too
+// expensive at low/world zoom (huge geographic area per tile -> huge
+// intersecting image count) — not just slow, it hangs for 2+ minutes and
+// then effectively never resolves. Gate the toggle + the tile layer itself
+// at a zoom where a tile covers a small enough area to compute promptly.
+const SATELLITE_MIN_ZOOM = 6;
+
 const SATELLITE_LAYERS = {
   true_color: { label: 'True Color',      icon: 'map',    opacity: 0.85, desc: 'Sentinel-2, recent ~30 days' },
   ndvi:       { label: 'NDVI Vegetation', icon: 'leaf',   opacity: 0.75, desc: 'Vegetation health index' },
@@ -181,6 +190,23 @@ const ICONS = {
       <line x1="9" y1="11.6" x2="9" y2="2.4" stroke="#ffffff" stroke-width="1.3"/>
       <line x1="9" y1="3.6" x2="13.4" y2="5.8" stroke="#ffffff" stroke-width="1"/>
     </svg>`,
+  // AIRCRAFT — minimal top-down plane silhouette, rotated to heading in
+  // createAircraftMarker the same way vessel icons rotate to course.
+  PLANE: (fill, border) => `
+    <svg viewBox="0 0 18 18" width="18" height="18">
+      <path d="M9 1 L10 6.5 L16.5 10 L16.5 11.6 L10 9.6 L10 13.6 L12.6 15.4 L12.6 16.6 L9 15.6 L5.4 16.6 L5.4 15.4 L8 13.6 L8 9.6 L1.5 11.6 L1.5 10 L8 6.5 Z"
+        fill="${fill}" stroke="#ffffff" stroke-width="0.9"/>
+    </svg>`,
+  // SATELLITE — small body with two solar-panel wings, non-directional (an
+  // orbital position marker, not a heading-indicator like the plane/ships)
+  SATELLITE: (fill, border) => `
+    <svg viewBox="0 0 18 18" width="16" height="16">
+      <rect x="7" y="7" width="4" height="4" rx="0.6" fill="${fill}" stroke="#ffffff" stroke-width="0.9"/>
+      <rect x="0.8" y="7.4" width="4.6" height="3.2" fill="${fill}" opacity="0.85" stroke="#ffffff" stroke-width="0.6"/>
+      <rect x="12.6" y="7.4" width="4.6" height="3.2" fill="${fill}" opacity="0.85" stroke="#ffffff" stroke-width="0.6"/>
+      <line x1="5.4" y1="9" x2="7" y2="9" stroke="#ffffff" stroke-width="0.7"/>
+      <line x1="11" y1="9" x2="12.6" y2="9" stroke="#ffffff" stroke-width="0.7"/>
+    </svg>`,
 };
 
 const INTEL_ICON_FOR_SOURCE = {
@@ -312,6 +338,8 @@ function Icon({ name, size = 16, style }) {
     case 'map':        return <svg {...p}><path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><path d="M9 4v14M15 6v14"/></svg>;
     case 'sliders':    return <svg {...p}><path d="M4 6h9M17 6h3M4 18h3M11 18h9"/><circle cx="14" cy="6" r="2.2"/><circle cx="8" cy="18" r="2.2"/></svg>;
     case 'radio':      return <svg {...p}><circle cx="12" cy="12" r="2.2"/><path d="M8.3 15.7a5.5 5.5 0 0 1 0-7.4M15.7 8.3a5.5 5.5 0 0 1 0 7.4M5.5 18.5a10 10 0 0 1 0-13M18.5 5.5a10 10 0 0 1 0 13"/></svg>;
+    case 'plane':      return <svg {...p}><path d="M2.5 12.5 21 6.5v3.6L13 14v5.3l3 2.2v1.4l-4-1.3-4 1.3v-1.4l3-2.2V14L2.5 16.1Z"/></svg>;
+    case 'satellite-dish': return <svg {...p}><path d="M4 14a8 8 0 0 1 8-8"/><path d="M4 14a8 8 0 0 0 8 8"/><circle cx="12" cy="12" r="1.7"/><path d="M12 12 20 5M17 4l3 3-3 3"/></svg>;
     case 'close':      return <svg {...p}><path d="M6 6l12 12M18 6 6 18"/></svg>;
     case 'ship':       return <svg {...p}><path d="M4 15h16l-2 4H6Z"/><path d="M6 15V8h8l3 7M9 8V4h2v4"/></svg>;
     default:           return null;
@@ -365,6 +393,41 @@ function createVesselMarker(vessel) {
   return L.marker([vessel.lat, vessel.lon], { icon, zIndexOffset: 50 });
 }
 
+// ── Aircraft marker — plane icon rotated to heading (OpenSky) ───────────────
+const AIRCRAFT_COLOR = { fill: '#e8c15c', border: '#f5d98a' };   // amber — distinct from vessel/intel palettes
+function createAircraftMarker(ac) {
+  const svg = ICONS.PLANE(AIRCRAFT_COLOR.fill, AIRCRAFT_COLOR.border);
+  const heading = typeof ac.heading === 'number' ? ac.heading : 0;
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="
+      transform: rotate(${heading}deg);
+      filter: drop-shadow(0 0 3px ${AIRCRAFT_COLOR.fill}bb) drop-shadow(0 0 1px #000000aa);
+      opacity: ${ac.on_ground ? 0.55 : 1};
+      display:flex; align-items:center; justify-content:center;
+    ">${svg}</div>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  });
+  return L.marker([ac.lat, ac.lon], { icon, zIndexOffset: 40 });
+}
+
+// ── Satellite marker — non-directional, orbital position only ──────────────
+const SATELLITE_COLOR = { fill: '#9b8ce8', border: '#c3b8f5' };   // violet — distinct from aircraft/vessel/intel
+function createSatelliteMarker(sat) {
+  const svg = ICONS.SATELLITE(SATELLITE_COLOR.fill, SATELLITE_COLOR.border);
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="
+      filter: drop-shadow(0 0 3px ${SATELLITE_COLOR.fill}bb) drop-shadow(0 0 1px #000000aa);
+      display:flex; align-items:center; justify-content:center;
+    ">${svg}</div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
+  return L.marker([sat.lat, sat.lon], { icon, zIndexOffset: 30 });
+}
+
 // ── Weather overlay toggles — click a button, that layer switches on/off ────
 function WeatherLayerToggles({ active, onToggle }) {
   return (
@@ -405,21 +468,30 @@ function WeatherLayerToggles({ active, onToggle }) {
   );
 }
 
-function SatelliteLayerToggles({ active, onToggle, loadingKey }) {
+function SatelliteLayerToggles({ active, onToggle, loadingKey, currentZoom }) {
+  const zoomBlocked = currentZoom != null && currentZoom < SATELLITE_MIN_ZOOM;
   return (
     <div>
       <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, marginBottom:9, textTransform:'uppercase' }}>Satellite Layers</div>
+      {zoomBlocked && (
+        <div style={{ fontSize:11, color:S.text3, fontFamily:S.mono, marginBottom:9, padding:'8px 10px',
+          border:`1px solid ${S.border}`, borderRadius:3, background:S.surface2, lineHeight:1.4 }}>
+          Zoom in to load satellite layers — these render per-tile from live imagery and world view is too large an area to compute.
+        </div>
+      )}
       <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
         {Object.entries(SATELLITE_LAYERS).map(([key, meta]) => {
           const on = !!active[key];
           const loading = loadingKey === key;
+          const disabled = loading || (zoomBlocked && !on);
           return (
-            <button key={key} onClick={() => onToggle(key)} disabled={loading}
+            <button key={key} onClick={() => onToggle(key)} disabled={disabled}
               style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44, width:'100%',
                 fontFamily:S.mono, letterSpacing:0.3,
                 background: on ? 'rgba(126,184,212,0.10)' : S.surface2,
                 border: `1px solid ${on ? S.accent : S.border}`, borderRadius:3,
-                color: on ? S.accent : S.text2, cursor: loading ? 'wait' : 'pointer',
+                color: on ? S.accent : (disabled ? S.text3 : S.text2), cursor: disabled ? (loading ? 'wait' : 'not-allowed') : 'pointer',
+                opacity: disabled && !loading ? 0.55 : 1,
                 textAlign:'left', transition:'border-color 0.15s, background 0.15s' }}>
               <Icon name={meta.icon} size={18} style={{ flexShrink:0, opacity: on ? 1 : 0.75 }} />
               <span style={{ flex:1 }}>
@@ -435,8 +507,42 @@ function SatelliteLayerToggles({ active, onToggle, loadingKey }) {
   );
 }
 
+// ── Aircraft / satellite tracking toggles — simple two-button panel ─────────
+const TRACKING_LAYERS_META = {
+  aircraft:   { icon: 'plane',     label: 'Aircraft (OpenSky)',     desc: 'Live global flight positions, free & keyless' },
+  satellites: { icon: 'satellite-dish', label: 'Satellites (CelesTrak)', desc: 'Stations + brightest visual-magnitude satellites' },
+};
+function TrackingLayerToggles({ active, onToggle }) {
+  return (
+    <div>
+      <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, marginBottom:9, textTransform:'uppercase' }}>Live Tracking</div>
+      <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
+        {Object.entries(TRACKING_LAYERS_META).map(([key, meta]) => {
+          const on = !!active[key];
+          return (
+            <button key={key} onClick={() => onToggle(key)}
+              style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44, width:'100%',
+                fontFamily:S.mono, letterSpacing:0.3,
+                background: on ? 'rgba(184,166,232,0.10)' : S.surface2,
+                border: `1px solid ${on ? '#9b8ce8' : S.border}`, borderRadius:3,
+                color: on ? '#c3b8f5' : S.text2, cursor:'pointer',
+                textAlign:'left', transition:'border-color 0.15s, background 0.15s' }}>
+              <Icon name={meta.icon} size={18} style={{ flexShrink:0, opacity: on ? 1 : 0.75 }} />
+              <span style={{ flex:1 }}>
+                <span style={{ fontSize:14, display:'block' }}>{meta.label}</span>
+                <span style={{ fontSize:11, color:S.text3, display:'block', marginTop:1 }}>{meta.desc}</span>
+              </span>
+              <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{on ? 'ON' : 'OFF'}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Map ───────────────────────────────────────────────────────────────────────
-function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef }) {
+function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, aircraftLayerRef, orbitalLayerRef, onZoomChange }) {
   const divRef = useRef(null);
   useEffect(() => {
     if (mapRef.current) return;
@@ -453,6 +559,16 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     }).addTo(map);
     L.control.zoom({ position:'topright' }).addTo(map);
 
+    // Track zoom for the satellite-layer minZoom gate — GEE's own per-tile
+    // compute cost is structurally too expensive at low/world zoom for
+    // these four layers (huge geographic area per tile -> huge intersecting
+    // image count), so the toggle panel needs to know current zoom to warn
+    // the user instead of silently doing nothing for 2+ minutes.
+    if (onZoomChange) {
+      onZoomChange(map.getZoom());
+      map.on('zoomend', () => onZoomChange(map.getZoom()));
+    }
+
     // Intel markers layer group
     const ig = L.layerGroup().addTo(map);
     intelLayerRef.current = ig;
@@ -460,6 +576,16 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     // Vessel markers layer group (maritime/logistics tracking)
     const vg = L.layerGroup().addTo(map);
     vesselLayerRef.current = vg;
+
+    // Aircraft markers layer group (OpenSky aviation tracking) — added but
+    // not populated unless the user toggles it on (see handleToggleAircraft)
+    const ag = L.layerGroup().addTo(map);
+    aircraftLayerRef.current = ag;
+
+    // Satellite markers layer group (CelesTrak orbital tracking) — same,
+    // added empty and populated only once toggled on
+    const og = L.layerGroup().addTo(map);
+    orbitalLayerRef.current = og;
 
     const dg = new L.FeatureGroup(); map.addLayer(dg); drawGroupRef.current = dg;
     const dc = new L.Control.Draw({
@@ -857,7 +983,8 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI, aoiRegionName,
   isLoading,error,result,jobStatus, onSubmit, history,onSelectHistory, vesselStats, onClose, isMobile,
-  weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey }) {
+  weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey, mapZoom,
+  trackingLayers, onToggleTrackingLayer }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const TABS = [
@@ -1030,9 +1157,15 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
               </div>
             )}
             <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:14 }}>
-              <SatelliteLayerToggles active={satelliteLayers} onToggle={onToggleSatelliteLayer} loadingKey={satelliteLoadingKey} />
+              <SatelliteLayerToggles active={satelliteLayers} onToggle={onToggleSatelliteLayer} loadingKey={satelliteLoadingKey} currentZoom={mapZoom} />
               <div style={{ fontSize:13, color:S.text3, lineHeight:1.6, marginTop:9 }}>
                 Whole-map satellite imagery layers, similar to ISRO Bhuvan's layer switcher — the first toggle of each layer takes a few seconds to build server-side, then stays cached for 6 hours.
+              </div>
+            </div>
+            <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:14 }}>
+              <TrackingLayerToggles active={trackingLayers} onToggle={onToggleTrackingLayer} />
+              <div style={{ fontSize:13, color:S.text3, lineHeight:1.6, marginTop:9 }}>
+                Live aircraft and satellite positions from free, keyless public sources — off by default, only fetched while toggled on.
               </div>
             </div>
             <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:14 }}>
@@ -1134,6 +1267,7 @@ export default function App() {
   const [weatherLayers, setWeatherLayers] = useState({ temp:false, wind:false, pressure:false });
   const [satelliteLayers, setSatelliteLayers] = useState({ true_color:false, ndvi:false, sar:false, thermal:false });
   const [satelliteLoadingKey, setSatelliteLoadingKey] = useState(null);
+  const [mapZoom, setMapZoom] = useState(null);
 
   const mapRef          = useRef(null);
   const drawGroupRef    = useRef(null);
@@ -1149,9 +1283,21 @@ export default function App() {
   const vesselMarkersRef = useRef({});    // mmsi -> marker
   const vesselTrailsRef = useRef({});     // mmsi -> { points:[[lat,lon],...], polyline }
   const vesselPredictedRef = useRef({});  // mmsi -> { polyline, tipMarker } — forecast dead-reckoning track
+  const aircraftLayerRef = useRef(null);  // LayerGroup for aircraft markers (OpenSky)
+  const aircraftMarkersRef = useRef({});  // icao24 -> marker
+  const orbitalLayerRef = useRef(null);   // LayerGroup for satellite markers (CelesTrak)
+  const orbitalMarkersRef = useRef({});   // satellite name -> marker
 
   // Live maritime vessel tracking (AIS via aisstream.io)
   const { vessels, stats: vesselStats } = useVesselTracker(API_URL, true);
+
+  // Aircraft (OpenSky) and satellite (CelesTrak) tracking — off by default,
+  // both only poll/propagate once the user toggles the layer on (see
+  // trackingLayers), same "don't do work nobody's looking at" reasoning as
+  // the satellite-imagery basemap layers.
+  const [trackingLayers, setTrackingLayers] = useState({ aircraft: false, satellites: false });
+  const { aircraft } = useAircraftTracker(API_URL, trackingLayers.aircraft);
+  const { satellites } = useSatelliteTracker(API_URL, trackingLayers.satellites);
 
   const clearLayers = useCallback(() => {
     layersRef.current.forEach(l => { if (mapRef.current?.hasLayer(l)) mapRef.current.removeLayer(l); });
@@ -1361,6 +1507,83 @@ export default function App() {
     });
   }, [vessels]);
 
+  // ── Render/update aircraft markers when snapshot changes or layer toggled ──
+  useEffect(() => {
+    if (!aircraftLayerRef.current) return;
+    if (!trackingLayers.aircraft) {
+      // Layer switched off: clear all markers rather than leaving stale
+      // positions on the map (the hook stops polling but doesn't clear
+      // its own state, since flipping back on should show fresh data
+      // immediately, not an empty layer waiting on the next poll).
+      Object.values(aircraftMarkersRef.current).forEach(m => {
+        try { aircraftLayerRef.current.removeLayer(m); } catch(e) {}
+      });
+      aircraftMarkersRef.current = {};
+      return;
+    }
+    const seen = new Set();
+    aircraft.forEach(ac => {
+      if (typeof ac.lat !== 'number' || typeof ac.lon !== 'number') return;
+      seen.add(ac.icao24);
+      const existing = aircraftMarkersRef.current[ac.icao24];
+      if (existing) {
+        existing.setLatLng([ac.lat, ac.lon]);
+        existing.setIcon(createAircraftMarker(ac).options.icon);
+      } else {
+        const marker = createAircraftMarker(ac);
+        marker.bindPopup(
+          `<b>${ac.callsign || ac.icao24}</b><br/>${ac.origin_country || ''}<br/>` +
+          `${ac.on_ground ? 'On ground' : `Alt: ${ac.baro_altitude_m != null ? Math.round(ac.baro_altitude_m) + 'm' : '—'}`}<br/>` +
+          `Speed: ${ac.velocity_ms != null ? Math.round(ac.velocity_ms * 3.6) + ' km/h' : '—'}`
+        );
+        marker.addTo(aircraftLayerRef.current);
+        aircraftMarkersRef.current[ac.icao24] = marker;
+      }
+    });
+    Object.keys(aircraftMarkersRef.current).forEach(icao24 => {
+      if (!seen.has(icao24)) {
+        try { aircraftLayerRef.current.removeLayer(aircraftMarkersRef.current[icao24]); } catch(e) {}
+        delete aircraftMarkersRef.current[icao24];
+      }
+    });
+  }, [aircraft, trackingLayers.aircraft]);
+
+  // ── Render/update satellite markers when propagated positions change ───────
+  useEffect(() => {
+    if (!orbitalLayerRef.current) return;
+    if (!trackingLayers.satellites) {
+      Object.values(orbitalMarkersRef.current).forEach(m => {
+        try { orbitalLayerRef.current.removeLayer(m); } catch(e) {}
+      });
+      orbitalMarkersRef.current = {};
+      return;
+    }
+    const seen = new Set();
+    satellites.forEach(sat => {
+      if (typeof sat.lat !== 'number' || typeof sat.lon !== 'number') return;
+      seen.add(sat.name);
+      const existing = orbitalMarkersRef.current[sat.name];
+      if (existing) {
+        existing.setLatLng([sat.lat, sat.lon]);
+      } else {
+        const marker = createSatelliteMarker(sat);
+        marker.bindPopup(`<b>${sat.name}</b><br/>Altitude: ${Math.round(sat.alt_km)} km`);
+        marker.addTo(orbitalLayerRef.current);
+        orbitalMarkersRef.current[sat.name] = marker;
+      }
+    });
+    Object.keys(orbitalMarkersRef.current).forEach(name => {
+      if (!seen.has(name)) {
+        try { orbitalLayerRef.current.removeLayer(orbitalMarkersRef.current[name]); } catch(e) {}
+        delete orbitalMarkersRef.current[name];
+      }
+    });
+  }, [satellites, trackingLayers.satellites]);
+
+  const handleToggleTrackingLayer = useCallback((key) => {
+    setTrackingLayers(prev => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+
   // ── Handle click on feed item: fly map + highlight marker ──────────────────
   // ── Toggle a weather overlay on/off — each layer is independent ────────────
   const handleToggleWeather = useCallback((key) => {
@@ -1435,9 +1658,17 @@ export default function App() {
       return;
     }
 
-    // Turning on: fetch the cached tile URL first, then add the layer —
-    // the composite/tile-URL build can take a few seconds server-side the
-    // first time (cached for 6h after), so show a loading state rather
+    // Turning on: below SATELLITE_MIN_ZOOM, GEE's per-tile compute for a
+    // world-view area effectively never resolves (see global_layers.py) —
+    // refuse to even start the fetch rather than leaving the user staring
+    // at a loading state for 2+ minutes. The toggle button itself is
+    // already disabled at this zoom (SatelliteLayerToggles), this is the
+    // belt-and-suspenders guard against any other call path.
+    if (mapRef.current.getZoom() < SATELLITE_MIN_ZOOM) return;
+
+    // Fetch the cached tile URL first, then add the layer — the
+    // composite/tile-URL build can take a few seconds server-side the
+    // first time (cached for 12h after), so show a loading state rather
     // than optimistically flipping on like the weather tiles do.
     setSatelliteLoadingKey(key);
     fetch(`${API_URL}/api/v1/layers/${key}`)
@@ -1445,7 +1676,11 @@ export default function App() {
       .then(data => {
         if (!mapRef.current) return;
         const meta = SATELLITE_LAYERS[key];
-        const tl = L.tileLayer(data.tile_url, { opacity: meta.opacity, zIndex: 4 }).addTo(mapRef.current);
+        // minZoom on the Leaflet layer itself: if the user zooms back out
+        // to world view while this layer is on, Leaflet simply stops
+        // requesting tiles below this zoom instead of re-triggering the
+        // same expensive-at-low-zoom GEE compute.
+        const tl = L.tileLayer(data.tile_url, { opacity: meta.opacity, zIndex: 4, minZoom: SATELLITE_MIN_ZOOM }).addTo(mapRef.current);
         satelliteTileRefs.current[key] = tl;
         setSatelliteLayers(prev => ({ ...prev, [key]: true }));
       })
@@ -1564,7 +1799,8 @@ export default function App() {
       vesselStats={vesselStats}
       weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
-      satelliteLoadingKey={satelliteLoadingKey}
+      satelliteLoadingKey={satelliteLoadingKey} mapZoom={mapZoom}
+      trackingLayers={trackingLayers} onToggleTrackingLayer={handleToggleTrackingLayer}
       isMobile={isMobile} onClose={() => setMobilePanel('map')} apiUrl={API_URL} mapRef={mapRef} />
   );
 
@@ -1582,7 +1818,7 @@ export default function App() {
   );
 
   const mapEl = (
-    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} />
+    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} aircraftLayerRef={aircraftLayerRef} orbitalLayerRef={orbitalLayerRef} onZoomChange={setMapZoom} />
   );
 
   // Single tree for both layouts — the map element's position/type never changes
