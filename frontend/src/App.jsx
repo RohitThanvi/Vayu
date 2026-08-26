@@ -1008,14 +1008,13 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI, aoiRegionName,
-  isLoading,error,result,jobStatus, onSubmit, history,onSelectHistory, vesselStats, onClose, isMobile,
+  isLoading,error,result,jobStatus, onSubmit, vesselStats, onClose, isMobile,
   weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey, mapZoom,
   trackingLayers, onToggleTrackingLayer }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const TABS = [
     { id:'Analyze',  icon:'target' },
-    { id:'History',  icon:'clock' },
     { id:'Maritime', icon:'anchor' },
     { id:'Weather',  icon:'thermo' },
     { id:'Agri',     icon:'leaf' },
@@ -1096,22 +1095,6 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             )}
             {result && <ResultsPanel result={result} drawnAOI={drawnAOI} apiUrl={apiUrl} />}
           </>
-        )}
-        {tab === 'History' && (
-          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-            <div style={{ fontSize:15, color:S.text3, fontFamily:S.mono, letterSpacing:2, marginBottom:4 }}>{history.length} ANALYSES</div>
-            {history.length === 0 && <div style={{ textAlign:'center', padding:'24px 0', fontSize:15, color:S.text3, fontFamily:S.mono }}>NO ANALYSES YET</div>}
-            {history.map((item,i) => {
-              const hm = METRICS_META[item.metric]||{ label:item.metric, color:S.accent };
-              return (
-                <button key={i} onClick={() => { setTab('Analyze'); onSelectHistory(item); }}
-                  style={{ textAlign:'left', padding:'9px 11px', background:S.surface2, border:`1px solid ${S.border}`, cursor:'pointer', width:'100%' }}>
-                  <div style={{ fontSize:15, fontFamily:S.mono, color:hm.color, letterSpacing:1, marginBottom:4, textTransform:'uppercase' }}>{hm.label}</div>
-                  <div style={{ fontSize:14, color:S.text3 }}>{item.summary?.slice(0,60)}...</div>
-                </button>
-              );
-            })}
-          </div>
         )}
         {tab === 'Maritime' && (
           <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
@@ -1300,7 +1283,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError]         = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
-  const [history, setHistory]     = useState([]);
+  const [, setHistory]     = useState([]);   // history tab removed from UI for now — still tracked in case it comes back
   const [weatherLayers, setWeatherLayers] = useState({ temp:false, wind:false, pressure:false });
   const [satelliteLayers, setSatelliteLayers] = useState({ true_color:false, ndvi:false, sar:false, thermal:false });
   const [satelliteLoadingKey, setSatelliteLoadingKey] = useState(null);
@@ -1847,8 +1830,7 @@ export default function App() {
     <Sidebar tab={tab} setTab={setTab} queryText={queryText} setQueryText={setQueryText}
       selMetric={selMetric} setSelMetric={setSelMetric} drawnAOI={drawnAOI} aoiRegionName={aoiRegionName}
       isLoading={isLoading} error={error} result={result} jobStatus={jobStatus}
-      onSubmit={handleSubmit} history={history}
-      onSelectHistory={r => { setResult(r); clearLayers(); }}
+      onSubmit={handleSubmit}
       vesselStats={vesselStats}
       weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
