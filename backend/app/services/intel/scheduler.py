@@ -11,6 +11,9 @@ Poll intervals (sensible defaults):
   AIS bridge  every 60 sec (vessel positions; see services/intel/README or
               ais-bridge/README.md for why this is a REST poll against our
               own bridge service instead of a direct AISStream connection)
+  OpenSky     every 90 sec (global aircraft state-vector snapshot, free and
+              keyless; slightly slower than AIS out of courtesy to the
+              anonymous tier's rate limit)
   Wind field  every 45 min (animated wind vector grid from Open-Meteo,
               refreshed roughly as often as their forecast models update —
               see services/weather/wind_field.py)
@@ -21,9 +24,11 @@ import asyncio
 import logging
 from datetime import datetime
 
-from .fetchers import fetch_all_intel, fetch_usgs, fetch_firms, fetch_gdelt, fetch_acled
+from .fetchers import fetch_all_intel, fetch_usgs, fetch_firms, fetch_gdelt, fetch_acled, fetch_opensky
 from .store import intel_store
 from .vessel_store import vessel_store
+from .aircraft_store import aircraft_store
+from . import satellite_tle
 from ..weather.wind_field import wind_field_store
 
 import httpx
@@ -36,7 +41,12 @@ INTERVAL_FIRMS  = 15 * 60
 INTERVAL_GDELT  = 10 * 60
 INTERVAL_ACLED  = 60 * 60
 INTERVAL_AIS    = 60
+INTERVAL_AIRCRAFT = 90   # OpenSky anonymous tier is rate-limited; global
+                          # snapshot is heavier than AIS bridge polling, so
+                          # slightly longer interval than AIS out of courtesy
+                          # to the free, keyless tier
 INTERVAL_WIND   = 45 * 60
+INTERVAL_TLE    = 6 * 60 * 60   # matches satellite_tle.CACHE_TTL_SECONDS
 INTERVAL_PURGE  = 30 * 60
 
 
@@ -81,7 +91,9 @@ class IntelScheduler:
             asyncio.create_task(self._poll_gdelt(),  name="poll-gdelt"),
             asyncio.create_task(self._poll_acled(),  name="poll-acled"),
             asyncio.create_task(self._poll_ais(),    name="poll-ais"),
+            asyncio.create_task(self._poll_aircraft(), name="poll-aircraft"),
             asyncio.create_task(self._poll_wind(),   name="poll-wind"),
+            asyncio.create_task(self._poll_tle(),    name="poll-tle"),
             asyncio.create_task(self._purge_loop(),  name="purge-loop"),
         ]
         logger.info(f"Intel scheduler: {len(self._tasks)} polling tasks started")
@@ -168,6 +180,20 @@ class IntelScheduler:
                 logger.error(f"AIS poll error: {e}")
             await asyncio.sleep(INTERVAL_AIS)
 
+    async def _poll_aircraft(self):
+        await asyncio.sleep(45)   # small offset so not all fire at once
+        while self._running:
+            try:
+                async with httpx.AsyncClient(
+                    headers={"User-Agent": "VAYU-Intelligence-Terminal/2.0"}, timeout=20
+                ) as client:
+                    aircraft = await fetch_opensky(client)
+                await aircraft_store.load_snapshot(aircraft)
+                logger.debug(f"Aircraft poll: {len(aircraft)} aircraft")
+            except Exception as e:
+                logger.error(f"Aircraft poll error: {e}")
+            await asyncio.sleep(INTERVAL_AIRCRAFT)
+
     async def _poll_wind(self):
         await asyncio.sleep(15)   # small offset so not all fire at once
         while self._running:
@@ -177,11 +203,26 @@ class IntelScheduler:
                 logger.error(f"wind field poll error: {e}")
             await asyncio.sleep(INTERVAL_WIND)
 
+    async def _poll_tle(self):
+        # Fetch immediately on startup (small offset so it's not first in
+        # line with everything else), then on the normal interval — TLEs
+        # are near-static within a 6h window so there's no benefit to a
+        # tighter startup fetch the way USGS/FIRMS get one.
+        await asyncio.sleep(10)
+        while self._running:
+            try:
+                count = await satellite_tle.refresh()
+                logger.info(f"TLE poll: {count} satellites cached")
+            except Exception as e:
+                logger.error(f"TLE poll error: {e}")
+            await asyncio.sleep(INTERVAL_TLE)
+
     async def _purge_loop(self):
         while self._running:
             await asyncio.sleep(INTERVAL_PURGE)
             try:
                 await intel_store.purge_expired()
+                await aircraft_store.prune_stale()
             except Exception as e:
                 logger.error(f"Purge error: {e}")
 

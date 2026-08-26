@@ -576,6 +576,70 @@ async def fetch_acled(
     return events
 
 
+# ── OpenSky Network aircraft snapshot ────────────────────────────────────────
+# Free, keyless global state-vector snapshot. Anonymous tier is rate-limited
+# (OpenSky recommends no more than one call per ~10s; the scheduler polls far
+# less often than that — see INTERVAL_AIRCRAFT). Returns aircraft dicts in
+# aircraft_store's shape, not IntelEvents — this is a snapshot poll like the
+# AIS bridge, not a discrete-event source, so it's consumed directly by
+# aircraft_store.load_snapshot() rather than going through intel_store.
+OPENSKY_URL = "https://opensky-network.org/api/states/all"
+
+# OpenSky state vector array indices (per their documented schema) —
+# named here so the parsing below isn't a wall of magic numbers.
+_OS_ICAO24, _OS_CALLSIGN, _OS_ORIGIN_COUNTRY = 0, 1, 2
+_OS_LON, _OS_LAT, _OS_BARO_ALT = 5, 6, 7
+_OS_ON_GROUND, _OS_VELOCITY, _OS_HEADING = 8, 9, 10
+_OS_VERT_RATE = 11
+
+
+async def fetch_opensky(client: httpx.AsyncClient) -> list[dict]:
+    """Fetch the current global OpenSky state-vector snapshot.
+
+    Skips entries with no position fix (lat/lon null — aircraft OpenSky
+    knows about but hasn't received a position report for recently) since
+    those can't be plotted, same as vessel_store only keeping entries with
+    lat/lon set.
+    """
+    try:
+        resp = await client.get(OPENSKY_URL, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.error(f"OpenSky fetch error: {e}")
+        return []
+
+    states = data.get("states") or []
+    aircraft = []
+    for s in states:
+        try:
+            lat, lon = s[_OS_LAT], s[_OS_LON]
+            if lat is None or lon is None:
+                continue
+            icao24 = s[_OS_ICAO24]
+            if not icao24:
+                continue
+            callsign = (s[_OS_CALLSIGN] or "").strip()
+            aircraft.append({
+                "icao24": icao24,
+                "callsign": callsign or icao24.upper(),
+                "origin_country": s[_OS_ORIGIN_COUNTRY],
+                "lat": lat,
+                "lon": lon,
+                "baro_altitude_m": s[_OS_BARO_ALT],
+                "on_ground": bool(s[_OS_ON_GROUND]),
+                "velocity_ms": s[_OS_VELOCITY],
+                "heading": s[_OS_HEADING],
+                "vertical_rate_ms": s[_OS_VERT_RATE],
+                "last_update": datetime.utcnow().isoformat() + "Z",
+            })
+        except (IndexError, TypeError):
+            continue
+
+    logger.info(f"OpenSky: fetched {len(aircraft)} aircraft with position")
+    return aircraft
+
+
 # ── Unified fetch runner ──────────────────────────────────────────────────────
 async def fetch_all_intel(
     acled_email: str = "",

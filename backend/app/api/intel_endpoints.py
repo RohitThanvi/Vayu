@@ -6,6 +6,9 @@ REST:
   GET  /api/v1/intel/events/aoi      — events within a bounding box
   GET  /api/v1/intel/stats           — store statistics
   GET  /api/v1/intel/sources         — available sources and status
+  GET  /api/v1/intel/aircraft        — currently tracked aircraft (OpenSky)
+  GET  /api/v1/intel/aircraft/stats  — aviation tracking statistics
+  GET  /api/v1/intel/satellites/tle  — cached satellite orbital elements (CelesTrak)
   GET  /api/v1/intel/wind-field      — animated wind vector grid (U/V components)
 
 WebSocket:
@@ -38,6 +41,8 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, HTTPExcept
 from ..services.intel.store import intel_store
 from ..services.intel.scheduler import get_scheduler
 from ..services.intel.vessel_store import vessel_store, CATEGORY_LABELS
+from ..services.intel.aircraft_store import aircraft_store
+from ..services.intel import satellite_tle
 from ..services.weather.wind_field import wind_field_store
 
 logger = logging.getLogger(__name__)
@@ -120,7 +125,8 @@ async def get_sources():
         {"id": "NASA FIRMS", "name": "NASA FIRMS Fire",   "status": "live",    "auth": False, "count": by_source.get("NASA FIRMS", 0), "interval_min": 15},
         {"id": "GDELT",      "name": "GDELT News Events", "status": "live",    "auth": False, "count": by_source.get("GDELT", 0),      "interval_min": 10},
         {"id": "ACLED",      "name": "ACLED Conflict",    "status": "standby", "auth": True,  "count": by_source.get("ACLED", 0),      "interval_min": 60},
-        {"id": "OpenSky",    "name": "OpenSky Aviation",  "status": "planned", "auth": False, "count": 0, "interval_min": 5},
+        {"id": "OpenSky",    "name": "OpenSky Aviation",  "status": "live",    "auth": False, "count": aircraft_store.get_stats().get("active_aircraft", 0), "interval_min": 1.5},
+        {"id": "CelesTrak",  "name": "CelesTrak Satellites", "status": "live", "auth": False, "count": satellite_tle.get_satellites().get("count", 0), "interval_min": 360},
         {"id": "AISHub",     "name": "AISHub Maritime",   "status": "planned", "auth": True,  "count": 0, "interval_min": 5},
         {"id": "GDACS",      "name": "GDACS Disasters",   "status": "planned", "auth": False, "count": 0, "interval_min": 30},
         {"id": "ISRO",       "name": "ISRO Bhuvan",       "status": "planned", "auth": True,  "count": 0, "interval_min": 60},
@@ -267,6 +273,46 @@ async def get_chokepoints():
             for name, bbox in CHOKEPOINTS.items()
         ]
     }
+
+
+# ── Aviation Tracking (OpenSky) ────────────────────────────────────────────────
+
+@router.get("/aircraft", summary="Get currently tracked aircraft")
+async def get_aircraft(
+    min_lat: Optional[float] = Query(None),
+    min_lon: Optional[float] = Query(None),
+    max_lat: Optional[float] = Query(None),
+    max_lon: Optional[float] = Query(None),
+    on_ground: Optional[bool] = Query(None, description="Filter to airborne (false) or on-ground (true) only"),
+    limit: int = Query(2000, ge=1, le=8000),
+):
+    bbox = None
+    if all(v is not None for v in [min_lat, min_lon, max_lat, max_lon]):
+        bbox = (min_lat, min_lon, max_lat, max_lon)
+
+    aircraft = aircraft_store.query(bbox=bbox, on_ground=on_ground, limit=limit)
+    return {
+        "count": len(aircraft),
+        "aircraft": aircraft,
+    }
+
+
+@router.get("/aircraft/stats", summary="Aviation tracking statistics")
+async def get_aircraft_stats():
+    return aircraft_store.get_stats()
+
+
+# ── Satellite Tracking (CelesTrak TLEs, propagated client-side) ───────────────
+
+@router.get("/satellites/tle", summary="Cached satellite orbital elements (TLEs)")
+async def get_satellite_tles():
+    """Returns raw TLE data for a curated set of satellites (space stations
+    + CelesTrak's 'visual' brightest-objects group). Position is NOT
+    computed here — the frontend propagates each satellite's live position
+    from these elements via SGP4 (satellite.js), refreshed independently of
+    this endpoint. Cached server-side; refreshes every ~6h since TLEs don't
+    meaningfully change faster than that for display purposes."""
+    return satellite_tle.get_satellites()
 
 
 @router.get("/wind-field", summary="Animated wind vector grid (U/V components)")
