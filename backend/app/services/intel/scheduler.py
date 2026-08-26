@@ -195,7 +195,7 @@ class IntelScheduler:
         while self._running:
             try:
                 async with httpx.AsyncClient(
-                    headers={"User-Agent": "VAYU-Intelligence-Terminal/2.0"}, timeout=20
+                    headers={"User-Agent": "VAYU-Intelligence-Terminal/2.0"}
                 ) as client:
                     aircraft = await fetch_opensky(
                         client,
@@ -203,9 +203,18 @@ class IntelScheduler:
                         client_secret=self.opensky_client_secret,
                     )
                 await aircraft_store.load_snapshot(aircraft)
+                aircraft_store.record_success()
                 logger.debug(f"Aircraft poll: {len(aircraft)} aircraft")
             except Exception as e:
+                # fetch_opensky re-raises on failure (see its own comment)
+                # specifically so this is reachable and gets recorded —
+                # a repeated ConnectTimeout here despite valid credentials
+                # points at a network-level block (e.g. OpenSky blocking
+                # this host's datacenter IP range), not something a code
+                # fix alone resolves. Recorded on aircraft_store so
+                # /api/v1/intel/sources surfaces it without needing log access.
                 logger.error(f"Aircraft poll error: {type(e).__name__}: {e}")
+                aircraft_store.record_error(f"{type(e).__name__}: {e}".rstrip(": "))
             await asyncio.sleep(INTERVAL_AIRCRAFT)
 
     async def _poll_wind(self):

@@ -9,7 +9,6 @@ import AgriPanel from './components/AgriPanel';
 const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
 import { useVesselTracker } from './hooks/useVesselTracker';
 import { useAircraftTracker } from './hooks/useAircraftTracker';
-import { useSatelliteTracker } from './hooks/useSatelliteTracker';
 
 const MOBILE_BREAKPOINT = 860;
 
@@ -436,22 +435,6 @@ function createAircraftMarker(ac) {
   return L.marker([ac.lat, ac.lon], { icon, zIndexOffset: 40 });
 }
 
-// ── Satellite marker — non-directional, orbital position only ──────────────
-const SATELLITE_COLOR = { fill: '#9b8ce8', border: '#c3b8f5' };   // violet — distinct from aircraft/vessel/intel
-function createSatelliteMarker(sat) {
-  const svg = ICONS.SATELLITE(SATELLITE_COLOR.fill, SATELLITE_COLOR.border);
-  const icon = L.divIcon({
-    className: '',
-    html: `<div style="
-      filter: drop-shadow(0 0 3px ${SATELLITE_COLOR.fill}bb) drop-shadow(0 0 1px #000000aa);
-      display:flex; align-items:center; justify-content:center;
-    ">${svg}</div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
-  });
-  return L.marker([sat.lat, sat.lon], { icon, zIndexOffset: 30 });
-}
-
 // ── Weather overlay toggles — click a button, that layer switches on/off ────
 function WeatherLayerToggles({ active, onToggle }) {
   return (
@@ -536,7 +519,6 @@ function SatelliteLayerToggles({ active, onToggle, loadingKey, currentZoom }) {
 // ── Aircraft / satellite tracking toggles — simple two-button panel ─────────
 const TRACKING_LAYERS_META = {
   aircraft:   { icon: 'plane',     label: 'Aircraft (OpenSky)',     desc: 'Live global flight positions, free & keyless' },
-  satellites: { icon: 'satellite-dish', label: 'Satellites (CelesTrak)', desc: 'Stations + brightest visual-magnitude satellites' },
 };
 function TrackingLayerToggles({ active, onToggle }) {
   return (
@@ -568,7 +550,7 @@ function TrackingLayerToggles({ active, onToggle }) {
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────────
-function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, aircraftLayerRef, orbitalLayerRef, onZoomChange }) {
+function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, aircraftLayerRef, onZoomChange }) {
   const divRef = useRef(null);
   useEffect(() => {
     if (mapRef.current) return;
@@ -607,11 +589,6 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     // not populated unless the user toggles it on (see handleToggleAircraft)
     const ag = L.layerGroup().addTo(map);
     aircraftLayerRef.current = ag;
-
-    // Satellite markers layer group (CelesTrak orbital tracking) — same,
-    // added empty and populated only once toggled on
-    const og = L.layerGroup().addTo(map);
-    orbitalLayerRef.current = og;
 
     const dg = new L.FeatureGroup(); map.addLayer(dg); drawGroupRef.current = dg;
     const dc = new L.Control.Draw({
@@ -1185,12 +1162,12 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
           <div style={{ padding:'16px 14px', display:'flex', flexDirection:'column', gap:12 }}>
             <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, textTransform:'uppercase' }}>Orbital View</div>
             <div style={{ fontSize:13, color:S.text2, lineHeight:1.6 }}>
-              A 3D Earth view showing live satellite positions — space stations and the brightest visual-magnitude
-              satellites, from the same CelesTrak orbital elements used on the 2D map, propagated live in your
-              browser (SGP4).
+              A 3D Earth view of live satellite positions — space stations and the brightest visual-magnitude
+              satellites, from CelesTrak orbital elements propagated live in your browser (SGP4). This is where
+              satellite tracking lives now — a flat dot on the 2D map was a poor fit for something that's actually in orbit.
             </div>
             <div style={{ fontSize:12, color:S.text3, lineHeight:1.6 }}>
-              Drag to rotate, scroll to zoom. Red points are space stations, violet points are other tracked satellites.
+              Drag to rotate, scroll to zoom. Click a point — or search the list on the right — to see its name, live lat/lon, and altitude. Red points are space stations, violet points are other tracked satellites.
             </div>
           </div>
         )}
@@ -1305,19 +1282,18 @@ export default function App() {
   const vesselPredictedRef = useRef({});  // mmsi -> { polyline, tipMarker } — forecast dead-reckoning track
   const aircraftLayerRef = useRef(null);  // LayerGroup for aircraft markers (OpenSky)
   const aircraftMarkersRef = useRef({});  // icao24 -> marker
-  const orbitalLayerRef = useRef(null);   // LayerGroup for satellite markers (CelesTrak)
-  const orbitalMarkersRef = useRef({});   // satellite name -> marker
 
   // Live maritime vessel tracking (AIS via aisstream.io)
   const { vessels, stats: vesselStats } = useVesselTracker(API_URL, true);
 
-  // Aircraft (OpenSky) and satellite (CelesTrak) tracking — off by default,
-  // both only poll/propagate once the user toggles the layer on (see
-  // trackingLayers), same "don't do work nobody's looking at" reasoning as
-  // the satellite-imagery basemap layers.
-  const [trackingLayers, setTrackingLayers] = useState({ aircraft: false, satellites: false });
+  // Aircraft (OpenSky) tracking on the 2D map — off by default, only polls
+  // once toggled on, same "don't do work nobody's looking at" reasoning as
+  // the satellite-imagery basemap layers. Satellites are NOT on the 2D map
+  // at all — they only live in the Orbital tab's 3D globe now, since a flat
+  // dot on a 2D map is a poor representation of an object in orbit and the
+  // 3D view is a genuinely better fit (see OrbitalGlobe.jsx).
+  const [trackingLayers, setTrackingLayers] = useState({ aircraft: false });
   const { aircraft } = useAircraftTracker(API_URL, trackingLayers.aircraft);
-  const { satellites } = useSatelliteTracker(API_URL, trackingLayers.satellites);
 
   const clearLayers = useCallback(() => {
     layersRef.current.forEach(l => { if (mapRef.current?.hasLayer(l)) mapRef.current.removeLayer(l); });
@@ -1567,38 +1543,6 @@ export default function App() {
       }
     });
   }, [aircraft, trackingLayers.aircraft]);
-
-  // ── Render/update satellite markers when propagated positions change ───────
-  useEffect(() => {
-    if (!orbitalLayerRef.current) return;
-    if (!trackingLayers.satellites) {
-      Object.values(orbitalMarkersRef.current).forEach(m => {
-        try { orbitalLayerRef.current.removeLayer(m); } catch(e) {}
-      });
-      orbitalMarkersRef.current = {};
-      return;
-    }
-    const seen = new Set();
-    satellites.forEach(sat => {
-      if (typeof sat.lat !== 'number' || typeof sat.lon !== 'number') return;
-      seen.add(sat.name);
-      const existing = orbitalMarkersRef.current[sat.name];
-      if (existing) {
-        existing.setLatLng([sat.lat, sat.lon]);
-      } else {
-        const marker = createSatelliteMarker(sat);
-        marker.bindPopup(`<b>${sat.name}</b><br/>Altitude: ${Math.round(sat.alt_km)} km`);
-        marker.addTo(orbitalLayerRef.current);
-        orbitalMarkersRef.current[sat.name] = marker;
-      }
-    });
-    Object.keys(orbitalMarkersRef.current).forEach(name => {
-      if (!seen.has(name)) {
-        try { orbitalLayerRef.current.removeLayer(orbitalMarkersRef.current[name]); } catch(e) {}
-        delete orbitalMarkersRef.current[name];
-      }
-    });
-  }, [satellites, trackingLayers.satellites]);
 
   const handleToggleTrackingLayer = useCallback((key) => {
     setTrackingLayers(prev => ({ ...prev, [key]: !prev[key] }));
@@ -1853,7 +1797,7 @@ export default function App() {
   );
 
   const mapEl = (
-    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} aircraftLayerRef={aircraftLayerRef} orbitalLayerRef={orbitalLayerRef} onZoomChange={setMapZoom} />
+    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} aircraftLayerRef={aircraftLayerRef} onZoomChange={setMapZoom} />
   );
 
   // Single tree for both layouts — the map element's position/type never changes
