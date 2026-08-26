@@ -33,6 +33,19 @@ class AircraftStore:
         self._lock = asyncio.Lock()
         self._stats = {"total_position_updates": 0}
         self._consecutive_shrinks = 0
+        # Surfaced via /sources so a connectivity problem (e.g. OpenSky
+        # blocking this host's IP range at the network level — see
+        # fetchers.py fetch_opensky) is visible from the UI/API, not just
+        # buried in Render's log stream.
+        self._last_error: Optional[str] = None
+        self._last_success_at: Optional[str] = None
+
+    def record_error(self, error: str):
+        self._last_error = error
+
+    def record_success(self):
+        self._last_error = None
+        self._last_success_at = datetime.utcnow().isoformat() + "Z"
 
     async def load_snapshot(self, aircraft: list[dict]):
         """Replace the whole store with a fresh OpenSky snapshot.
@@ -114,6 +127,8 @@ class AircraftStore:
             "active_aircraft": len([a for a in self._aircraft.values() if "lat" in a]),
             "airborne": airborne,
             "on_ground": on_ground,
+            "last_error": self._last_error,
+            "last_success_at": self._last_success_at,
         }
 
 

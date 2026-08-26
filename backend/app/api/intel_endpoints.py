@@ -125,7 +125,7 @@ async def get_sources():
         {"id": "NASA FIRMS", "name": "NASA FIRMS Fire",   "status": "live",    "auth": False, "count": by_source.get("NASA FIRMS", 0), "interval_min": 15},
         {"id": "GDELT",      "name": "GDELT News Events", "status": "live",    "auth": False, "count": by_source.get("GDELT", 0),      "interval_min": 10},
         {"id": "ACLED",      "name": "ACLED Conflict",    "status": "standby", "auth": True,  "count": by_source.get("ACLED", 0),      "interval_min": 60},
-        {"id": "OpenSky",    "name": "OpenSky Aviation",  "status": "live",    "auth": False, "count": aircraft_store.get_stats().get("active_aircraft", 0), "interval_min": 1.5},
+        {"id": "OpenSky",    "name": "OpenSky Aviation",  "status": "error" if aircraft_store.get_stats().get("last_error") else "live", "auth": False, "count": aircraft_store.get_stats().get("active_aircraft", 0), "interval_min": 1.5, "last_error": aircraft_store.get_stats().get("last_error"), "last_success_at": aircraft_store.get_stats().get("last_success_at")},
         {"id": "CelesTrak",  "name": "CelesTrak Satellites", "status": "live", "auth": False, "count": satellite_tle.get_satellites().get("count", 0), "interval_min": 360},
         {"id": "AISHub",     "name": "AISHub Maritime",   "status": "planned", "auth": True,  "count": 0, "interval_min": 5},
         {"id": "GDACS",      "name": "GDACS Disasters",   "status": "planned", "auth": False, "count": 0, "interval_min": 30},

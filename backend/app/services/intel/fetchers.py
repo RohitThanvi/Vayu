@@ -665,7 +665,7 @@ async def fetch_opensky(
         # anonymous result than nothing.
 
     try:
-        resp = await client.get(OPENSKY_URL, headers=headers, timeout=20)
+        resp = await client.get(OPENSKY_URL, headers=headers, timeout=httpx.Timeout(20, connect=8))
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -674,7 +674,12 @@ async def fetch_opensky(
         # connection-level rejection on Render (see comment above) and
         # gave no signal to debug from. Always log the exception type too.
         logger.error(f"OpenSky fetch error: {type(e).__name__}: {e}")
-        return []
+        # Re-raise (rather than returning []) so the scheduler can tell an
+        # actual failure apart from "network's fine, genuinely 0 aircraft
+        # right now" and record it in aircraft_store for /sources to
+        # surface — a silently-swallowed [] here would make persistent
+        # connectivity failures invisible from the UI.
+        raise
 
     states = data.get("states") or []
     aircraft = []
