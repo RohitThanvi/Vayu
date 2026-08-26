@@ -20,7 +20,8 @@
     "@vercel/analytics": "^2.0.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "satellite.js": "^6.0.2"
+    "satellite.js": "^6.0.2",
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",

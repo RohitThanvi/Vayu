@@ -31,12 +31,14 @@ async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────────────
     logger.info("VAYU Intelligence Terminal starting up")
 
-    # Start intel polling scheduler (USGS, FIRMS, GDELT, ACLED, AIS bridge)
+    # Start intel polling scheduler (USGS, FIRMS, GDELT, ACLED, AIS bridge, OpenSky)
     scheduler = get_scheduler(
         acled_email=getattr(settings, "ACLED_EMAIL", ""),
         acled_password=getattr(settings, "ACLED_PASSWORD", ""),
         ais_bridge_url=getattr(settings, "AIS_BRIDGE_URL", ""),
         ais_bridge_api_key=getattr(settings, "AIS_BRIDGE_API_KEY", ""),
+        opensky_client_id=getattr(settings, "OPENSKY_CLIENT_ID", ""),
+        opensky_client_secret=getattr(settings, "OPENSKY_CLIENT_SECRET", ""),
     )
     await scheduler.start()
     logger.info("Intel scheduler started")

@@ -57,11 +57,15 @@ class IntelScheduler:
         acled_password: str = "",
         ais_bridge_url: str = "",
         ais_bridge_api_key: str = "",
+        opensky_client_id: str = "",
+        opensky_client_secret: str = "",
     ):
         self.acled_email = acled_email
         self.acled_password = acled_password
         self.ais_bridge_url = ais_bridge_url.rstrip("/")
         self.ais_bridge_api_key = ais_bridge_api_key
+        self.opensky_client_id = opensky_client_id
+        self.opensky_client_secret = opensky_client_secret
         self._tasks: list[asyncio.Task] = []
         self._running = False
 
@@ -182,16 +186,26 @@ class IntelScheduler:
 
     async def _poll_aircraft(self):
         await asyncio.sleep(45)   # small offset so not all fire at once
+        if not (self.opensky_client_id and self.opensky_client_secret):
+            logger.warning(
+                "Aircraft poll: no OPENSKY_CLIENT_ID/SECRET configured — falling back to "
+                "anonymous OpenSky access, which is unreliable from a data-center IP "
+                "(register free at opensky-network.org -> Account -> API Clients)"
+            )
         while self._running:
             try:
                 async with httpx.AsyncClient(
                     headers={"User-Agent": "VAYU-Intelligence-Terminal/2.0"}, timeout=20
                 ) as client:
-                    aircraft = await fetch_opensky(client)
+                    aircraft = await fetch_opensky(
+                        client,
+                        client_id=self.opensky_client_id,
+                        client_secret=self.opensky_client_secret,
+                    )
                 await aircraft_store.load_snapshot(aircraft)
                 logger.debug(f"Aircraft poll: {len(aircraft)} aircraft")
             except Exception as e:
-                logger.error(f"Aircraft poll error: {e}")
+                logger.error(f"Aircraft poll error: {type(e).__name__}: {e}")
             await asyncio.sleep(INTERVAL_AIRCRAFT)
 
     async def _poll_wind(self):
@@ -214,7 +228,7 @@ class IntelScheduler:
                 count = await satellite_tle.refresh()
                 logger.info(f"TLE poll: {count} satellites cached")
             except Exception as e:
-                logger.error(f"TLE poll error: {e}")
+                logger.error(f"TLE poll error: {type(e).__name__}: {e}")
             await asyncio.sleep(INTERVAL_TLE)
 
     async def _purge_loop(self):
@@ -236,6 +250,8 @@ def get_scheduler(
     acled_password: str = "",
     ais_bridge_url: str = "",
     ais_bridge_api_key: str = "",
+    opensky_client_id: str = "",
+    opensky_client_secret: str = "",
 ) -> IntelScheduler:
     global _scheduler
     if _scheduler is None:
@@ -244,5 +260,7 @@ def get_scheduler(
             acled_password=acled_password,
             ais_bridge_url=ais_bridge_url,
             ais_bridge_api_key=ais_bridge_api_key,
+            opensky_client_id=opensky_client_id,
+            opensky_client_secret=opensky_client_secret,
         )
     return _scheduler

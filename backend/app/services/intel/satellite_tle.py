@@ -63,7 +63,7 @@ async def _fetch_group(client: httpx.AsyncClient, group: str) -> List[Dict[str, 
         resp.raise_for_status()
         return _parse_tle_text(resp.text, group)
     except Exception as e:
-        logger.error(f"CelesTrak fetch error for group '{group}': {e}")
+        logger.error(f"CelesTrak fetch error for group '{group}': {type(e).__name__}: {e}")
         return []
 
 

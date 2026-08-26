@@ -1,7 +1,16 @@
 """
-global_layers.py — toggleable, whole-map satellite imagery layers (true
-color, NDVI, SAR/microwave, thermal/IR), similar to the layer switcher in
-ISRO's Bhuvan or Google Earth Engine's own Explorer.
+global_layers.py — toggleable, whole-map satellite imagery layers (NDVI,
+SAR/microwave, thermal/IR), similar to the layer switcher in ISRO's Bhuvan
+or Google Earth Engine's own Explorer.
+
+True Color is deliberately NOT here — it's served directly from EOX's
+pre-rendered Sentinel-2 cloudless global mosaic (s2maps.eu) client-side,
+with no backend involvement at all, since that's a genuinely better fit
+(higher visual quality, works at any zoom, no per-tile compute cost) than
+asking GEE to build a fresh cloud-free composite per tile on demand. See
+SATELLITE_LAYERS.true_color in App.jsx for that wiring. NDVI/SAR/Thermal
+have no equivalent pre-rendered global product anywhere free, so they
+stay on live GEE compute and the minZoom gate that requires.
 
 Earth Engine's getMapId() tile URLs are inherently a {z}/{x}/{y} tile
 template that Google computes lazily per-tile on request — a single call
@@ -69,15 +78,6 @@ def _recent_s2_composite(days_back: int = 30):
         .sort("system:time_start", False)  # newest first, so mosaic() prefers recent pixels
     )
     return col.mosaic()
-
-
-def _build_true_color() -> Dict[str, Any]:
-    composite = _recent_s2_composite()
-    # Same min:0,max:0.3 stretch fix as satellite_imagery.py — _mask_s2_clouds
-    # rescales reflectance to 0-1, so the stretch must match that scale, not
-    # the raw 0-10000 DN range.
-    map_id = composite.getMapId({"bands": ["B4", "B3", "B2"], "min": 0, "max": 0.3, "gamma": 1.3})
-    return {"tile_url": map_id["tile_fetcher"].url_format, "label": "True Color (Sentinel-2, ~30d)"}
 
 
 def _build_ndvi() -> Dict[str, Any]:
@@ -148,7 +148,6 @@ def _build_thermal() -> Dict[str, Any]:
 
 
 _BUILDERS = {
-    "true_color": _build_true_color,
     "ndvi": _build_ndvi,
     "sar": _build_sar,
     "thermal": _build_thermal,
