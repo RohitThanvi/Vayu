@@ -185,34 +185,39 @@ class IntelScheduler:
             await asyncio.sleep(INTERVAL_AIS)
 
     async def _poll_aircraft(self):
+        # Same fix as AIS: OpenSky's /states/all consistently ConnectTimeouts
+        # from Render even with valid OAuth2 credentials configured, which
+        # rules out auth/rate-limiting as the cause — that's a network-level
+        # block on Render's datacenter IP range, not something fixable from
+        # this side. Rather than talk to OpenSky directly, poll the bridge's
+        # /aircraft endpoint (same bridge service, same host, already proven
+        # to work around this exact class of problem for AIS).
+        if not self.ais_bridge_url:
+            logger.info("Aircraft poll: no AIS_BRIDGE_URL configured, skipping aircraft tracking")
+            return
         await asyncio.sleep(45)   # small offset so not all fire at once
-        if not (self.opensky_client_id and self.opensky_client_secret):
-            logger.warning(
-                "Aircraft poll: no OPENSKY_CLIENT_ID/SECRET configured — falling back to "
-                "anonymous OpenSky access, which is unreliable from a data-center IP "
-                "(register free at opensky-network.org -> Account -> API Clients)"
-            )
+        headers = {"X-Bridge-Key": self.ais_bridge_api_key} if self.ais_bridge_api_key else {}
         while self._running:
             try:
-                async with httpx.AsyncClient(
-                    headers={"User-Agent": "VAYU-Intelligence-Terminal/2.0"}
-                ) as client:
-                    aircraft = await fetch_opensky(
-                        client,
-                        client_id=self.opensky_client_id,
-                        client_secret=self.opensky_client_secret,
-                    )
-                await aircraft_store.load_snapshot(aircraft)
-                aircraft_store.record_success()
-                logger.debug(f"Aircraft poll: {len(aircraft)} aircraft")
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.get(f"{self.ais_bridge_url}/aircraft", headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+                await aircraft_store.load_snapshot(data.get("aircraft", []))
+                # The bridge itself may be failing against OpenSky (rare —
+                # it's a different IP range, but not immune to OpenSky's own
+                # rate limits) — surface that distinctly from a bridge-poll
+                # failure so /sources still tells the true story either way.
+                if data.get("last_error"):
+                    aircraft_store.record_error(f"bridge->OpenSky: {data['last_error']}")
+                else:
+                    aircraft_store.record_success()
+                logger.debug(f"Aircraft poll: {data.get('count', 0)} aircraft")
             except Exception as e:
-                # fetch_opensky re-raises on failure (see its own comment)
-                # specifically so this is reachable and gets recorded —
-                # a repeated ConnectTimeout here despite valid credentials
-                # points at a network-level block (e.g. OpenSky blocking
-                # this host's datacenter IP range), not something a code
-                # fix alone resolves. Recorded on aircraft_store so
-                # /api/v1/intel/sources surfaces it without needing log access.
+                # This is a bridge-poll failure (bridge unreachable, bad
+                # BRIDGE_API_KEY, etc) — distinct from the bridge's own
+                # OpenSky fetch failing, which is handled above via the
+                # response body's last_error field instead of an exception.
                 logger.error(f"Aircraft poll error: {type(e).__name__}: {e}")
                 aircraft_store.record_error(f"{type(e).__name__}: {e}".rstrip(": "))
             await asyncio.sleep(INTERVAL_AIRCRAFT)

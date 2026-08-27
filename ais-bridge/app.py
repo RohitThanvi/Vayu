@@ -1,28 +1,46 @@
 """
-Vayu AIS Bridge
-================
-A small, standalone service whose only job is to hold the one persistent
-AISStream.io WebSocket connection and re-expose it as a plain REST endpoint.
+Vayu Network Bridge (AIS + OpenSky)
+====================================
+A small, standalone service whose job is to hold outbound connections that
+Render's datacenter IP range gets blocked on, and re-expose them as plain
+REST endpoints the main Vayu backend polls over normal HTTP.
 
-Why this exists: AISStream is WebSocket-only (no REST API) and enforces one
-live connection per API key. When the main Vayu backend held that connection
-directly on Render, Render's shared outbound IP pool got the connection
-rejected with HTTP 429 at the handshake — before AISStream even reads the
-API key — and swapping keys didn't help, confirming it was IP-based, not
-key-based. Renegotiating fixed IPs is a paid Render feature, so instead this
-bridge runs on a host with its own clean IP (e.g. Fly.io's free tier) and
-holds the connection there. The main backend never talks to AISStream at
-all anymore — it just polls this bridge's /vessels endpoint on a normal
-HTTP interval, exactly like it already polls USGS/FIRMS/GDELT.
+Two feeds live here:
+
+1. AIS (AISStream.io) — WebSocket-only, one live connection per API key.
+   When the main backend held that connection directly on Render, every
+   attempt got rejected with HTTP 429 at the handshake — before AISStream
+   even reads the API key — and regenerating the key didn't help. That
+   points at Render's shared outbound IP pool getting blocked, not
+   anything about the key or the code.
+
+2. Aircraft (OpenSky Network) — same shape of problem: OpenSky's
+   /states/all consistently ConnectTimeouts from Render even with valid
+   OAuth2 credentials configured (ruling out an auth/rate-limit cause —
+   this is a connection-level rejection, not a 4xx with a body), matching
+   the same "this datacenter IP range specifically is blocked" pattern
+   AIS hit first. Moving the poll here (a different host, different IP
+   range — this was proven to work for AIS) is the fix.
+
+Both feeds run in the same lightweight service since neither needs its
+own dedicated worker the way AIS's one-connection-per-key constraint
+might suggest — only the *AISStream* connection itself has that
+constraint (see the Dockerfile comment on staying single-instance), and
+OpenSky polling doesn't hold a persistent connection at all, just a
+periodic REST GET, so it costs nothing extra to add the same host.
 
 Deploy this as its own small service, separate from the main Vayu backend.
-Required env vars:
-  AISSTREAM_API_KEY   your aisstream.io key
-  BRIDGE_API_KEY      a secret you invent — the backend must send it back
-                       as the X-Bridge-Key header on every request. Without
-                       this, anyone who finds the bridge's public URL could
-                       read your feed for free. Set this before deploying
-                       publicly.
+Required/optional env vars:
+  AISSTREAM_API_KEY     your aisstream.io key
+  OPENSKY_CLIENT_ID     your OpenSky OAuth2 client id (opensky-network.org
+  OPENSKY_CLIENT_SECRET  -> Account -> API Clients) — falls back to
+                         anonymous OpenSky access if unset, which works
+                         but is unreliable even from a non-blocked IP
+  BRIDGE_API_KEY         a secret you invent — the backend sends it back
+                         as the X-Bridge-Key header on every request to
+                         BOTH /vessels and /aircraft. Without this, anyone
+                         who finds the bridge's public URL reads your feed
+                         for free. Set this before deploying publicly.
 """
 
 import asyncio
@@ -33,6 +51,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
 
+import httpx
 import websockets
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
@@ -45,11 +64,17 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
-logger = logging.getLogger("ais_bridge")
+logger = logging.getLogger("vayu_bridge")
 
 AISSTREAM_API_KEY = os.environ.get("AISSTREAM_API_KEY", "")
 BRIDGE_API_KEY = os.environ.get("BRIDGE_API_KEY", "")
 AISSTREAM_WS_URL = "wss://stream.aisstream.io/v0/stream"
+
+OPENSKY_CLIENT_ID = os.environ.get("OPENSKY_CLIENT_ID", "")
+OPENSKY_CLIENT_SECRET = os.environ.get("OPENSKY_CLIENT_SECRET", "")
+OPENSKY_URL = "https://opensky-network.org/api/states/all"
+OPENSKY_TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
+OPENSKY_POLL_INTERVAL_S = 90
 
 STALE_MINUTES = 30
 MAX_VESSELS = 5000
@@ -201,6 +226,143 @@ class VesselBuffer:
 
 
 vessel_buffer = VesselBuffer()
+
+
+# ── OpenSky aircraft tracking ────────────────────────────────────────────────
+class AircraftBuffer:
+    """Latest global OpenSky snapshot. Simple replace-on-poll, no
+    per-aircraft merge needed — each poll is already a full state-vector
+    snapshot, unlike AIS's per-message updates."""
+
+    def __init__(self):
+        self._aircraft: list[dict] = []
+        self._lock = asyncio.Lock()
+        self._last_error: Optional[str] = None
+        self._last_success_at: Optional[str] = None
+
+    async def load_snapshot(self, aircraft: list[dict]):
+        async with self._lock:
+            self._aircraft = aircraft
+
+    def snapshot(self) -> list[dict]:
+        return list(self._aircraft)
+
+    def count(self) -> int:
+        return len(self._aircraft)
+
+    def record_error(self, error: str):
+        self._last_error = error
+
+    def record_success(self):
+        self._last_error = None
+        self._last_success_at = datetime.utcnow().isoformat() + "Z"
+
+    def status(self) -> dict:
+        return {"last_error": self._last_error, "last_success_at": self._last_success_at}
+
+
+aircraft_buffer = AircraftBuffer()
+
+# OpenSky state vector array indices (per their documented schema)
+_OS_ICAO24, _OS_CALLSIGN, _OS_ORIGIN_COUNTRY = 0, 1, 2
+_OS_LON, _OS_LAT, _OS_BARO_ALT = 5, 6, 7
+_OS_ON_GROUND, _OS_VELOCITY, _OS_HEADING = 8, 9, 10
+_OS_VERT_RATE = 11
+
+_opensky_token_cache: dict = {}
+
+
+async def _get_opensky_token(client: httpx.AsyncClient) -> Optional[str]:
+    global _opensky_token_cache
+    now = datetime.utcnow()
+    cached = _opensky_token_cache.get("access_token")
+    expires_at = _opensky_token_cache.get("expires_at")
+    if cached and expires_at and now < expires_at:
+        return cached
+
+    try:
+        resp = await client.post(
+            OPENSKY_TOKEN_URL,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": OPENSKY_CLIENT_ID,
+                "client_secret": OPENSKY_CLIENT_SECRET,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        token = data.get("access_token")
+        expires_in = data.get("expires_in", 1800)
+        if token:
+            _opensky_token_cache = {
+                "access_token": token,
+                "expires_at": now + timedelta(seconds=expires_in - 60),
+            }
+        return token
+    except Exception as e:
+        logger.error(f"OpenSky OAuth error: {type(e).__name__}: {e}")
+        return None
+
+
+async def _fetch_opensky_snapshot() -> list[dict]:
+    headers = {"User-Agent": "VAYU-Network-Bridge/1.0"}
+    async with httpx.AsyncClient(headers=headers) as client:
+        if OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET:
+            token = await _get_opensky_token(client)
+            if token:
+                client.headers["Authorization"] = f"Bearer {token}"
+
+        resp = await client.get(OPENSKY_URL, timeout=httpx.Timeout(20, connect=8))
+        resp.raise_for_status()
+        data = resp.json()
+
+    states = data.get("states") or []
+    aircraft = []
+    for s in states:
+        try:
+            lat, lon = s[_OS_LAT], s[_OS_LON]
+            if lat is None or lon is None:
+                continue
+            icao24 = s[_OS_ICAO24]
+            if not icao24:
+                continue
+            callsign = (s[_OS_CALLSIGN] or "").strip()
+            aircraft.append({
+                "icao24": icao24,
+                "callsign": callsign or icao24.upper(),
+                "origin_country": s[_OS_ORIGIN_COUNTRY],
+                "lat": lat,
+                "lon": lon,
+                "baro_altitude_m": s[_OS_BARO_ALT],
+                "on_ground": bool(s[_OS_ON_GROUND]),
+                "velocity_ms": s[_OS_VELOCITY],
+                "heading": s[_OS_HEADING],
+                "vertical_rate_ms": s[_OS_VERT_RATE],
+                "last_update": datetime.utcnow().isoformat() + "Z",
+            })
+        except (IndexError, TypeError):
+            continue
+    return aircraft
+
+
+async def _poll_opensky_forever():
+    if not OPENSKY_CLIENT_ID:
+        logger.info(
+            "OPENSKY_CLIENT_ID not set — polling anonymously (works, but unreliable "
+            "even from a non-blocked IP; register free at opensky-network.org)"
+        )
+    while True:
+        try:
+            aircraft = await _fetch_opensky_snapshot()
+            await aircraft_buffer.load_snapshot(aircraft)
+            aircraft_buffer.record_success()
+            logger.debug(f"OpenSky poll: {len(aircraft)} aircraft")
+        except Exception as e:
+            logger.error(f"OpenSky poll error: {type(e).__name__}: {e}")
+            aircraft_buffer.record_error(f"{type(e).__name__}: {e}".rstrip(": "))
+        await asyncio.sleep(OPENSKY_POLL_INTERVAL_S)
 
 
 class AISBridgeClient:
@@ -358,17 +520,19 @@ async def _prune_loop():
 async def lifespan(app: FastAPI):
     if not BRIDGE_API_KEY:
         logger.warning(
-            "BRIDGE_API_KEY not set — /vessels is UNPROTECTED. "
+            "BRIDGE_API_KEY not set — /vessels and /aircraft are UNPROTECTED. "
             "Set it before deploying this publicly."
         )
     await ais_client.start()
+    opensky_task = asyncio.create_task(_poll_opensky_forever(), name="opensky-poll")
     prune_task = asyncio.create_task(_prune_loop())
     yield
     prune_task.cancel()
+    opensky_task.cancel()
     await ais_client.stop()
 
 
-app = FastAPI(title="Vayu AIS Bridge", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Vayu Network Bridge", version="1.1.0", lifespan=lifespan)
 
 
 def _check_auth(x_bridge_key: Optional[str]):
@@ -378,7 +542,11 @@ def _check_auth(x_bridge_key: Optional[str]):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "vessel_count": len(vessel_buffer.snapshot())}
+    return {
+        "status": "ok",
+        "vessel_count": len(vessel_buffer.snapshot()),
+        "aircraft_count": aircraft_buffer.count(),
+    }
 
 
 @app.get("/vessels")
@@ -389,4 +557,17 @@ async def get_vessels(x_bridge_key: Optional[str] = Header(default=None)):
         "vessels": vessels,
         "count": len(vessels),
         "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/aircraft")
+async def get_aircraft(x_bridge_key: Optional[str] = Header(default=None)):
+    _check_auth(x_bridge_key)
+    aircraft = aircraft_buffer.snapshot()
+    status = aircraft_buffer.status()
+    return {
+        "aircraft": aircraft,
+        "count": len(aircraft),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        **status,
     }
