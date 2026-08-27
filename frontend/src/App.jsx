@@ -567,7 +567,7 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     // basemaps.cartocdn.com broadly — unrelated to anything in this repo).
     // Still free (5M tile requests/month, non-commercial) — request one at
     // https://carto.com/basemaps/apikey/ (no approval queue, key emailed
-    // back immediately) and set VITE_CARTO_API_KEY. Falls back to
+    // back immediately) and set CARTO_API_KEY. Falls back to
     // unauthenticated tiles if unset, which now show a visible
     // "API KEY REQUIRED" watermark instead of failing silently.
     const cartoKey = import.meta.env.CARTO_API_KEY;
