@@ -577,17 +577,20 @@ async def fetch_acled(
 
 
 # ── OpenSky Network aircraft snapshot ────────────────────────────────────────
-# OpenSky retired unauthenticated/basic-auth access for practical purposes —
-# anonymous requests are now aggressively rate-limited and data-center IPs
-# (which is exactly what Render is) get squeezed hardest. This is confirmed:
-# the initial keyless version of this fetcher logged "OpenSky fetch error:"
-# with an EMPTY exception message on Render, which is the fingerprint of a
-# connection-level rejection (not a clean 4xx with a body) rather than a
-# real network outage.
+# NOTE: no longer called directly by the scheduler — confirmed (with valid
+# OAuth2 credentials set) that OpenSky's /states/all ConnectTimeouts from
+# Render's IP range regardless of auth, the same "this datacenter IP range
+# specifically is blocked" pattern AIS hit first. The main backend now polls
+# the ais-bridge service's /aircraft endpoint instead (see scheduler.py
+# _poll_aircraft), the same fix already proven for AIS. This function is
+# kept for local/non-Render deployments where direct OpenSky access isn't
+# blocked, and because ais-bridge/app.py's own OpenSky fetch logic is
+# intentionally a duplicate of this (that service has zero import
+# dependency on the main backend, by design — see its own module docstring).
 #
-# Still entirely free: OpenSky now requires the OAuth2 client-credentials
-# flow (Log in at opensky-network.org -> Account -> API Clients -> create
-# one, no card involved) instead of a plain API key, mirroring how ACLED's
+# Still entirely free: OpenSky requires the OAuth2 client-credentials flow
+# (Log in at opensky-network.org -> Account -> API Clients -> create one, no
+# card involved) instead of a plain API key, mirroring how ACLED's
 # email+password OAuth flow already works in this file (see
 # _get_acled_token above) -- same shape, different provider. Set
 # OPENSKY_CLIENT_ID / OPENSKY_CLIENT_SECRET; if unset, falls back to the

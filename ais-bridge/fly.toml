@@ -1,6 +1,6 @@
-# Fly.io config for the Vayu AIS bridge.
+# Fly.io config for the Vayu network bridge (AIS + OpenSky).
 # Deploy with: fly launch --no-deploy   (first time, from inside ais-bridge/)
-#              fly secrets set AISSTREAM_API_KEY=... BRIDGE_API_KEY=...
+#              fly secrets set AISSTREAM_API_KEY=... OPENSKY_CLIENT_ID=... OPENSKY_CLIENT_SECRET=... BRIDGE_API_KEY=...
 #              fly deploy
 app = "vayu-ais-bridge"     # change if this name is taken
 primary_region = "sin"      # Singapore — close to India; pick whatever's closest to you

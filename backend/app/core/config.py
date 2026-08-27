@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # Account -> API Clients, uses OAuth2 client-credentials. Falls back to
     # anonymous access if unset, which works but is unreliable from a
     # data-center IP — see fetchers.py fetch_opensky for why)
+    # OpenSky aircraft tracking — NOTE: these are no longer used by the main
+    # backend directly. OpenSky access now goes through the same bridge
+    # service AIS uses (poll AIS_BRIDGE_URL + "/aircraft" below), since
+    # OpenSky ConnectTimeouts from Render's IP range the same way AISStream
+    # did. Set OPENSKY_CLIENT_ID/SECRET on the BRIDGE deployment instead —
+    # left here only so an already-set Render env var doesn't error at
+    # startup; harmless if unused.
     OPENSKY_CLIENT_ID: str = ""
     OPENSKY_CLIENT_SECRET: str = ""
 
