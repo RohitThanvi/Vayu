@@ -562,8 +562,29 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
       maxBoundsViscosity: 1.0,
       minZoom: 2,
     }).setView([26.91,75.78],5);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+    // CARTO basemaps started requiring an API key on their tile endpoints
+    // as of ~August 2026 (a policy change on their side, applying to
+    // basemaps.cartocdn.com broadly — unrelated to anything in this repo).
+    // Still free (5M tile requests/month, non-commercial) — request one at
+    // https://carto.com/basemaps/apikey/ (no approval queue, key emailed
+    // back immediately) and set VITE_CARTO_API_KEY. Falls back to
+    // unauthenticated tiles if unset, which now show a visible
+    // "API KEY REQUIRED" watermark instead of failing silently.
+    const cartoKey = import.meta.env.VITE_CARTO_API_KEY;
+    const cartoUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' +
+      (cartoKey ? `?key=${cartoKey}` : '');
+    // Register the attribution control BEFORE adding the tile layer —
+    // Leaflet's Control.Attribution only picks up a layer's `attribution`
+    // string via the map's layeradd event, so a layer added before the
+    // control exists is missed.
+    L.control.attribution({ position: 'bottomright', prefix: false }).addTo(map);
+    L.tileLayer(cartoUrl, {
       subdomains:'abcd', maxZoom:20, noWrap:true, bounds:[[-85,-180],[85,180]],
+      // CARTO's free tier is conditioned on attribution staying visible on
+      // the map (see their basemap terms) — attributionControl is off
+      // above for a cleaner UI, so wire the attribution string through to
+      // the manually-placed control instead of dropping it entirely.
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions" target="_blank" rel="noreferrer">CARTO</a>',
     }).addTo(map);
     L.control.zoom({ position:'topright' }).addTo(map);
 
