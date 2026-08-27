@@ -570,7 +570,7 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     // back immediately) and set CARTO_API_KEY. Falls back to
     // unauthenticated tiles if unset, which now show a visible
     // "API KEY REQUIRED" watermark instead of failing silently.
-    const cartoKey = import.meta.env.CARTO_API_KEY;
+    const cartoKey = import.meta.env.VITE_CARTO_API_KEY;
     const cartoUrl ='https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png' + (cartoKey ? `?key=${cartoKey}` : '');
     // Register the attribution control BEFORE adding the tile layer —
     // Leaflet's Control.Attribution only picks up a layer's `attribution`
