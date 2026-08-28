@@ -705,7 +705,7 @@ def compute_deforestation(aoi: Dict, start_date: str, end_date: str) -> Dict:
     if end_year > 2023:
         end_year = 2023
 
-    hansen = ee.Image("UMD/hansen/global_forest_change_2024_v1_12")
+    hansen = ee.Image("UMD/hansen/global_forest_change_2024_v1_13")
     loss_year = hansen.select("lossyear")
     tree_cover = hansen.select("treecover2000")
 
