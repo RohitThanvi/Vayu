@@ -6,7 +6,7 @@ REST:
   GET  /api/v1/intel/events/aoi      — events within a bounding box
   GET  /api/v1/intel/stats           — store statistics
   GET  /api/v1/intel/sources         — available sources and status
-  GET  /api/v1/intel/aircraft        — currently tracked aircraft (OpenSky)
+  GET  /api/v1/intel/aircraft        — currently tracked aircraft (adsb.lol, via ais-bridge)
   GET  /api/v1/intel/aircraft/stats  — aviation tracking statistics
   GET  /api/v1/intel/satellites/tle  — cached satellite orbital elements (CelesTrak)
   GET  /api/v1/intel/wind-field      — animated wind vector grid (U/V components)
@@ -125,7 +125,7 @@ async def get_sources():
         {"id": "NASA FIRMS", "name": "NASA FIRMS Fire",   "status": "live",    "auth": False, "count": by_source.get("NASA FIRMS", 0), "interval_min": 15},
         {"id": "GDELT",      "name": "GDELT News Events", "status": "live",    "auth": False, "count": by_source.get("GDELT", 0),      "interval_min": 10},
         {"id": "ACLED",      "name": "ACLED Conflict",    "status": "standby", "auth": True,  "count": by_source.get("ACLED", 0),      "interval_min": 60},
-        {"id": "OpenSky",    "name": "OpenSky Aviation",  "status": "error" if aircraft_store.get_stats().get("last_error") else "live", "auth": False, "count": aircraft_store.get_stats().get("active_aircraft", 0), "interval_min": 1.5, "last_error": aircraft_store.get_stats().get("last_error"), "last_success_at": aircraft_store.get_stats().get("last_success_at")},
+        {"id": "adsb.lol",   "name": "adsb.lol Aviation",  "status": "error" if aircraft_store.get_stats().get("last_error") else "live", "auth": False, "count": aircraft_store.get_stats().get("active_aircraft", 0), "interval_min": 1.5, "last_error": aircraft_store.get_stats().get("last_error"), "last_success_at": aircraft_store.get_stats().get("last_success_at")},
         {"id": "CelesTrak",  "name": "CelesTrak Satellites", "status": "live", "auth": False, "count": satellite_tle.get_satellites().get("count", 0), "interval_min": 360},
         {"id": "AISHub",     "name": "AISHub Maritime",   "status": "planned", "auth": True,  "count": 0, "interval_min": 5},
         {"id": "GDACS",      "name": "GDACS Disasters",   "status": "planned", "auth": False, "count": 0, "interval_min": 30},
@@ -275,7 +275,7 @@ async def get_chokepoints():
     }
 
 
-# ── Aviation Tracking (OpenSky) ────────────────────────────────────────────────
+# ── Aviation Tracking (adsb.lol, via ais-bridge) ────────────────────────────────
 
 @router.get("/aircraft", summary="Get currently tracked aircraft")
 async def get_aircraft(

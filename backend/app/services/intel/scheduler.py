@@ -11,9 +11,9 @@ Poll intervals (sensible defaults):
   AIS bridge  every 60 sec (vessel positions; see services/intel/README or
               ais-bridge/README.md for why this is a REST poll against our
               own bridge service instead of a direct AISStream connection)
-  OpenSky     every 90 sec (global aircraft state-vector snapshot, free and
-              keyless; slightly slower than AIS out of courtesy to the
-              anonymous tier's rate limit)
+  Aircraft    every 90 sec (adsb.lol, merged snapshot across ~55 curated
+              global aviation regions; free and keyless, polled via the
+              same ais-bridge service as AIS — see ais-bridge/README.md)
   Wind field  every 45 min (animated wind vector grid from Open-Meteo,
               refreshed roughly as often as their forecast models update —
               see services/weather/wind_field.py)
@@ -185,13 +185,11 @@ class IntelScheduler:
             await asyncio.sleep(INTERVAL_AIS)
 
     async def _poll_aircraft(self):
-        # Same fix as AIS: OpenSky's /states/all consistently ConnectTimeouts
-        # from Render even with valid OAuth2 credentials configured, which
-        # rules out auth/rate-limiting as the cause — that's a network-level
-        # block on Render's datacenter IP range, not something fixable from
-        # this side. Rather than talk to OpenSky directly, poll the bridge's
-        # /aircraft endpoint (same bridge service, same host, already proven
-        # to work around this exact class of problem for AIS).
+        # Aircraft data comes from the ais-bridge service's /aircraft
+        # endpoint (adsb.lol, merged across curated regions — see
+        # ais-bridge/app.py and its README for why: originally OpenSky, but
+        # OpenSky ConnectTimeouts from Render regardless of region, unlike
+        # AIS which region-hopping did fix).
         if not self.ais_bridge_url:
             logger.info("Aircraft poll: no AIS_BRIDGE_URL configured, skipping aircraft tracking")
             return
@@ -204,19 +202,20 @@ class IntelScheduler:
                     resp.raise_for_status()
                     data = resp.json()
                 await aircraft_store.load_snapshot(data.get("aircraft", []))
-                # The bridge itself may be failing against OpenSky (rare —
-                # it's a different IP range, but not immune to OpenSky's own
-                # rate limits) — surface that distinctly from a bridge-poll
-                # failure so /sources still tells the true story either way.
+                # The bridge itself may be failing against adsb.lol (rare,
+                # but not impossible — different IP range, still subject to
+                # its own availability) — surface that distinctly from a
+                # bridge-poll failure so /sources still tells the true
+                # story either way.
                 if data.get("last_error"):
-                    aircraft_store.record_error(f"bridge->OpenSky: {data['last_error']}")
+                    aircraft_store.record_error(f"bridge->adsb.lol: {data['last_error']}")
                 else:
                     aircraft_store.record_success()
                 logger.debug(f"Aircraft poll: {data.get('count', 0)} aircraft")
             except Exception as e:
                 # This is a bridge-poll failure (bridge unreachable, bad
                 # BRIDGE_API_KEY, etc) — distinct from the bridge's own
-                # OpenSky fetch failing, which is handled above via the
+                # adsb.lol fetch failing, which is handled above via the
                 # response body's last_error field instead of an exception.
                 logger.error(f"Aircraft poll error: {type(e).__name__}: {e}")
                 aircraft_store.record_error(f"{type(e).__name__}: {e}".rstrip(": "))
