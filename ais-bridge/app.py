@@ -1,12 +1,12 @@
 """
-Vayu Network Bridge (AIS + adsb.lol aircraft)
-================================================
+Vayu Network Bridge (AIS + adsb.lol aircraft + CelesTrak satellites)
+=======================================================================
 A small, standalone service whose job is to hold outbound connections that
 Render's datacenter IP range gets blocked on, and re-expose them as plain
 REST endpoints the main Vayu backend polls over normal HTTP.
 
 This bridge is a second Render web service, deployed in the Ohio region
-(the main Vayu backend runs in Oregon) — NOT Fly.io. Two feeds live here:
+(the main Vayu backend runs in Oregon) — NOT Fly.io. Three feeds live here:
 
 1. AIS (AISStream.io) — WebSocket-only, one live connection per API key.
    When the main backend held that connection directly on Render Oregon,
@@ -27,6 +27,11 @@ This bridge is a second Render web service, deployed in the Ohio region
    point/radius queries (max 250nm) — so this polls a curated list of
    aviation-dense regions across every continent (see ADSBLOL_REGIONS)
    and merges the results, rather than one call covering the whole globe.
+
+3. Satellites (CelesTrak) — same fix, same reason: CelesTrak also
+   ConnectTimeouts from the main Oregon backend directly, confirmed via
+   that backend's own logs. Fetched here and re-exposed via /satellites/tle
+   instead, exactly like /vessels and /aircraft.
 
 Both feeds run in the same lightweight service since neither needs its
 own dedicated worker the way AIS's one-connection-per-key constraint
@@ -260,6 +265,97 @@ class AircraftBuffer:
 
 
 aircraft_buffer = AircraftBuffer()
+
+
+# ── Satellite TLE tracking (CelesTrak) ───────────────────────────────────────
+# Same fix as AIS and aircraft: CelesTrak also ConnectTimeouts from the main
+# Oregon backend directly (confirmed via that backend's own logs), so it's
+# fetched here instead and re-exposed, exactly like /vessels and /aircraft.
+CELESTRAK_GROUPS = ["stations", "visual"]
+CELESTRAK_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP={group}&FORMAT=tle"
+CELESTRAK_POLL_INTERVAL_S = 6 * 60 * 60   # TLEs are near-static within this window
+
+
+class TLEBuffer:
+    def __init__(self):
+        self._satellites: list[dict] = []
+        self._last_error: Optional[str] = None
+        self._last_success_at: Optional[str] = None
+
+    def load(self, satellites: list[dict]):
+        self._satellites = satellites
+
+    def snapshot(self) -> list[dict]:
+        return list(self._satellites)
+
+    def count(self) -> int:
+        return len(self._satellites)
+
+    def record_error(self, error: str):
+        self._last_error = error
+
+    def record_success(self):
+        self._last_error = None
+        self._last_success_at = datetime.utcnow().isoformat() + "Z"
+
+    def status(self) -> dict:
+        return {"last_error": self._last_error, "last_success_at": self._last_success_at}
+
+
+tle_buffer = TLEBuffer()
+
+
+def _parse_tle_text(text: str, group: str) -> list[dict]:
+    lines = [l.rstrip() for l in text.splitlines() if l.strip()]
+    sats = []
+    for i in range(0, len(lines) - 2, 3):
+        name, line1, line2 = lines[i], lines[i + 1], lines[i + 2]
+        if line1.startswith("1 ") and line2.startswith("2 "):
+            sats.append({"name": name.strip(), "line1": line1, "line2": line2, "group": group})
+    return sats
+
+
+async def _fetch_tle_group(client: httpx.AsyncClient, group: str) -> list[dict]:
+    url = CELESTRAK_URL.format(group=group)
+    try:
+        resp = await client.get(url, timeout=httpx.Timeout(20, connect=8))
+        resp.raise_for_status()
+        return _parse_tle_text(resp.text, group)
+    except Exception as e:
+        logger.warning(f"CelesTrak fetch error for group '{group}': {type(e).__name__}: {e}")
+        raise
+
+
+async def _poll_celestrak_forever():
+    await asyncio.sleep(10)
+    while True:
+        try:
+            headers = {"User-Agent": "VAYU-Network-Bridge/1.0"}
+            async with httpx.AsyncClient(headers=headers) as client:
+                all_sats: list[dict] = []
+                seen = set()
+                any_failed = False
+                for group in CELESTRAK_GROUPS:
+                    try:
+                        sats = await _fetch_tle_group(client, group)
+                    except Exception:
+                        any_failed = True
+                        continue
+                    for s in sats:
+                        if s["name"] in seen:
+                            continue
+                        seen.add(s["name"])
+                        all_sats.append(s)
+            tle_buffer.load(all_sats)
+            if any_failed and not all_sats:
+                tle_buffer.record_error("all CelesTrak groups failed this cycle")
+            else:
+                tle_buffer.record_success()
+            logger.info(f"CelesTrak poll: {len(all_sats)} satellites cached")
+        except Exception as e:
+            logger.error(f"CelesTrak poll error: {type(e).__name__}: {e}")
+            tle_buffer.record_error(f"{type(e).__name__}: {e}".rstrip(": "))
+        await asyncio.sleep(CELESTRAK_POLL_INTERVAL_S)
 
 ADSBLOL_POINT_URL = "https://api.adsb.lol/v2/point/{lat}/{lon}/{radius_nm}"
 ADSBLOL_RADIUS_NM = 250          # adsb.lol's documented max per point query
@@ -573,14 +669,16 @@ async def lifespan(app: FastAPI):
         )
     await ais_client.start()
     adsblol_task = asyncio.create_task(_poll_adsblol_forever(), name="adsblol-poll")
+    celestrak_task = asyncio.create_task(_poll_celestrak_forever(), name="celestrak-poll")
     prune_task = asyncio.create_task(_prune_loop())
     yield
     prune_task.cancel()
     adsblol_task.cancel()
+    celestrak_task.cancel()
     await ais_client.stop()
 
 
-app = FastAPI(title="Vayu Network Bridge", version="1.2.0", lifespan=lifespan)
+app = FastAPI(title="Vayu Network Bridge", version="1.3.0", lifespan=lifespan)
 
 
 def _check_auth(x_bridge_key: Optional[str]):
@@ -594,6 +692,7 @@ async def health():
         "status": "ok",
         "vessel_count": len(vessel_buffer.snapshot()),
         "aircraft_count": aircraft_buffer.count(),
+        "satellite_count": tle_buffer.count(),
     }
 
 
@@ -616,6 +715,19 @@ async def get_aircraft(x_bridge_key: Optional[str] = Header(default=None)):
     return {
         "aircraft": aircraft,
         "count": len(aircraft),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        **status,
+    }
+
+
+@app.get("/satellites/tle")
+async def get_satellite_tles(x_bridge_key: Optional[str] = Header(default=None)):
+    _check_auth(x_bridge_key)
+    satellites = tle_buffer.snapshot()
+    status = tle_buffer.status()
+    return {
+        "satellites": satellites,
+        "count": len(satellites),
         "generated_at": datetime.utcnow().isoformat() + "Z",
         **status,
     }

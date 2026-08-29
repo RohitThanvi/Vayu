@@ -697,13 +697,21 @@ def compute_deforestation(aoi: Dict, start_date: str, end_date: str) -> Dict:
     logger.info(f"GEE: deforestation {start_date} → {end_date}")
     region = _polygon_geometry(aoi)
 
+    # Dataset's own name states its coverage — "2024_v1_13" means loss
+    # years through 2024 are present in this asset. This was previously
+    # hard-clamped to 2023 from an older dataset version and never updated
+    # when the asset was bumped to v1_13, silently making the newest year
+    # of data unreachable even though it was already being fetched.
+    HANSEN_MAX_LOSS_YEAR = 2024
+    HANSEN_MIN_LOSS_YEAR = 2001
+
     # Parse year range from dates
     start_year = int(start_date[:4])
     end_year = int(end_date[:4])
-    if start_year < 2001:
-        start_year = 2001
-    if end_year > 2023:
-        end_year = 2023
+    if start_year < HANSEN_MIN_LOSS_YEAR:
+        start_year = HANSEN_MIN_LOSS_YEAR
+    if end_year > HANSEN_MAX_LOSS_YEAR:
+        end_year = HANSEN_MAX_LOSS_YEAR
 
     hansen = ee.Image("UMD/hansen/global_forest_change_2024_v1_13")
     loss_year = hansen.select("lossyear")
@@ -718,13 +726,21 @@ def compute_deforestation(aoi: Dict, start_date: str, end_date: str) -> Dict:
     total_forest_km2 = _calc_area_km2(forest_mask, region, scale=30)
     loss_pct = (loss_km2 / total_forest_km2 * 100) if total_forest_km2 > 0 else 0
 
+    # Inclusive year count: a request spanning loss years 2020-2022 covers
+    # 3 distinct years of data (2020, 2021, 2022), not 2 — end_year -
+    # start_year alone undercounts by one and understates the true annual
+    # rate (same loss divided by a denominator that's too small looks like
+    # a smaller-than-real per-year rate, backwards from the actual error
+    # direction of most silent bugs, so this one is easy to miss in review).
+    analysis_years = max(end_year - start_year + 1, 1)
+
     return {
         "metrics": {
             "forest_loss_km2": round(loss_km2, 4),
             "total_forest_2000_km2": round(total_forest_km2, 4),
             "loss_pct": round(loss_pct, 4),
-            "analysis_years": float(end_year - start_year),
-            "annual_loss_rate_km2": round(loss_km2 / max(end_year - start_year, 1), 4),
+            "analysis_years": float(analysis_years),
+            "annual_loss_rate_km2": round(loss_km2 / analysis_years, 4),
         },
         "ee_image": loss_mask,
         "ee_geometry": region,
