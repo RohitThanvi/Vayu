@@ -234,11 +234,16 @@ class IntelScheduler:
         # Fetch immediately on startup (small offset so it's not first in
         # line with everything else), then on the normal interval — TLEs
         # are near-static within a 6h window so there's no benefit to a
-        # tighter startup fetch the way USGS/FIRMS get one.
+        # tighter startup fetch the way USGS/FIRMS get one. Goes through
+        # the bridge, not CelesTrak directly — see satellite_tle.py
+        # module docstring for why.
+        if not self.ais_bridge_url:
+            logger.info("TLE poll: no AIS_BRIDGE_URL configured, skipping satellite tracking")
+            return
         await asyncio.sleep(10)
         while self._running:
             try:
-                count = await satellite_tle.refresh()
+                count = await satellite_tle.refresh_from_bridge(self.ais_bridge_url, self.ais_bridge_api_key)
                 logger.info(f"TLE poll: {count} satellites cached")
             except Exception as e:
                 logger.error(f"TLE poll error: {type(e).__name__}: {e}")

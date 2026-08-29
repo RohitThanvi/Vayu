@@ -415,25 +415,6 @@ function createVesselMarker(vessel) {
   return L.marker([vessel.lat, vessel.lon], { icon, zIndexOffset: 50 });
 }
 
-// ── Aircraft marker — plane icon rotated to heading (OpenSky) ───────────────
-const AIRCRAFT_COLOR = { fill: '#e8c15c', border: '#f5d98a' };   // amber — distinct from vessel/intel palettes
-function createAircraftMarker(ac) {
-  const svg = ICONS.PLANE(AIRCRAFT_COLOR.fill, AIRCRAFT_COLOR.border);
-  const heading = typeof ac.heading === 'number' ? ac.heading : 0;
-  const icon = L.divIcon({
-    className: '',
-    html: `<div style="
-      transform: rotate(${heading}deg);
-      filter: drop-shadow(0 0 3px ${AIRCRAFT_COLOR.fill}bb) drop-shadow(0 0 1px #000000aa);
-      opacity: ${ac.on_ground ? 0.55 : 1};
-      display:flex; align-items:center; justify-content:center;
-    ">${svg}</div>`,
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
-  });
-  return L.marker([ac.lat, ac.lon], { icon, zIndexOffset: 40 });
-}
-
 // ── Weather overlay toggles — click a button, that layer switches on/off ────
 function WeatherLayerToggles({ active, onToggle }) {
   return (
@@ -515,41 +496,8 @@ function SatelliteLayerToggles({ active, onToggle, loadingKey, currentZoom }) {
   );
 }
 
-// ── Aircraft / satellite tracking toggles — simple two-button panel ─────────
-const TRACKING_LAYERS_META = {
-  aircraft:   { icon: 'plane',     label: 'Aircraft (OpenSky)',     desc: 'Live global flight positions, free & keyless' },
-};
-function TrackingLayerToggles({ active, onToggle }) {
-  return (
-    <div>
-      <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, marginBottom:9, textTransform:'uppercase' }}>Live Tracking</div>
-      <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
-        {Object.entries(TRACKING_LAYERS_META).map(([key, meta]) => {
-          const on = !!active[key];
-          return (
-            <button key={key} onClick={() => onToggle(key)}
-              style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44, width:'100%',
-                fontFamily:S.mono, letterSpacing:0.3,
-                background: on ? 'rgba(184,166,232,0.10)' : S.surface2,
-                border: `1px solid ${on ? '#9b8ce8' : S.border}`, borderRadius:3,
-                color: on ? '#c3b8f5' : S.text2, cursor:'pointer',
-                textAlign:'left', transition:'border-color 0.15s, background 0.15s' }}>
-              <Icon name={meta.icon} size={18} style={{ flexShrink:0, opacity: on ? 1 : 0.75 }} />
-              <span style={{ flex:1 }}>
-                <span style={{ fontSize:14, display:'block' }}>{meta.label}</span>
-                <span style={{ fontSize:11, color:S.text3, display:'block', marginTop:1 }}>{meta.desc}</span>
-              </span>
-              <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{on ? 'ON' : 'OFF'}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 // ── Map ───────────────────────────────────────────────────────────────────────
-function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, aircraftLayerRef, onZoomChange }) {
+function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, onZoomChange }) {
   const divRef = useRef(null);
   useEffect(() => {
     if (mapRef.current) return;
@@ -603,11 +551,6 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     // Vessel markers layer group (maritime/logistics tracking)
     const vg = L.layerGroup().addTo(map);
     vesselLayerRef.current = vg;
-
-    // Aircraft markers layer group (OpenSky aviation tracking) — added but
-    // not populated unless the user toggles it on (see handleToggleAircraft)
-    const ag = L.layerGroup().addTo(map);
-    aircraftLayerRef.current = ag;
 
     const dg = new L.FeatureGroup(); map.addLayer(dg); drawGroupRef.current = dg;
     const dc = new L.Control.Draw({
@@ -1005,8 +948,7 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI, aoiRegionName,
   isLoading,error,result,jobStatus, onSubmit, vesselStats, onClose, isMobile,
-  weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey, mapZoom,
-  trackingLayers, onToggleTrackingLayer }) {
+  weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey, mapZoom }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const TABS = [
@@ -1166,10 +1108,8 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
               <div style={{ fontSize:13, color:S.text3, lineHeight:1.6, marginTop:9 }}>
               </div>
             </div>
-            <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:14 }}>
-              <TrackingLayerToggles active={trackingLayers} onToggle={onToggleTrackingLayer} />
-              <div style={{ fontSize:13, color:S.text3, lineHeight:1.6, marginTop:9 }}>
-              </div>
+            <div style={{ fontSize:12, color:S.text3, lineHeight:1.6, padding:'8px 2px' }}>
+              Aircraft and satellite tracking moved to the Orbital tab.
             </div>
             <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:14 }}>
               <AirQualityCheck mapRef={mapRef} apiUrl={apiUrl} />
@@ -1299,20 +1239,14 @@ export default function App() {
   const vesselMarkersRef = useRef({});    // mmsi -> marker
   const vesselTrailsRef = useRef({});     // mmsi -> { points:[[lat,lon],...], polyline }
   const vesselPredictedRef = useRef({});  // mmsi -> { polyline, tipMarker } — forecast dead-reckoning track
-  const aircraftLayerRef = useRef(null);  // LayerGroup for aircraft markers (OpenSky)
-  const aircraftMarkersRef = useRef({});  // icao24 -> marker
 
   // Live maritime vessel tracking (AIS via aisstream.io)
   const { vessels, stats: vesselStats } = useVesselTracker(API_URL, true);
 
-  // Aircraft (OpenSky) tracking on the 2D map — off by default, only polls
-  // once toggled on, same "don't do work nobody's looking at" reasoning as
-  // the satellite-imagery basemap layers. Satellites are NOT on the 2D map
-  // at all — they only live in the Orbital tab's 3D globe now, since a flat
-  // dot on a 2D map is a poor representation of an object in orbit and the
-  // 3D view is a genuinely better fit (see OrbitalGlobe.jsx).
-  const [trackingLayers, setTrackingLayers] = useState({ aircraft: false });
-  const { aircraft } = useAircraftTracker(API_URL, trackingLayers.aircraft);
+  // Aircraft and satellites are NOT on the 2D map at all — they only live
+  // in the Orbital tab's 3D globe (see OrbitalGlobe.jsx), since a flat dot
+  // on a 2D map was a poor representation of a plane's heading/altitude
+  // or an object in orbit; the 3D view is a genuinely better fit for both.
 
   const clearLayers = useCallback(() => {
     layersRef.current.forEach(l => { if (mapRef.current?.hasLayer(l)) mapRef.current.removeLayer(l); });
@@ -1521,51 +1455,6 @@ export default function App() {
       }
     });
   }, [vessels]);
-
-  // ── Render/update aircraft markers when snapshot changes or layer toggled ──
-  useEffect(() => {
-    if (!aircraftLayerRef.current) return;
-    if (!trackingLayers.aircraft) {
-      // Layer switched off: clear all markers rather than leaving stale
-      // positions on the map (the hook stops polling but doesn't clear
-      // its own state, since flipping back on should show fresh data
-      // immediately, not an empty layer waiting on the next poll).
-      Object.values(aircraftMarkersRef.current).forEach(m => {
-        try { aircraftLayerRef.current.removeLayer(m); } catch(e) {}
-      });
-      aircraftMarkersRef.current = {};
-      return;
-    }
-    const seen = new Set();
-    aircraft.forEach(ac => {
-      if (typeof ac.lat !== 'number' || typeof ac.lon !== 'number') return;
-      seen.add(ac.icao24);
-      const existing = aircraftMarkersRef.current[ac.icao24];
-      if (existing) {
-        existing.setLatLng([ac.lat, ac.lon]);
-        existing.setIcon(createAircraftMarker(ac).options.icon);
-      } else {
-        const marker = createAircraftMarker(ac);
-        marker.bindPopup(
-          `<b>${ac.callsign || ac.icao24}</b><br/>${ac.origin_country || ''}<br/>` +
-          `${ac.on_ground ? 'On ground' : `Alt: ${ac.baro_altitude_m != null ? Math.round(ac.baro_altitude_m) + 'm' : '—'}`}<br/>` +
-          `Speed: ${ac.velocity_ms != null ? Math.round(ac.velocity_ms * 3.6) + ' km/h' : '—'}`
-        );
-        marker.addTo(aircraftLayerRef.current);
-        aircraftMarkersRef.current[ac.icao24] = marker;
-      }
-    });
-    Object.keys(aircraftMarkersRef.current).forEach(icao24 => {
-      if (!seen.has(icao24)) {
-        try { aircraftLayerRef.current.removeLayer(aircraftMarkersRef.current[icao24]); } catch(e) {}
-        delete aircraftMarkersRef.current[icao24];
-      }
-    });
-  }, [aircraft, trackingLayers.aircraft]);
-
-  const handleToggleTrackingLayer = useCallback((key) => {
-    setTrackingLayers(prev => ({ ...prev, [key]: !prev[key] }));
-  }, []);
 
   // ── Handle click on feed item: fly map + highlight marker ──────────────────
   // ── Toggle a weather overlay on/off — each layer is independent ────────────
@@ -1798,7 +1687,6 @@ export default function App() {
       weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
       satelliteLoadingKey={satelliteLoadingKey} mapZoom={mapZoom}
-      trackingLayers={trackingLayers} onToggleTrackingLayer={handleToggleTrackingLayer}
       isMobile={isMobile} onClose={() => setMobilePanel('map')} apiUrl={API_URL} mapRef={mapRef} />
   );
 
@@ -1816,7 +1704,7 @@ export default function App() {
   );
 
   const mapEl = (
-    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} aircraftLayerRef={aircraftLayerRef} onZoomChange={setMapZoom} />
+    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} onZoomChange={setMapZoom} />
   );
 
   // Single tree for both layouts — the map element's position/type never changes
@@ -1852,7 +1740,7 @@ export default function App() {
         )}
       </div>
 
-      {!isMobile && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{intelPanelEl}</div>}
+      {!isMobile && tab !== 'Orbital' && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{intelPanelEl}</div>}
 
       {isMobile && mobilePanel === 'analyze' && (
         <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:S.surface, overflow:'hidden' }}>
