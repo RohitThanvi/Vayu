@@ -125,7 +125,7 @@ export default function OrbitalGlobe({ apiUrl }) {
   const [showSatellites, setShowSatellites] = useState(true);
   const [showAircraft, setShowAircraft] = useState(false);
 
-  const { satellites, loaded: satLoaded } = useSatelliteTracker(apiUrl, showSatellites);
+  const { satellites, loaded: satLoaded, debug: satDebug } = useSatelliteTracker(apiUrl, showSatellites);
   const { aircraft, stats: aircraftStats } = useAircraftTracker(apiUrl, showAircraft);
 
   const stations = useMemo(() => satellites.filter(s => s.group === 'stations'), [satellites]);
@@ -380,6 +380,12 @@ export default function OrbitalGlobe({ apiUrl }) {
           {showSatellites && !satLoaded && 'Loading orbital elements… '}
           Drag to rotate · scroll to zoom · click a point for details
         </div>
+        {showSatellites && (satDebug.lastError || (satLoaded && satDebug.propagatedCount === 0)) && (
+          <div style={{ fontSize:10, color:'#ff9d9d', marginTop:6, lineHeight:1.4 }}>
+            Satellite debug: fetched {satDebug.fetchedCount}, parsed {satDebug.parsedCount}, showing {satDebug.propagatedCount}
+            {satDebug.lastError ? ` — ${satDebug.lastError}` : ''}
+          </div>
+        )}
       </div>
 
       {selected && (
