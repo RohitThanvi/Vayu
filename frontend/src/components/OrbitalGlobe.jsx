@@ -241,7 +241,16 @@ export default function OrbitalGlobe({ apiUrl }) {
     let raf;
     const animate = () => {
       raf = requestAnimationFrame(animate);
-      earth.rotation.y += 0.0006;
+      // Deliberately NOT spinning the Earth mesh here. Aircraft/satellite
+      // positions are computed from real lat/lon in a fixed Earth-fixed
+      // reference frame (satellite positions specifically already account
+      // for Earth's true rotation via GMST inside useSatelliteTracker's
+      // SGP4 propagation) — an independent decorative spin on the mesh
+      // desyncs the visible coastlines from the correctly-computed points,
+      // making every point look like it's "orbiting" at the fake spin
+      // rate regardless of its real motion, and makes points land on the
+      // wrong-looking geography as the texture slides out from under them.
+      // Users can still rotate the view manually via OrbitControls drag.
       controls.update();
       renderer.render(scene, camera);
     };
