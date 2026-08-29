@@ -359,8 +359,11 @@ async def _poll_celestrak_forever():
 
 ADSBLOL_POINT_URL = "https://api.adsb.lol/v2/point/{lat}/{lon}/{radius_nm}"
 ADSBLOL_RADIUS_NM = 250          # adsb.lol's documented max per point query
-ADSBLOL_POLL_INTERVAL_S = 90     # same cadence OpenSky ran at
-ADSBLOL_MAX_CONCURRENCY = 8      # cap parallel requests — polite to a free community API, not just "as fast as possible"
+ADSBLOL_POLL_INTERVAL_S = 180    # was 90s under the old concurrent-burst approach; the
+                                  # sequential fetch below takes ~80s on its own now, so
+                                  # this needs real headroom rather than overlapping polls
+ADSBLOL_REQUEST_DELAY_S = 1.4    # spacing between sequential region requests — see
+                                  # _fetch_adsblol_snapshot for why this replaced concurrency
 
 # Curated aviation-dense region centers across every populated continent —
 # not literal wall-to-wall global tiling (that would mean many hundreds of
@@ -370,6 +373,14 @@ ADSBLOL_MAX_CONCURRENCY = 8      # cap parallel requests — polite to a free co
 # entire metro area's air traffic and a good chunk of the surrounding
 # region, so ~50 well-chosen points give broad worldwide coverage of where
 # aircraft actually are, without hammering the service. Adjust freely.
+#
+# CONFIRMED IN PRODUCTION: firing these concurrently (even capped at 8 at
+# once) tripped adsb.lol's rate limiter globally within the same poll
+# cycle — every region started coming back 420/429 together, not just the
+# ones near the concurrency cap. Fetching sequentially with real spacing
+# (see ADSBLOL_REQUEST_DELAY_S) fixed it. If you're tempted to re-add
+# concurrency for speed, don't — this was a real production failure, not
+# a theoretical one.
 ADSBLOL_REGIONS = [
     # North America
     ("Los Angeles", 34.05, -118.24), ("Dallas", 32.78, -96.80),
@@ -457,16 +468,30 @@ def _adsblol_map_aircraft(ac: dict) -> Optional[dict]:
     }
 
 
-async def _fetch_adsblol_region(client: httpx.AsyncClient, sem: asyncio.Semaphore, name: str, lat: float, lon: float) -> list[dict]:
+async def _fetch_adsblol_region(client: httpx.AsyncClient, name: str, lat: float, lon: float) -> list[dict]:
     url = ADSBLOL_POINT_URL.format(lat=lat, lon=lon, radius_nm=ADSBLOL_RADIUS_NM)
-    async with sem:
+    for attempt in (1, 2):
         try:
             resp = await client.get(url, timeout=httpx.Timeout(15, connect=8))
+            if resp.status_code in (420, 429):
+                # Rate-limited. Honor Retry-After if adsb.lol sends one,
+                # otherwise back off a fixed amount — one retry only, this
+                # is a per-region fetch inside a larger sequential poll, not
+                # worth hammering further if it's still limited afterward.
+                if attempt == 1:
+                    retry_after = resp.headers.get("Retry-After")
+                    wait_s = float(retry_after) if retry_after and retry_after.isdigit() else 5.0
+                    logger.warning(f"adsb.lol region '{name}' rate-limited ({resp.status_code}), retrying in {wait_s:.0f}s")
+                    await asyncio.sleep(wait_s)
+                    continue
             resp.raise_for_status()
             data = resp.json()
+            break
         except Exception as e:
             logger.warning(f"adsb.lol region '{name}' fetch failed: {type(e).__name__}: {e}")
             return []
+    else:
+        return []
     out = []
     for ac in (data.get("ac") or []):
         mapped = _adsblol_map_aircraft(ac)
@@ -476,20 +501,24 @@ async def _fetch_adsblol_region(client: httpx.AsyncClient, sem: asyncio.Semaphor
 
 
 async def _fetch_adsblol_snapshot() -> list[dict]:
-    sem = asyncio.Semaphore(ADSBLOL_MAX_CONCURRENCY)
+    # Sequential with real spacing between requests, not concurrent bursts.
+    # The original concurrency-8 burst approach tripped adsb.lol's rate
+    # limiter globally (420/429 on nearly every region, every cycle) — this
+    # is a free community API, not a CDN built for parallel hammering. 55
+    # regions * ~1.4s apart is ~80s, comfortably inside the poll interval.
     headers = {"User-Agent": "VAYU-Network-Bridge/1.0"}
+    all_results = []
     async with httpx.AsyncClient(headers=headers) as client:
-        results = await asyncio.gather(*[
-            _fetch_adsblol_region(client, sem, name, lat, lon)
-            for name, lat, lon in ADSBLOL_REGIONS
-        ])
+        for name, lat, lon in ADSBLOL_REGIONS:
+            all_results.append(await _fetch_adsblol_region(client, name, lat, lon))
+            await asyncio.sleep(ADSBLOL_REQUEST_DELAY_S)
 
     # Regions' circles overlap at the edges (adjacent metro areas within
     # 250nm of each other) — dedupe by icao24 hex, last region wins for
     # any given aircraft (arbitrary but harmless, positions agree within
     # a few seconds of each other regardless of which region reported it).
     merged: dict[str, dict] = {}
-    for region_result in results:
+    for region_result in all_results:
         for ac in region_result:
             merged[ac["icao24"]] = ac
     return list(merged.values())
