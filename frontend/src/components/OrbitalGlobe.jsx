@@ -263,8 +263,18 @@ export default function OrbitalGlobe({ apiUrl }) {
       renderer.dispose();
       geometry.dispose();
       material.dispose();
+      // Null out the refs, not just dispose their contents — StrictMode
+      // (enabled in main.jsx) double-invokes this effect in dev
+      // (mount -> cleanup -> mount), and without nulling here, the data-
+      // population effects below could write new positions onto an
+      // already-disposed Points object during the brief window between
+      // this cleanup and the next mount reassigning fresh ones. Their own
+      // `if (!stationPts || !satPts) return;` guards make that a safe
+      // no-op once the refs are actually null, instead of a silent write
+      // to disposed WebGL resources that may render nothing.
       [stationPointsRef, satellitePointsRef, aircraftPointsRef].forEach(ref => {
         if (ref.current) { ref.current.geometry.dispose(); ref.current.material.map?.dispose(); ref.current.material.dispose(); }
+        ref.current = null;
       });
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
     };

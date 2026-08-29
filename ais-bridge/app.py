@@ -468,7 +468,11 @@ def _adsblol_map_aircraft(ac: dict) -> Optional[dict]:
     }
 
 
-async def _fetch_adsblol_region(client: httpx.AsyncClient, name: str, lat: float, lon: float) -> list[dict]:
+async def _fetch_adsblol_region(client: httpx.AsyncClient, name: str, lat: float, lon: float) -> Optional[list[dict]]:
+    """Returns None on a connection/HTTP failure (distinct from a
+    legitimate empty [] result, which just means no aircraft in range
+    right now) — the caller uses that distinction to run a circuit
+    breaker on consecutive real failures."""
     url = ADSBLOL_POINT_URL.format(lat=lat, lon=lon, radius_nm=ADSBLOL_RADIUS_NM)
     for attempt in (1, 2):
         try:
@@ -489,9 +493,9 @@ async def _fetch_adsblol_region(client: httpx.AsyncClient, name: str, lat: float
             break
         except Exception as e:
             logger.warning(f"adsb.lol region '{name}' fetch failed: {type(e).__name__}: {e}")
-            return []
+            return None
     else:
-        return []
+        return None
     out = []
     for ac in (data.get("ac") or []):
         mapped = _adsblol_map_aircraft(ac)
@@ -500,17 +504,42 @@ async def _fetch_adsblol_region(client: httpx.AsyncClient, name: str, lat: float
     return out
 
 
+ADSBLOL_CIRCUIT_BREAKER_THRESHOLD = 6   # consecutive real failures before aborting the rest of this cycle
+
+
 async def _fetch_adsblol_snapshot() -> list[dict]:
     # Sequential with real spacing between requests, not concurrent bursts.
     # The original concurrency-8 burst approach tripped adsb.lol's rate
     # limiter globally (420/429 on nearly every region, every cycle) — this
     # is a free community API, not a CDN built for parallel hammering. 55
     # regions * ~1.4s apart is ~80s, comfortably inside the poll interval.
+    #
+    # Circuit breaker: seen in production, a batch of consecutive
+    # ConnectTimeouts (not 420/429 — a harsher connection-level failure,
+    # possibly a temporary block after the earlier burst-abuse period)
+    # meant EVERY remaining region failed the same way, one by one, each
+    # eating a full ~8s connect timeout — turning a single poll cycle into
+    # 7+ minutes of guaranteed-doomed retries. If several regions in a row
+    # fail for real (None, not just an empty-but-successful result), stop
+    # for this cycle and let the next one (in ADSBLOL_POLL_INTERVAL_S) try
+    # fresh rather than grinding through the rest for no benefit.
     headers = {"User-Agent": "VAYU-Network-Bridge/1.0"}
     all_results = []
+    consecutive_failures = 0
     async with httpx.AsyncClient(headers=headers) as client:
         for name, lat, lon in ADSBLOL_REGIONS:
-            all_results.append(await _fetch_adsblol_region(client, name, lat, lon))
+            result = await _fetch_adsblol_region(client, name, lat, lon)
+            if result is None:
+                consecutive_failures += 1
+                if consecutive_failures >= ADSBLOL_CIRCUIT_BREAKER_THRESHOLD:
+                    logger.error(
+                        f"adsb.lol: {consecutive_failures} consecutive region failures, "
+                        f"aborting rest of this cycle early (tried {all_results.__len__() + consecutive_failures}/{len(ADSBLOL_REGIONS)} regions)"
+                    )
+                    break
+            else:
+                consecutive_failures = 0
+                all_results.append(result)
             await asyncio.sleep(ADSBLOL_REQUEST_DELAY_S)
 
     # Regions' circles overlap at the edges (adjacent metro areas within
