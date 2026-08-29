@@ -426,7 +426,14 @@ ADSBLOL_REGIONS = [
 def _adsblol_map_aircraft(ac: dict) -> Optional[dict]:
     """Map one adsb.lol 'ac' array entry (ADS-B Exchange v2-compatible
     schema) into the flat aircraft dict shape the main backend's
-    AircraftStore already expects (see aircraft_store.py there)."""
+    AircraftStore already expects (see aircraft_store.py there).
+
+    Deliberately captures most of what adsb.lol actually provides, not
+    just the OpenSky-equivalent subset the original mapper had — adsb.lol
+    gives real airspeed data (IAS/TAS/Mach), geometric (GPS) altitude
+    alongside barometric, autopilot targets, signal quality, and finer
+    dbFlags categories (military/PIA/LADD are each distinct bits, not
+    just one generic "interesting" flag) that OpenSky never exposed."""
     hex_ = ac.get("hex")
     lat, lon = ac.get("lat"), ac.get("lon")
     if not hex_ or lat is None or lon is None:
@@ -440,9 +447,16 @@ def _adsblol_map_aircraft(ac: dict) -> Optional[dict]:
     altitude_m = 0.0 if on_ground else (
         alt_baro * 0.3048 if isinstance(alt_baro, (int, float)) else None
     )
+    alt_geom = ac.get("alt_geom")   # GPS/geometric altitude, ft — distinct from barometric
+
+    def _num(key, factor=1.0):
+        v = ac.get(key)
+        return v * factor if isinstance(v, (int, float)) else None
 
     gs = ac.get("gs")               # ground speed, knots
     baro_rate = ac.get("baro_rate") # vertical rate, ft/min
+    # dbFlags bit meanings per ADSBExchange/adsb.lol convention: 1=military,
+    # 2=interesting, 4=PIA (privacy ICAO address), 8=LADD (limited disclosure)
     db_flags = ac.get("dbFlags", 0) or 0
 
     return {
@@ -455,15 +469,30 @@ def _adsblol_map_aircraft(ac: dict) -> Optional[dict]:
         "lat": lat,
         "lon": lon,
         "baro_altitude_m": altitude_m,
+        "geom_altitude_m": _num("alt_geom", 0.3048) if not on_ground else 0.0,
         "on_ground": on_ground,
         "velocity_ms": (gs * 0.514444) if isinstance(gs, (int, float)) else None,
+        "ias_ms": _num("ias", 0.514444),           # indicated airspeed
+        "tas_ms": _num("tas", 0.514444),           # true airspeed
+        "mach": ac.get("mach"),
         "heading": ac.get("track"),
+        "track_rate": ac.get("track_rate"),
+        "roll": ac.get("roll"),
+        "nav_heading": ac.get("nav_heading"),      # autopilot-selected heading
+        "nav_altitude_mcp_m": _num("nav_altitude_mcp", 0.3048),  # autopilot-selected altitude
         "vertical_rate_ms": (baro_rate * 0.00508) if isinstance(baro_rate, (int, float)) else None,
         "squawk": ac.get("squawk"),
         "category": ac.get("category"),
         "emergency": ac.get("emergency"),
         "military": bool(db_flags & 1),
         "interesting": bool(db_flags & 2),
+        "pia": bool(db_flags & 4),                 # privacy ICAO address program
+        "ladd": bool(db_flags & 8),                # limited aircraft data disclosure
+        "nic": ac.get("nic"),                      # navigation integrity category
+        "rssi": ac.get("rssi"),                    # signal strength — rough proxy for receiver distance
+        "messages": ac.get("messages"),            # total ADS-B messages seen from this aircraft
+        "seen_s": ac.get("seen"),                  # seconds since last message of any kind
+        "seen_pos_s": ac.get("seen_pos"),          # seconds since last position update
         "last_update": datetime.utcnow().isoformat() + "Z",
     }
 
