@@ -8,6 +8,8 @@ import AgriPanel from './components/AgriPanel';
 // the first time someone actually opens that tab.
 const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
 import { useVesselTracker } from './hooks/useVesselTracker';
+import { useSatelliteTracker } from './hooks/useSatelliteTracker';
+import { useAircraftTracker } from './hooks/useAircraftTracker';
 
 const MOBILE_BREAKPOINT = 860;
 
@@ -496,6 +498,138 @@ function SatelliteLayerToggles({ active, onToggle, loadingKey, currentZoom }) {
   );
 }
 
+// ── Orbital tab sidebar content: toggles, search, list, and the detail
+// readout for whatever satellite/aircraft is selected — lives here (the
+// actual left sidebar) instead of floating over the 3D canvas, matching
+// how every other tab's controls/details live in the sidebar. ─────────────
+const ORBITAL_COLORS = { station: '#ff6b6b', satellite: '#9b8ce8', aircraft: '#e8c15c' };
+const ORBITAL_KIND_LABEL = { station: 'Space Station', satellite: 'Tracked Satellite', aircraft: 'Aircraft' };
+
+function OrbitalSidebarPanel({
+  showSatellites, onToggleSatellites, showAircraft, onToggleAircraft,
+  satelliteCount, aircraftCount, satLoaded, satDebug,
+  search, onSearchChange, filteredList, selected, onSelect,
+}) {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
+      <div style={{ padding:'16px 14px 10px' }}>
+        <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, textTransform:'uppercase', marginBottom:9 }}>Orbital View</div>
+        <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
+          <button onClick={onToggleSatellites}
+            style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44, width:'100%',
+              fontFamily:S.mono, letterSpacing:0.3,
+              background: showSatellites ? 'rgba(155,140,232,0.10)' : S.surface2,
+              border: `1px solid ${showSatellites ? '#9b8ce8' : S.border}`, borderRadius:3,
+              color: showSatellites ? '#c3b8f5' : S.text2, cursor:'pointer', textAlign:'left' }}>
+            <span style={{ flex:1 }}>
+              <span style={{ fontSize:14, display:'block' }}>Satellites</span>
+              <span style={{ fontSize:11, color:S.text3, display:'block', marginTop:1 }}>Space stations + brightest visual-magnitude satellites</span>
+            </span>
+            <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{showSatellites ? satelliteCount : 'OFF'}</span>
+          </button>
+          <button onClick={onToggleAircraft}
+            style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44, width:'100%',
+              fontFamily:S.mono, letterSpacing:0.3,
+              background: showAircraft ? 'rgba(232,193,92,0.10)' : S.surface2,
+              border: `1px solid ${showAircraft ? '#e8c15c' : S.border}`, borderRadius:3,
+              color: showAircraft ? '#f0d488' : S.text2, cursor:'pointer', textAlign:'left' }}>
+            <span style={{ flex:1 }}>
+              <span style={{ fontSize:14, display:'block' }}>Aircraft</span>
+              <span style={{ fontSize:11, color:S.text3, display:'block', marginTop:1 }}>Live global flight positions (adsb.lol)</span>
+            </span>
+            <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{showAircraft ? aircraftCount : 'OFF'}</span>
+          </button>
+        </div>
+        <div style={{ fontSize:11, color:S.text3, lineHeight:1.5, marginTop:9 }}>
+          {showSatellites && !satLoaded && 'Loading orbital elements… '}
+          Drag the globe to rotate, scroll to zoom in.
+        </div>
+        {showSatellites && (satDebug?.lastError || (satLoaded && satDebug?.propagatedCount === 0)) && (
+          <div style={{ fontSize:10, color:'#ff9d9d', marginTop:6, lineHeight:1.4 }}>
+            Satellite debug: fetched {satDebug.fetchedCount}, parsed {satDebug.parsedCount}, showing {satDebug.propagatedCount}
+            {satDebug.lastError ? ` — ${satDebug.lastError}` : ''}
+          </div>
+        )}
+      </div>
+
+      {selected && (
+        <div style={{ margin:'0 14px 10px', padding:'10px 12px', background:S.surface2, border:`1px solid ${S.border}`, borderRadius:3 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:10 }}>
+            <div style={{ fontSize:14, fontWeight:700, color: ORBITAL_COLORS[selected.kind], fontFamily:S.mono }}>
+              {selected.kind === 'aircraft' ? (selected.callsign || selected.icao24) : selected.name}
+            </div>
+            <button onClick={() => onSelect(null)}
+              style={{ background:'none', border:'none', color:S.text3, cursor:'pointer', fontSize:14, lineHeight:1, padding:0 }}>✕</button>
+          </div>
+          <div style={{ marginTop:4, opacity:0.7, textTransform:'uppercase', fontSize:11, letterSpacing:1, color:S.text3, fontFamily:S.mono }}>
+            {ORBITAL_KIND_LABEL[selected.kind]}
+          </div>
+          {selected.kind !== 'aircraft' ? (
+            <div style={{ marginTop:8, display:'grid', gridTemplateColumns:'auto auto', gap:'2px 12px', fontSize:12, fontFamily:S.mono, color:S.text2 }}>
+              <span style={{ opacity:0.6 }}>Latitude</span><span>{selected.lat.toFixed(2)}°</span>
+              <span style={{ opacity:0.6 }}>Longitude</span><span>{selected.lon.toFixed(2)}°</span>
+              <span style={{ opacity:0.6 }}>Altitude</span><span>{Math.round(selected.alt_km).toLocaleString()} km</span>
+            </div>
+          ) : (
+            <div style={{ marginTop:8, display:'grid', gridTemplateColumns:'auto auto', gap:'2px 12px', fontSize:12, fontFamily:S.mono, color:S.text2, maxHeight:260, overflowY:'auto' }}>
+              {selected.registration && <><span style={{ opacity:0.6 }}>Registration</span><span>{selected.registration}</span></>}
+              {selected.type_desc && <><span style={{ opacity:0.6 }}>Type</span><span>{selected.type_desc}</span></>}
+              <span style={{ opacity:0.6 }}>Status</span><span>{selected.on_ground ? 'On ground' : 'Airborne'}</span>
+              {!selected.on_ground && selected.baro_altitude_m != null && <><span style={{ opacity:0.6 }}>Altitude (baro)</span><span>{Math.round(selected.baro_altitude_m).toLocaleString()} m</span></>}
+              {!selected.on_ground && selected.geom_altitude_m != null && <><span style={{ opacity:0.6 }}>Altitude (GPS)</span><span>{Math.round(selected.geom_altitude_m).toLocaleString()} m</span></>}
+              {selected.velocity_ms != null && <><span style={{ opacity:0.6 }}>Ground speed</span><span>{Math.round(selected.velocity_ms * 3.6)} km/h</span></>}
+              {selected.tas_ms != null && <><span style={{ opacity:0.6 }}>True airspeed</span><span>{Math.round(selected.tas_ms * 3.6)} km/h</span></>}
+              {selected.mach != null && <><span style={{ opacity:0.6 }}>Mach</span><span>{selected.mach.toFixed(2)}</span></>}
+              {selected.heading != null && <><span style={{ opacity:0.6 }}>Heading</span><span>{Math.round(selected.heading)}°</span></>}
+              {selected.vertical_rate_ms != null && Math.abs(selected.vertical_rate_ms) > 0.3 && <><span style={{ opacity:0.6 }}>Vertical rate</span><span>{selected.vertical_rate_ms > 0 ? '↑' : '↓'} {Math.abs(Math.round(selected.vertical_rate_ms * 196.85))} ft/min</span></>}
+              {selected.nav_heading != null && <><span style={{ opacity:0.6 }}>Autopilot heading</span><span>{Math.round(selected.nav_heading)}°</span></>}
+              {selected.nav_altitude_mcp_m != null && <><span style={{ opacity:0.6 }}>Autopilot altitude</span><span>{Math.round(selected.nav_altitude_mcp_m).toLocaleString()} m</span></>}
+              {selected.squawk && <><span style={{ opacity:0.6 }}>Squawk</span><span>{selected.squawk}</span></>}
+              {selected.category && <><span style={{ opacity:0.6 }}>Category</span><span>{selected.category}</span></>}
+              {selected.rssi != null && <><span style={{ opacity:0.6 }}>Signal</span><span>{selected.rssi.toFixed(1)} dBFS</span></>}
+              {selected.seen_pos_s != null && <><span style={{ opacity:0.6 }}>Position age</span><span>{selected.seen_pos_s.toFixed(0)}s</span></>}
+              {selected.military && <><span style={{ opacity:0.6 }}>Flag</span><span style={{ color:'#ff9d9d' }}>Military</span></>}
+              {selected.pia && <><span style={{ opacity:0.6 }}>Flag</span><span style={{ color:'#ff9d9d' }}>Privacy (PIA)</span></>}
+              {selected.ladd && <><span style={{ opacity:0.6 }}>Flag</span><span style={{ color:'#ff9d9d' }}>Limited disclosure</span></>}
+              {selected.emergency && selected.emergency !== 'none' && <><span style={{ opacity:0.6 }}>Emergency</span><span style={{ color:'#ff6b6b' }}>{selected.emergency}</span></>}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ padding:'0 14px 10px' }}>
+        <input
+          type="text" placeholder="Search…" value={search}
+          onChange={e => onSearchChange(e.target.value)}
+          style={{
+            width:'100%', padding:'7px 9px', background:S.surface2, border:`1px solid ${S.border}`,
+            borderRadius:3, color:S.text1, fontFamily:S.mono, fontSize:12, outline:'none', boxSizing:'border-box',
+          }}
+        />
+      </div>
+      <div style={{ flex:1, overflowY:'auto', borderTop:`1px solid ${S.border}` }}>
+        {filteredList.map(item => (
+          <button key={item.key} onClick={() => onSelect({ kind: item.kind, ...item.data })}
+            style={{
+              display:'block', width:'100%', textAlign:'left', padding:'8px 14px',
+              background: selected && ((selected.kind === 'aircraft' && item.kind === 'aircraft' && selected.icao24 === item.data.icao24) || (selected.kind !== 'aircraft' && item.kind !== 'aircraft' && selected.name === item.data.name)) ? 'rgba(155,140,232,0.10)' : 'transparent',
+              border:'none', borderBottom:`1px solid ${S.border}`, cursor:'pointer',
+              color: ORBITAL_COLORS[item.kind], fontFamily:S.mono, fontSize:12,
+            }}>
+            <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.label}</div>
+            <div style={{ fontSize:10, opacity:0.55, marginTop:2, color:S.text3 }}>{item.sub}</div>
+          </button>
+        ))}
+        {filteredList.length === 0 && (
+          <div style={{ padding:'16px 14px', fontSize:12, color:S.text3, fontFamily:S.mono }}>
+            {(showSatellites || showAircraft) ? 'No matches' : 'Toggle a layer above to see data'}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Map ───────────────────────────────────────────────────────────────────────
 function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, onZoomChange }) {
   const divRef = useRef(null);
@@ -948,7 +1082,10 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI, aoiRegionName,
   isLoading,error,result,jobStatus, onSubmit, vesselStats, onClose, isMobile,
-  weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey, mapZoom }) {
+  weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey, mapZoom,
+  orbitalShowSatellites, setOrbitalShowSatellites, orbitalShowAircraft, setOrbitalShowAircraft,
+  orbitalSatellites, orbitalSatLoaded, orbitalSatDebug, orbitalAircraftStats, orbitalAircraftValid,
+  orbitalSearch, setOrbitalSearch, orbitalFilteredList, orbitalSelected, setOrbitalSelected }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const TABS = [
@@ -1118,19 +1255,16 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
         )}
         {tab === 'Agri' && <AgriPanel drawnAOI={drawnAOI} apiUrl={apiUrl} searchedRegionName={aoiRegionName} />}
         {tab === 'Orbital' && (
-          <div style={{ padding:'16px 14px', display:'flex', flexDirection:'column', gap:12 }}>
-            <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, textTransform:'uppercase' }}>Orbital View</div>
-            <div style={{ fontSize:13, color:S.text2, lineHeight:1.6 }}>
-              A 3D Earth view of live satellite positions — space stations and the brightest visual-magnitude
-              satellites, from CelesTrak orbital elements propagated live in your browser (SGP4). This is where
-              satellite tracking lives now — a flat dot on the 2D map was a poor fit for something that's actually in orbit.
-            </div>
-            <div style={{ fontSize:12, color:S.text3, lineHeight:1.6 }}>
-              Drag to rotate, scroll to zoom. Click a point — or search the list on the right — to see its name, live lat/lon, and altitude. Red points are space stations, violet points are other tracked satellites.
-            </div>
-          </div>
-        )}
-        {tab === 'Guide' && (
+          <OrbitalSidebarPanel
+            showSatellites={orbitalShowSatellites} onToggleSatellites={() => setOrbitalShowSatellites(v => !v)}
+            showAircraft={orbitalShowAircraft} onToggleAircraft={() => setOrbitalShowAircraft(v => !v)}
+            satelliteCount={orbitalSatellites.length} aircraftCount={orbitalAircraftStats.active_aircraft || orbitalAircraftValid.length}
+            satLoaded={orbitalSatLoaded} satDebug={orbitalSatDebug}
+            search={orbitalSearch} onSearchChange={setOrbitalSearch}
+            filteredList={orbitalFilteredList}
+            selected={orbitalSelected} onSelect={setOrbitalSelected}
+          />
+        )}        {tab === 'Guide' && (
           <div style={{ display:'flex', flexDirection:'column', gap:14, fontSize:15, color:S.text2 }}>
             <div>
               <div style={{ fontSize:15, fontFamily:S.mono, color:S.accent, letterSpacing:2, marginBottom:10, textTransform:'uppercase' }}>How to use</div>
@@ -1244,9 +1378,56 @@ export default function App() {
   const { vessels, stats: vesselStats } = useVesselTracker(API_URL, true);
 
   // Aircraft and satellites are NOT on the 2D map at all — they only live
-  // in the Orbital tab's 3D globe (see OrbitalGlobe.jsx), since a flat dot
-  // on a 2D map was a poor representation of a plane's heading/altitude
-  // or an object in orbit; the 3D view is a genuinely better fit for both.
+  // in the Orbital tab (3D globe + left sidebar list/detail view), since a
+  // flat dot on a 2D map was a poor representation of a plane's heading/
+  // altitude or an object in orbit; the 3D view is a genuinely better fit
+  // for both. Data-fetching lives here (not inside OrbitalGlobe) so the
+  // sidebar's Orbital tab and the 3D view share one source of truth —
+  // OrbitalGlobe.jsx is a pure renderer, the info card/list/toggles all
+  // live in the actual left sidebar instead of floating over the canvas.
+  const [orbitalShowSatellites, setOrbitalShowSatellites] = useState(true);
+  const [orbitalShowAircraft, setOrbitalShowAircraft] = useState(false);
+  const [orbitalSelected, setOrbitalSelected] = useState(null);
+  const [orbitalSearch, setOrbitalSearch] = useState('');
+  const { satellites: orbitalSatellites, loaded: orbitalSatLoaded, debug: orbitalSatDebug } = useSatelliteTracker(API_URL, orbitalShowSatellites);
+  const { aircraft: orbitalAircraft, stats: orbitalAircraftStats } = useAircraftTracker(API_URL, orbitalShowAircraft);
+  const orbitalStations = orbitalSatellites.filter(s => s.group === 'stations');
+  const orbitalOtherSats = orbitalSatellites.filter(s => s.group !== 'stations');
+  const orbitalAircraftValid = orbitalAircraft.filter(a => typeof a.lat === 'number' && typeof a.lon === 'number');
+
+  const orbitalFilteredList = (() => {
+    const items = [];
+    if (orbitalShowSatellites) {
+      orbitalStations.forEach(s => items.push({ kind: 'station', key: `sat:${s.name}`, label: s.name, sub: `${Math.round(s.alt_km).toLocaleString()} km`, data: s }));
+      orbitalOtherSats.forEach(s => items.push({ kind: 'satellite', key: `sat:${s.name}`, label: s.name, sub: `${Math.round(s.alt_km).toLocaleString()} km`, data: s }));
+    }
+    if (orbitalShowAircraft) {
+      orbitalAircraftValid.forEach(a => items.push({
+        kind: 'aircraft', key: `ac:${a.icao24}`,
+        label: a.callsign || a.icao24,
+        sub: a.on_ground ? 'on ground' : (a.baro_altitude_m != null ? `${Math.round(a.baro_altitude_m).toLocaleString()} m` : '—'),
+        data: a,
+      }));
+    }
+    items.sort((a, b) => a.label.localeCompare(b.label));
+    if (!orbitalSearch.trim()) return items;
+    const q = orbitalSearch.trim().toLowerCase();
+    return items.filter(it => it.label.toLowerCase().includes(q));
+  })();
+
+  // Keep the selected item's numbers live rather than freezing at the
+  // moment it was clicked/picked.
+  useEffect(() => {
+    setOrbitalSelected(prev => {
+      if (!prev) return prev;
+      if (prev.kind === 'aircraft') {
+        const fresh = orbitalAircraftValid.find(a => a.icao24 === prev.icao24);
+        return fresh ? { kind: 'aircraft', ...fresh } : prev;
+      }
+      const fresh = orbitalSatellites.find(s => s.name === prev.name);
+      return fresh ? { kind: prev.kind, ...fresh } : prev;
+    });
+  }, [orbitalSatellites, orbitalAircraftValid]);
 
   const clearLayers = useCallback(() => {
     layersRef.current.forEach(l => { if (mapRef.current?.hasLayer(l)) mapRef.current.removeLayer(l); });
@@ -1687,6 +1868,12 @@ export default function App() {
       weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
       satelliteLoadingKey={satelliteLoadingKey} mapZoom={mapZoom}
+      orbitalShowSatellites={orbitalShowSatellites} setOrbitalShowSatellites={setOrbitalShowSatellites}
+      orbitalShowAircraft={orbitalShowAircraft} setOrbitalShowAircraft={setOrbitalShowAircraft}
+      orbitalSatellites={orbitalSatellites} orbitalSatLoaded={orbitalSatLoaded} orbitalSatDebug={orbitalSatDebug}
+      orbitalAircraftStats={orbitalAircraftStats} orbitalAircraftValid={orbitalAircraftValid}
+      orbitalSearch={orbitalSearch} setOrbitalSearch={setOrbitalSearch}
+      orbitalFilteredList={orbitalFilteredList} orbitalSelected={orbitalSelected} setOrbitalSelected={setOrbitalSelected}
       isMobile={isMobile} onClose={() => setMobilePanel('map')} apiUrl={API_URL} mapRef={mapRef} />
   );
 
@@ -1734,7 +1921,11 @@ export default function App() {
                 Loading orbital view…
               </div>
             }>
-              <OrbitalGlobe apiUrl={API_URL} />
+              <OrbitalGlobe
+                stations={orbitalStations} otherSats={orbitalOtherSats} aircraft={orbitalAircraftValid}
+                showSatellites={orbitalShowSatellites} showAircraft={orbitalShowAircraft}
+                onSelect={setOrbitalSelected}
+              />
             </Suspense>
           </div>
         )}
