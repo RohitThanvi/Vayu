@@ -43,9 +43,31 @@ const COLORS = {
   aircraft:  '#e8c15c',
 };
 
-function latLonAltToVec3(lat, lon, altKm, earthRadius) {
+// Two SEPARATE altitude-display curves, not one shared formula — a single
+// curve tuned for satellite altitudes (hundreds-to-tens-of-thousands km)
+// makes the entire 0-13km aircraft range collapse into a visually
+// identical sliver (0.06 + 13/40000*0.7 barely differs from 0.06 + 0),
+// which is exactly why every aircraft looked like it was at the same
+// altitude regardless of real flight level. Aircraft get their own curve
+// sensitive within their actual range, capped well below where the
+// satellite curve starts, so the "aircraft hug the surface, satellites
+// orbit further out" visual hierarchy still holds.
+function satelliteAltToVec3(lat, lon, altKm, earthRadius) {
   const displayAlt = earthRadius * (0.06 + Math.min(altKm, 40000) / 40000 * 0.7);
-  const r = earthRadius + displayAlt;
+  return latLonRadiusToVec3(lat, lon, earthRadius + displayAlt);
+}
+
+function aircraftAltToVec3(lat, lon, altKm, earthRadius) {
+  // 0km (ground) -> ~1.5% of radius above surface; ~13km (typical cruise
+  // ceiling) -> ~5% -- a real, visible spread between ground and cruise
+  // traffic, while staying well under the satellite curve's 6% baseline
+  // minimum so aircraft never visually cross into "orbit" territory.
+  const clamped = Math.max(0, Math.min(altKm, 13));
+  const displayAlt = earthRadius * (0.015 + (clamped / 13) * 0.035);
+  return latLonRadiusToVec3(lat, lon, earthRadius + displayAlt);
+}
+
+function latLonRadiusToVec3(lat, lon, r) {
   const phi = (90 - lat) * (Math.PI / 180);
   const theta = (lon + 180) * (Math.PI / 180);
   return new THREE.Vector3(
@@ -186,6 +208,39 @@ export default function OrbitalGlobe({ apiUrl }) {
     loader.load(EARTH_TEXTURE_URL, (tex) => { material.map = tex; material.color.set(0xffffff); material.needsUpdate = true; });
     loader.load(EARTH_BUMP_URL, (tex) => { material.bumpMap = tex; material.bumpScale = 0.02; material.needsUpdate = true; });
 
+    // Atmosphere glow — a slightly larger, backside-rendered shell with a
+    // fresnel-style rim falloff (bright at the grazing edge, transparent
+    // facing the camera dead-on). Cheap and no extra texture needed, but
+    // it's the single biggest thing separating "a sphere with a texture on
+    // it" from something that reads as an actual planet — most of what
+    // makes reference globes look premium is exactly this effect.
+    const atmosphereGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.04, 64, 64);
+    const atmosphereMat = new THREE.ShaderMaterial({
+      uniforms: { glowColor: { value: new THREE.Color(0x5fa8ff) } },
+      vertexShader: `
+        varying float intensity;
+        void main() {
+          vec3 vNormal = normalize(normalMatrix * normal);
+          vec3 vViewDir = normalize(-(modelViewMatrix * vec4(position, 1.0)).xyz);
+          intensity = pow(0.65 - dot(vNormal, vViewDir), 2.5);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 glowColor;
+        varying float intensity;
+        void main() {
+          gl_FragColor = vec4(glowColor, clamp(intensity, 0.0, 1.0) * 0.55);
+        }
+      `,
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false,
+    });
+    const atmosphere = new THREE.Mesh(atmosphereGeo, atmosphereMat);
+    scene.add(atmosphere);
+
     const starGeo = new THREE.BufferGeometry();
     const starCount = 1200;
     const starPos = new Float32Array(starCount * 3);
@@ -272,6 +327,8 @@ export default function OrbitalGlobe({ apiUrl }) {
       renderer.dispose();
       geometry.dispose();
       material.dispose();
+      atmosphereGeo.dispose();
+      atmosphereMat.dispose();
       // Null out the refs, not just dispose their contents — StrictMode
       // (enabled in main.jsx) double-invokes this effect in dev
       // (mount -> cleanup -> mount), and without nulling here, the data-
@@ -303,7 +360,7 @@ export default function OrbitalGlobe({ apiUrl }) {
       if (list.length === 0) { pts.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3)); return; }
       const positions = new Float32Array(list.length * 3);
       list.forEach((s, i) => {
-        const v = latLonAltToVec3(s.lat, s.lon, s.alt_km, EARTH_RADIUS);
+        const v = satelliteAltToVec3(s.lat, s.lon, s.alt_km, EARTH_RADIUS);
         positions[i*3] = v.x; positions[i*3+1] = v.y; positions[i*3+2] = v.z;
       });
       pts.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -332,7 +389,7 @@ export default function OrbitalGlobe({ apiUrl }) {
       const positions = new Float32Array(list.length * 3);
       list.forEach((a, i) => {
         const altKm = (a.baro_altitude_m || 0) / 1000;
-        const v = latLonAltToVec3(a.lat, a.lon, altKm, EARTH_RADIUS);
+        const v = aircraftAltToVec3(a.lat, a.lon, altKm, EARTH_RADIUS);
         positions[i*3] = v.x; positions[i*3+1] = v.y; positions[i*3+2] = v.z;
       });
       pts.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -390,7 +447,7 @@ export default function OrbitalGlobe({ apiUrl }) {
 
       {selected && (
         <div style={{
-          position:'absolute', bottom:14, left:14, padding:'12px 14px', minWidth:220, maxWidth:280,
+          position:'absolute', bottom:14, left:14, padding:'12px 14px', minWidth:240, maxWidth:320,
           background:'rgba(10,12,15,0.9)', border:'1px solid #3a3140', borderRadius:6,
           fontFamily:'monospace', fontSize:13, color:'#e8e8e8',
         }}>
@@ -413,14 +470,27 @@ export default function OrbitalGlobe({ apiUrl }) {
               <span style={{ opacity:0.6 }}>Altitude</span><span>{Math.round(selected.alt_km).toLocaleString()} km</span>
             </div>
           ) : (
-            <div style={{ marginTop:8, display:'grid', gridTemplateColumns:'auto auto', gap:'2px 12px', fontSize:12 }}>
+            <div style={{ marginTop:8, display:'grid', gridTemplateColumns:'auto auto', gap:'2px 12px', fontSize:12, maxHeight:280, overflowY:'auto' }}>
               {selected.registration && <><span style={{ opacity:0.6 }}>Registration</span><span>{selected.registration}</span></>}
               {selected.type_desc && <><span style={{ opacity:0.6 }}>Type</span><span>{selected.type_desc}</span></>}
               <span style={{ opacity:0.6 }}>Status</span><span>{selected.on_ground ? 'On ground' : 'Airborne'}</span>
-              {!selected.on_ground && selected.baro_altitude_m != null && <><span style={{ opacity:0.6 }}>Altitude</span><span>{Math.round(selected.baro_altitude_m).toLocaleString()} m</span></>}
-              {selected.velocity_ms != null && <><span style={{ opacity:0.6 }}>Speed</span><span>{Math.round(selected.velocity_ms * 3.6)} km/h</span></>}
+              {!selected.on_ground && selected.baro_altitude_m != null && <><span style={{ opacity:0.6 }}>Altitude (baro)</span><span>{Math.round(selected.baro_altitude_m).toLocaleString()} m</span></>}
+              {!selected.on_ground && selected.geom_altitude_m != null && <><span style={{ opacity:0.6 }}>Altitude (GPS)</span><span>{Math.round(selected.geom_altitude_m).toLocaleString()} m</span></>}
+              {selected.velocity_ms != null && <><span style={{ opacity:0.6 }}>Ground speed</span><span>{Math.round(selected.velocity_ms * 3.6)} km/h</span></>}
+              {selected.tas_ms != null && <><span style={{ opacity:0.6 }}>True airspeed</span><span>{Math.round(selected.tas_ms * 3.6)} km/h</span></>}
+              {selected.mach != null && <><span style={{ opacity:0.6 }}>Mach</span><span>{selected.mach.toFixed(2)}</span></>}
+              {selected.heading != null && <><span style={{ opacity:0.6 }}>Heading</span><span>{Math.round(selected.heading)}°</span></>}
+              {selected.vertical_rate_ms != null && Math.abs(selected.vertical_rate_ms) > 0.3 && <><span style={{ opacity:0.6 }}>Vertical rate</span><span>{selected.vertical_rate_ms > 0 ? '↑' : '↓'} {Math.abs(Math.round(selected.vertical_rate_ms * 196.85))} ft/min</span></>}
+              {selected.nav_heading != null && <><span style={{ opacity:0.6 }}>Autopilot heading</span><span>{Math.round(selected.nav_heading)}°</span></>}
+              {selected.nav_altitude_mcp_m != null && <><span style={{ opacity:0.6 }}>Autopilot altitude</span><span>{Math.round(selected.nav_altitude_mcp_m).toLocaleString()} m</span></>}
               {selected.squawk && <><span style={{ opacity:0.6 }}>Squawk</span><span>{selected.squawk}</span></>}
+              {selected.category && <><span style={{ opacity:0.6 }}>Category</span><span>{selected.category}</span></>}
+              {selected.rssi != null && <><span style={{ opacity:0.6 }}>Signal</span><span>{selected.rssi.toFixed(1)} dBFS</span></>}
+              {selected.seen_pos_s != null && <><span style={{ opacity:0.6 }}>Position age</span><span>{selected.seen_pos_s.toFixed(0)}s</span></>}
               {selected.military && <><span style={{ opacity:0.6 }}>Flag</span><span style={{ color:'#ff9d9d' }}>Military</span></>}
+              {selected.pia && <><span style={{ opacity:0.6 }}>Flag</span><span style={{ color:'#ff9d9d' }}>Privacy (PIA)</span></>}
+              {selected.ladd && <><span style={{ opacity:0.6 }}>Flag</span><span style={{ color:'#ff9d9d' }}>Limited disclosure</span></>}
+              {selected.emergency && selected.emergency !== 'none' && <><span style={{ opacity:0.6 }}>Emergency</span><span style={{ color:'#ff6b6b' }}>{selected.emergency}</span></>}
             </div>
           )}
         </div>
