@@ -1,46 +1,49 @@
 """
-Vayu Network Bridge (AIS + OpenSky)
-====================================
+Vayu Network Bridge (AIS + adsb.lol aircraft)
+================================================
 A small, standalone service whose job is to hold outbound connections that
 Render's datacenter IP range gets blocked on, and re-expose them as plain
 REST endpoints the main Vayu backend polls over normal HTTP.
 
-Two feeds live here:
+This bridge is a second Render web service, deployed in the Ohio region
+(the main Vayu backend runs in Oregon) — NOT Fly.io. Two feeds live here:
 
 1. AIS (AISStream.io) — WebSocket-only, one live connection per API key.
-   When the main backend held that connection directly on Render, every
-   attempt got rejected with HTTP 429 at the handshake — before AISStream
-   even reads the API key — and regenerating the key didn't help. That
-   points at Render's shared outbound IP pool getting blocked, not
-   anything about the key or the code.
+   When the main backend held that connection directly on Render Oregon,
+   every attempt got rejected with HTTP 429 at the handshake — before
+   AISStream even reads the API key — and regenerating the key didn't
+   help. Moving the connection to this Render-Ohio service fixed it, which
+   pointed at Render Oregon's specific shared outbound IP pool being
+   blocked, not anything about the key or the code.
 
-2. Aircraft (OpenSky Network) — same shape of problem: OpenSky's
-   /states/all consistently ConnectTimeouts from Render even with valid
-   OAuth2 credentials configured (ruling out an auth/rate-limit cause —
-   this is a connection-level rejection, not a 4xx with a body), matching
-   the same "this datacenter IP range specifically is blocked" pattern
-   AIS hit first. Moving the poll here (a different host, different IP
-   range — this was proven to work for AIS) is the fix.
+2. Aircraft — originally OpenSky, but OpenSky ConnectTimeouts from
+   Render-Ohio too (confirmed via this service's own logs — even the OAuth
+   token request itself never completes), unlike AIS. So unlike AIS,
+   region-hopping within Render didn't fix OpenSky specifically — it
+   appears to disfavor Render broadly, not just the Oregon range. Switched
+   to adsb.lol instead: a free, keyless, community ADS-B aggregation API
+   that doesn't have this problem. Its tradeoff is the opposite of
+   OpenSky's — no single global-snapshot endpoint, only bounded
+   point/radius queries (max 250nm) — so this polls a curated list of
+   aviation-dense regions across every continent (see ADSBLOL_REGIONS)
+   and merges the results, rather than one call covering the whole globe.
 
 Both feeds run in the same lightweight service since neither needs its
 own dedicated worker the way AIS's one-connection-per-key constraint
 might suggest — only the *AISStream* connection itself has that
 constraint (see the Dockerfile comment on staying single-instance), and
-OpenSky polling doesn't hold a persistent connection at all, just a
-periodic REST GET, so it costs nothing extra to add the same host.
+polling adsb.lol doesn't hold a persistent connection at all, just a
+batch of periodic REST GETs, so it costs nothing extra to add here.
 
 Deploy this as its own small service, separate from the main Vayu backend.
 Required/optional env vars:
-  AISSTREAM_API_KEY     your aisstream.io key
-  OPENSKY_CLIENT_ID     your OpenSky OAuth2 client id (opensky-network.org
-  OPENSKY_CLIENT_SECRET  -> Account -> API Clients) — falls back to
-                         anonymous OpenSky access if unset, which works
-                         but is unreliable even from a non-blocked IP
-  BRIDGE_API_KEY         a secret you invent — the backend sends it back
-                         as the X-Bridge-Key header on every request to
-                         BOTH /vessels and /aircraft. Without this, anyone
-                         who finds the bridge's public URL reads your feed
-                         for free. Set this before deploying publicly.
+  AISSTREAM_API_KEY   your aisstream.io key
+  BRIDGE_API_KEY       a secret you invent — the backend sends it back
+                        as the X-Bridge-Key header on every request to
+                        BOTH /vessels and /aircraft. Without this, anyone
+                        who finds the bridge's public URL reads your feed
+                        for free. Set this before deploying publicly.
+adsb.lol needs no key at all — it's fully anonymous/keyless by design.
 """
 
 import asyncio
@@ -57,8 +60,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 
 load_dotenv()  # reads .env in this directory if present — no-op in prod
-                # (Fly.io/Render inject real env vars directly, .env is
-                # purely a local-dev convenience and is gitignored)
+                # (Render injects real env vars directly, .env is purely a
+                # local-dev convenience and is gitignored)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,12 +72,6 @@ logger = logging.getLogger("vayu_bridge")
 AISSTREAM_API_KEY = os.environ.get("AISSTREAM_API_KEY", "")
 BRIDGE_API_KEY = os.environ.get("BRIDGE_API_KEY", "")
 AISSTREAM_WS_URL = "wss://stream.aisstream.io/v0/stream"
-
-OPENSKY_CLIENT_ID = os.environ.get("OPENSKY_CLIENT_ID", "")
-OPENSKY_CLIENT_SECRET = os.environ.get("OPENSKY_CLIENT_SECRET", "")
-OPENSKY_URL = "https://opensky-network.org/api/states/all"
-OPENSKY_TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
-OPENSKY_POLL_INTERVAL_S = 90
 
 STALE_MINUTES = 30
 MAX_VESSELS = 5000
@@ -228,11 +225,12 @@ class VesselBuffer:
 vessel_buffer = VesselBuffer()
 
 
-# ── OpenSky aircraft tracking ────────────────────────────────────────────────
+# ── Aircraft tracking (adsb.lol) ─────────────────────────────────────────────
 class AircraftBuffer:
-    """Latest global OpenSky snapshot. Simple replace-on-poll, no
-    per-aircraft merge needed — each poll is already a full state-vector
-    snapshot, unlike AIS's per-message updates."""
+    """Latest merged adsb.lol snapshot across all regions. Simple
+    replace-on-poll like AircraftBuffer always was — each poll cycle
+    re-fetches and re-merges all regions into one fresh list, no
+    per-aircraft incremental merge needed."""
 
     def __init__(self):
         self._aircraft: list[dict] = []
@@ -263,106 +261,156 @@ class AircraftBuffer:
 
 aircraft_buffer = AircraftBuffer()
 
-# OpenSky state vector array indices (per their documented schema)
-_OS_ICAO24, _OS_CALLSIGN, _OS_ORIGIN_COUNTRY = 0, 1, 2
-_OS_LON, _OS_LAT, _OS_BARO_ALT = 5, 6, 7
-_OS_ON_GROUND, _OS_VELOCITY, _OS_HEADING = 8, 9, 10
-_OS_VERT_RATE = 11
+ADSBLOL_POINT_URL = "https://api.adsb.lol/v2/point/{lat}/{lon}/{radius_nm}"
+ADSBLOL_RADIUS_NM = 250          # adsb.lol's documented max per point query
+ADSBLOL_POLL_INTERVAL_S = 90     # same cadence OpenSky ran at
+ADSBLOL_MAX_CONCURRENCY = 8      # cap parallel requests — polite to a free community API, not just "as fast as possible"
 
-_opensky_token_cache: dict = {}
+# Curated aviation-dense region centers across every populated continent —
+# not literal wall-to-wall global tiling (that would mean many hundreds of
+# 250nm circles just to cover open ocean with no traffic, and would be a
+# genuinely abusive request volume against a free, donation-funded,
+# keyless community API). Each point's 250nm circle typically covers an
+# entire metro area's air traffic and a good chunk of the surrounding
+# region, so ~50 well-chosen points give broad worldwide coverage of where
+# aircraft actually are, without hammering the service. Adjust freely.
+ADSBLOL_REGIONS = [
+    # North America
+    ("Los Angeles", 34.05, -118.24), ("Dallas", 32.78, -96.80),
+    ("Chicago", 41.88, -87.63), ("New York", 40.71, -74.01),
+    ("Atlanta", 33.75, -84.39), ("Denver", 39.74, -104.99),
+    ("Seattle", 47.61, -122.33), ("Toronto", 43.65, -79.38),
+    ("Mexico City", 19.43, -99.13), ("Miami", 25.76, -80.19),
+    # South America
+    ("Sao Paulo", -23.55, -46.63), ("Buenos Aires", -34.60, -58.38),
+    ("Bogota", 4.71, -74.07), ("Lima", -12.05, -77.04),
+    ("Santiago", -33.45, -70.67),
+    # Europe
+    ("London", 51.51, -0.13), ("Paris", 48.85, 2.35),
+    ("Frankfurt", 50.11, 8.68), ("Madrid", 40.42, -3.70),
+    ("Rome", 41.90, 12.50), ("Amsterdam", 52.37, 4.90),
+    ("Moscow", 55.76, 37.62), ("Istanbul", 41.01, 28.98),
+    ("Warsaw", 52.23, 21.01),
+    # Africa
+    ("Cairo", 30.04, 31.24), ("Lagos", 6.52, 3.38),
+    ("Johannesburg", -26.20, 28.05), ("Nairobi", -1.29, 36.82),
+    ("Casablanca", 33.57, -7.59), ("Addis Ababa", 9.03, 38.74),
+    # Middle East
+    ("Dubai", 25.20, 55.27), ("Riyadh", 24.71, 46.68),
+    ("Doha", 25.29, 51.53), ("Tel Aviv", 32.08, 34.78),
+    # South Asia
+    ("Delhi", 28.61, 77.21), ("Mumbai", 19.08, 72.88),
+    ("Bengaluru", 12.97, 77.59), ("Karachi", 24.86, 67.01),
+    ("Dhaka", 23.81, 90.41), ("Colombo", 6.93, 79.85),
+    # East Asia
+    ("Beijing", 39.90, 116.41), ("Shanghai", 31.23, 121.47),
+    ("Tokyo", 35.68, 139.65), ("Seoul", 37.57, 126.98),
+    ("Hong Kong", 22.32, 114.17), ("Taipei", 25.03, 121.57),
+    # Southeast Asia
+    ("Singapore", 1.35, 103.82), ("Bangkok", 13.76, 100.50),
+    ("Jakarta", -6.21, 106.85), ("Manila", 14.60, 120.98),
+    ("Kuala Lumpur", 3.14, 101.69), ("Ho Chi Minh City", 10.82, 106.63),
+    # Oceania
+    ("Sydney", -33.87, 151.21), ("Auckland", -36.85, 174.76),
+    ("Perth", -31.95, 115.86),
+]
 
 
-async def _get_opensky_token(client: httpx.AsyncClient) -> Optional[str]:
-    global _opensky_token_cache
-    now = datetime.utcnow()
-    cached = _opensky_token_cache.get("access_token")
-    expires_at = _opensky_token_cache.get("expires_at")
-    if cached and expires_at and now < expires_at:
-        return cached
-
-    try:
-        resp = await client.post(
-            OPENSKY_TOKEN_URL,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": OPENSKY_CLIENT_ID,
-                "client_secret": OPENSKY_CLIENT_SECRET,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        token = data.get("access_token")
-        expires_in = data.get("expires_in", 1800)
-        if token:
-            _opensky_token_cache = {
-                "access_token": token,
-                "expires_at": now + timedelta(seconds=expires_in - 60),
-            }
-        return token
-    except Exception as e:
-        logger.error(f"OpenSky OAuth error: {type(e).__name__}: {e}")
+def _adsblol_map_aircraft(ac: dict) -> Optional[dict]:
+    """Map one adsb.lol 'ac' array entry (ADS-B Exchange v2-compatible
+    schema) into the flat aircraft dict shape the main backend's
+    AircraftStore already expects (see aircraft_store.py there)."""
+    hex_ = ac.get("hex")
+    lat, lon = ac.get("lat"), ac.get("lon")
+    if not hex_ or lat is None or lon is None:
         return None
 
+    # adsb.lol/ADSBx schema quirk: alt_baro is either a number (feet) OR
+    # the literal string "ground" when the aircraft is on the ground —
+    # not a separate boolean flag the way OpenSky had on_ground.
+    alt_baro = ac.get("alt_baro")
+    on_ground = alt_baro == "ground"
+    altitude_m = 0.0 if on_ground else (
+        alt_baro * 0.3048 if isinstance(alt_baro, (int, float)) else None
+    )
 
-async def _fetch_opensky_snapshot() -> list[dict]:
+    gs = ac.get("gs")               # ground speed, knots
+    baro_rate = ac.get("baro_rate") # vertical rate, ft/min
+    db_flags = ac.get("dbFlags", 0) or 0
+
+    return {
+        "icao24": hex_,
+        "callsign": (ac.get("flight") or hex_).strip() or hex_.upper(),
+        "registration": ac.get("r"),
+        "type_code": ac.get("t"),
+        "type_desc": ac.get("desc"),
+        "origin_country": None,   # adsb.lol doesn't provide this the way OpenSky did
+        "lat": lat,
+        "lon": lon,
+        "baro_altitude_m": altitude_m,
+        "on_ground": on_ground,
+        "velocity_ms": (gs * 0.514444) if isinstance(gs, (int, float)) else None,
+        "heading": ac.get("track"),
+        "vertical_rate_ms": (baro_rate * 0.00508) if isinstance(baro_rate, (int, float)) else None,
+        "squawk": ac.get("squawk"),
+        "category": ac.get("category"),
+        "emergency": ac.get("emergency"),
+        "military": bool(db_flags & 1),
+        "interesting": bool(db_flags & 2),
+        "last_update": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+async def _fetch_adsblol_region(client: httpx.AsyncClient, sem: asyncio.Semaphore, name: str, lat: float, lon: float) -> list[dict]:
+    url = ADSBLOL_POINT_URL.format(lat=lat, lon=lon, radius_nm=ADSBLOL_RADIUS_NM)
+    async with sem:
+        try:
+            resp = await client.get(url, timeout=httpx.Timeout(15, connect=8))
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.warning(f"adsb.lol region '{name}' fetch failed: {type(e).__name__}: {e}")
+            return []
+    out = []
+    for ac in (data.get("ac") or []):
+        mapped = _adsblol_map_aircraft(ac)
+        if mapped:
+            out.append(mapped)
+    return out
+
+
+async def _fetch_adsblol_snapshot() -> list[dict]:
+    sem = asyncio.Semaphore(ADSBLOL_MAX_CONCURRENCY)
     headers = {"User-Agent": "VAYU-Network-Bridge/1.0"}
     async with httpx.AsyncClient(headers=headers) as client:
-        if OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET:
-            token = await _get_opensky_token(client)
-            if token:
-                client.headers["Authorization"] = f"Bearer {token}"
+        results = await asyncio.gather(*[
+            _fetch_adsblol_region(client, sem, name, lat, lon)
+            for name, lat, lon in ADSBLOL_REGIONS
+        ])
 
-        resp = await client.get(OPENSKY_URL, timeout=httpx.Timeout(20, connect=8))
-        resp.raise_for_status()
-        data = resp.json()
-
-    states = data.get("states") or []
-    aircraft = []
-    for s in states:
-        try:
-            lat, lon = s[_OS_LAT], s[_OS_LON]
-            if lat is None or lon is None:
-                continue
-            icao24 = s[_OS_ICAO24]
-            if not icao24:
-                continue
-            callsign = (s[_OS_CALLSIGN] or "").strip()
-            aircraft.append({
-                "icao24": icao24,
-                "callsign": callsign or icao24.upper(),
-                "origin_country": s[_OS_ORIGIN_COUNTRY],
-                "lat": lat,
-                "lon": lon,
-                "baro_altitude_m": s[_OS_BARO_ALT],
-                "on_ground": bool(s[_OS_ON_GROUND]),
-                "velocity_ms": s[_OS_VELOCITY],
-                "heading": s[_OS_HEADING],
-                "vertical_rate_ms": s[_OS_VERT_RATE],
-                "last_update": datetime.utcnow().isoformat() + "Z",
-            })
-        except (IndexError, TypeError):
-            continue
-    return aircraft
+    # Regions' circles overlap at the edges (adjacent metro areas within
+    # 250nm of each other) — dedupe by icao24 hex, last region wins for
+    # any given aircraft (arbitrary but harmless, positions agree within
+    # a few seconds of each other regardless of which region reported it).
+    merged: dict[str, dict] = {}
+    for region_result in results:
+        for ac in region_result:
+            merged[ac["icao24"]] = ac
+    return list(merged.values())
 
 
-async def _poll_opensky_forever():
-    if not OPENSKY_CLIENT_ID:
-        logger.info(
-            "OPENSKY_CLIENT_ID not set — polling anonymously (works, but unreliable "
-            "even from a non-blocked IP; register free at opensky-network.org)"
-        )
+async def _poll_adsblol_forever():
     while True:
         try:
-            aircraft = await _fetch_opensky_snapshot()
+            aircraft = await _fetch_adsblol_snapshot()
             await aircraft_buffer.load_snapshot(aircraft)
             aircraft_buffer.record_success()
-            logger.debug(f"OpenSky poll: {len(aircraft)} aircraft")
+            logger.debug(f"adsb.lol poll: {len(aircraft)} aircraft across {len(ADSBLOL_REGIONS)} regions")
         except Exception as e:
-            logger.error(f"OpenSky poll error: {type(e).__name__}: {e}")
+            logger.error(f"adsb.lol poll error: {type(e).__name__}: {e}")
             aircraft_buffer.record_error(f"{type(e).__name__}: {e}".rstrip(": "))
-        await asyncio.sleep(OPENSKY_POLL_INTERVAL_S)
+        await asyncio.sleep(ADSBLOL_POLL_INTERVAL_S)
+
 
 
 class AISBridgeClient:
@@ -524,15 +572,15 @@ async def lifespan(app: FastAPI):
             "Set it before deploying this publicly."
         )
     await ais_client.start()
-    opensky_task = asyncio.create_task(_poll_opensky_forever(), name="opensky-poll")
+    adsblol_task = asyncio.create_task(_poll_adsblol_forever(), name="adsblol-poll")
     prune_task = asyncio.create_task(_prune_loop())
     yield
     prune_task.cancel()
-    opensky_task.cancel()
+    adsblol_task.cancel()
     await ais_client.stop()
 
 
-app = FastAPI(title="Vayu Network Bridge", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="Vayu Network Bridge", version="1.2.0", lifespan=lifespan)
 
 
 def _check_auth(x_bridge_key: Optional[str]):

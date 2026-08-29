@@ -8,7 +8,6 @@ import AgriPanel from './components/AgriPanel';
 // the first time someone actually opens that tab.
 const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
 import { useVesselTracker } from './hooks/useVesselTracker';
-import { useAircraftTracker } from './hooks/useAircraftTracker';
 
 const MOBILE_BREAKPOINT = 860;
 
