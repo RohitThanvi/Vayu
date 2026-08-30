@@ -137,6 +137,8 @@ def _vegetation_findings(m: Dict) -> List[str]:
 
 
 def _builtup_findings(m: Dict) -> List[str]:
+    if m.get("data_availability_note"):
+        return [f"Built-up change could not be computed: {m['data_availability_note']}"]
     gain = m.get("builtup_gain_km2", 0) or 0
     loss = m.get("builtup_loss_km2", 0) or 0
     initial = m.get("initial_builtup_km2", 0) or 0
@@ -170,6 +172,8 @@ def _builtup_findings(m: Dict) -> List[str]:
 
 
 def _water_findings(m: Dict) -> List[str]:
+    if m.get("data_availability_note"):
+        return [f"Surface water change could not be computed: {m['data_availability_note']}"]
     gain = m.get("water_gain_km2", 0) or 0
     loss = m.get("water_loss_km2", 0) or 0
     initial = m.get("initial_water_km2", 0) or 0
@@ -246,13 +250,26 @@ def _fire_findings(m: Dict) -> List[str]:
 def _drought_findings(m: Dict) -> List[str]:
     drought_km2 = m.get("drought_affected_km2", 0) or 0
     severe_km2 = m.get("severe_drought_km2", 0) or 0
-    nddi_start = m.get("avg_nddi_start", 0) or 0
-    nddi_end = m.get("avg_nddi_end", 0) or 0
+    nddi_start = m.get("avg_nddi_start")
+    nddi_end = m.get("avg_nddi_end")
+    if nddi_start is not None and nddi_end is not None:
+        nddi_sentence = (
+            f"The area-mean NDDI moved from {nddi_start:.3f} at the start of the period to "
+            f"{nddi_end:.3f} at the end."
+        )
+    else:
+        # Genuinely disclose missing data rather than defaulting to 0 --
+        # a NDDI of exactly 0.000 is a real (if unlikely) measurement, so
+        # silently substituting it for "no valid pixels" would misreport
+        # an absence of data as a specific, neutral-sounding value.
+        nddi_sentence = (
+            "The area-mean NDDI could not be computed for one or both periods (no pixels with a "
+            "valid NDVI+NDWI denominator were found in the AOI)."
+        )
     p1 = (
         f"The Normalized Difference Drought Index (NDDI = (NDVI \u2212 NDWI) / (NDVI + NDWI)) identifies "
         f"{drought_km2:,.2f} km\u00b2 under drought stress (NDDI > 0.5) at the end of the analysis period, "
-        f"of which {severe_km2:,.2f} km\u00b2 meets the severe threshold (NDDI > 0.7). The area-mean NDDI "
-        f"moved from {nddi_start:.3f} at the start of the period to {nddi_end:.3f} at the end."
+        f"of which {severe_km2:,.2f} km\u00b2 meets the severe threshold (NDDI > 0.7). {nddi_sentence}"
     )
     p2 = (
         "NDDI is a relative vegetation-moisture index, not a direct soil-moisture or precipitation "
@@ -264,13 +281,21 @@ def _drought_findings(m: Dict) -> List[str]:
 
 
 def _lst_findings(m: Dict) -> List[str]:
-    start_t = m.get("start_mean_lst_c", 0) or 0
-    end_t = m.get("end_mean_lst_c", 0) or 0
+    if m.get("data_availability_note"):
+        return [f"Land surface temperature could not be computed: {m['data_availability_note']}"]
+    start_t = m.get("start_mean_lst_c")
+    end_t = m.get("end_mean_lst_c")
     uhi_km2 = m.get("uhi_area_km2", 0) or 0
-    delta = end_t - start_t
+    if start_t is not None and end_t is not None:
+        delta = end_t - start_t
+        temp_sentence = (
+            f"Landsat thermal band (ST_B10) derived land surface temperature averaged {start_t:.2f}\u00b0C at "
+            f"the start of the period and {end_t:.2f}\u00b0C at the end ({delta:+.2f}\u00b0C). "
+        )
+    else:
+        temp_sentence = "Land surface temperature could not be computed for one or both periods (no usable Landsat thermal pixels found). "
     p1 = (
-        f"Landsat thermal band (ST_B10) derived land surface temperature averaged {start_t:.2f}\u00b0C at "
-        f"the start of the period and {end_t:.2f}\u00b0C at the end ({delta:+.2f}\u00b0C). "
+        f"{temp_sentence}"
         f"{uhi_km2:,.2f} km\u00b2 was classified as an urban heat island pixel (surface temperature more "
         f"than 2\u00b0C above the area mean) in the end-period composite."
     )
@@ -304,23 +329,40 @@ def _deforestation_findings(m: Dict) -> List[str]:
 
 
 def _soil_moisture_findings(m: Dict) -> List[str]:
-    start_sm = m.get("start_avg_soil_moisture", 0) or 0
-    end_sm = m.get("end_avg_soil_moisture", 0) or 0
-    change = m.get("moisture_change", end_sm - start_sm) or 0
-    dry_km2 = m.get("dry_stress_area_km2", 0) or 0
-    p1 = (
-        f"SMAP root-zone soil moisture averaged {start_sm:.4f} m\u00b3/m\u00b3 at the start of the period "
-        f"and {end_sm:.4f} m\u00b3/m\u00b3 at the end ({change:+.4f} m\u00b3/m\u00b3). "
-        f"{dry_km2:,.2f} km\u00b2 fell below the 0.10 m\u00b3/m\u00b3 dry-stress threshold in the end-period "
-        f"composite."
-    )
+    start_sm = m.get("start_avg_soil_moisture")
+    end_sm = m.get("end_avg_soil_moisture")
+    change = m.get("moisture_change")
+    dry_km2 = m.get("dry_stress_area_km2")
+    if start_sm is not None and end_sm is not None:
+        moisture_sentence = (
+            f"SMAP root-zone soil moisture averaged {start_sm:.4f} m\u00b3/m\u00b3 at the start of the period "
+            f"and {end_sm:.4f} m\u00b3/m\u00b3 at the end ({(change if change is not None else end_sm - start_sm):+.4f} m\u00b3/m\u00b3). "
+        )
+    else:
+        moisture_sentence = "SMAP soil moisture could not be computed for one or both periods (no SMAP coverage found for this AOI/window). "
+    if dry_km2 is not None:
+        dry_sentence = (
+            f"{dry_km2:,.2f} km\u00b2 fell below the 0.10 m\u00b3/m\u00b3 dry-stress threshold in the end-period composite."
+        )
+    else:
+        dry_sentence = "Dry-stress area could not be computed for the end period (no SMAP coverage found)."
+    p1 = moisture_sentence + dry_sentence
     p2 = (
         "SMAP soil moisture is reported at a coarse ~10 km grid \u2014 suitable for regional/district-scale "
         "moisture trends, not parcel-level irrigation decisions. Values represent an average condition "
         "across each grid cell and can mask meaningful sub-cell variability from mixed land cover or "
         "localized irrigation."
     )
-    return [p1, p2]
+    findings = [p1, p2]
+    if m.get("window_overlap_caveat"):
+        findings.append(
+            "CAVEAT \u2014 SMAP's start- and end-period averaging windows (3 months each, extending outward "
+            "from the requested start/end dates) overlap for this analysis because the requested period "
+            "itself is short. The start and end moisture figures above are not computed from fully "
+            "independent before/after data \u2014 treat the reported moisture_change as less reliable than "
+            "it would be for a longer requested period."
+        )
+    return findings
 
 
 ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
@@ -393,10 +435,14 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
         "sources": ["JRC Global Surface Water (JRC/GSW1_4)", "30 m spatial resolution"],
         "methodology": [
             "Surface water extent is derived from the JRC Global Surface Water monthly water history "
-            "product, which classifies each Landsat pixel as water or non-water based on spectral "
-            "signature across the full multi-decadal Landsat archive.",
-            "Start- and end-period water masks are built as an occurrence-frequency composite over each "
-            "comparison window; gain/loss areas are the pixel-wise difference between the two masks.",
+            "product, which classifies each Landsat pixel as water or non-water each month based on "
+            "spectral signature across the full multi-decadal Landsat archive.",
+            "Start- and end-period water masks reflect each pixel's most common (modal) monthly "
+            "classification across the full year-long comparison window \u2014 i.e. the water body's "
+            "typical/dominant state that year, not its maximum extent at any single month. A location "
+            "that is wet for a few weeks and dry the rest of the year will correctly show as \"not "
+            "water\" even though it was briefly inundated at its peak; gain/loss areas are the "
+            "pixel-wise difference between the two dominant-state masks.",
         ],
         "metric_labels": {
             "water_gain_km2": ("Water Gain", "km\u00b2", 4),
@@ -416,7 +462,7 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
         "methodology": [
             "Flood extent is derived from Synthetic Aperture Radar (SAR) backscatter change detection, "
             "which is unaffected by cloud cover \u2014 standing water produces a characteristic drop in "
-            "VH-polarization backscatter relative to a pre-event reference window (30 days prior to the "
+            "VV-polarization backscatter relative to a pre-event reference window (30 days prior to the "
             "event window).",
             "A focal median speckle filter is applied to reduce radar speckle noise before change "
             "detection. Permanent water bodies (JRC Global Surface Water) and steep terrain (SRTM slope "
@@ -499,13 +545,20 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
         "title": "Land Surface Temperature / Urban Heat Island Analysis",
         "sources": ["Landsat 8/9 Collection 2 Level-2 (thermal band ST_B10)", "30 m (resampled) spatial resolution"],
         "methodology": [
-            "Land surface temperature is derived from the Landsat thermal band (ST_B10) using the "
-            "standard USGS Collection 2 scaling: LST(\u00b0C) = ST_B10 \u00d7 0.00341802 + 149.0 \u2212 273.15.",
-            "Start- and end-period composites are built as the mean LST across all available scenes in "
-            "a one-year window \u2014 the start-period window runs forward from the start date, and the "
-            "end-period window runs backward from the end date, so both windows stay within the "
-            "requested analysis period. Urban heat island pixels are those exceeding the AOI's "
-            "end-period mean temperature by more than 2\u00b0C.",
+            "Land surface temperature is derived from the Landsat 8 and 9 thermal band (ST_B10), merged "
+            "into one combined collection per window (not treated as an either/or fallback) using the "
+            "standard USGS Collection 2 scaling: LST(\u00b0C) = ST_B10 \u00d7 0.00341802 + 149.0 \u2212 273.15. "
+            "Scenes are pre-filtered to <20% overall cloud cover, and each scene's QA_PIXEL band is then "
+            "used to mask cloud, cloud shadow, and dilated-cloud pixels individually before averaging \u2014 "
+            "the scene-level filter alone does not catch localized cloud over part of an otherwise clear scene.",
+            "Start- and end-period composites are built as the mean LST across all available (post-masking) "
+            "scenes in a one-year window \u2014 the start-period window runs forward from the start date, and "
+            "the end-period window runs backward from the end date, so both windows stay within the "
+            "requested analysis period. Urban heat island pixels are those exceeding the AOI's end-period "
+            "mean temperature by more than 2\u00b0C \u2014 a relative, AOI-specific measure of localized hotspots "
+            "within this analysis, not a validated urban-vs-rural heat island measurement in the formal "
+            "UHI-research sense (which typically compares an urban core against a defined rural reference, "
+            "not an AOI against its own mean).",
         ],
         "metric_labels": {
             "start_mean_lst_c": ("Start Mean LST", "\u00b0C", 2),
@@ -524,14 +577,17 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "deforestation": {
         "title": "Deforestation / Forest Cover Loss Analysis",
-        "sources": ["Hansen Global Forest Change v1.12 (UMD/hansen/global_forest_change_2024_v1_12)", "30 m spatial resolution"],
+        "sources": ["Hansen Global Forest Change v1.13 (UMD/hansen/global_forest_change_2025_v1_13)", "30 m spatial resolution"],
         "methodology": [
             "Forest cover loss is derived from the Hansen Global Forest Change dataset, which maps "
             "year-2000 tree canopy cover and, independently, the year in which stand-replacement forest "
-            "loss occurred at each pixel (2001\u20132023) from Landsat time-series analysis.",
+            "loss occurred at each pixel (2001\u20132025) from Landsat time-series analysis.",
             "A pixel is counted as baseline forest where year-2000 canopy cover was \u2265 30%. Loss is the "
             "subset of that baseline forest whose mapped loss year falls within the requested analysis "
-            "period; area is computed via a 30 m-scale pixel-area reduction over the AOI.",
+            "period; area is computed via a 30 m-scale pixel-area reduction over the AOI. Reported loss "
+            "should be read as forest/tree-cover loss as this dataset measures it (any stand-replacement "
+            "disturbance) \u2014 not a confirmed attribution of cause (e.g. logging vs. fire vs. natural "
+            "disturbance), which this dataset alone does not determine.",
         ],
         "metric_labels": {
             "forest_loss_km2": ("Forest Loss", "km\u00b2", 4),
@@ -544,8 +600,9 @@ ANALYSIS_SPECS: Dict[str, Dict[str, Any]] = {
             "The Hansen dataset's loss-year attribution is derived from Landsat time series and can miss "
             "loss under persistent cloud cover or misattribute the exact year in fast-regrowth areas; the "
             "30% canopy threshold does not distinguish natural forest from dense plantations or orchards, "
-            "and the dataset's loss-year data currently extends only through 2023, so any portion of the "
-            "requested period after 2023 is not reflected in these figures."
+            "and the dataset's loss-year data currently extends only through 2025, so any portion of the "
+            "requested period after 2025 is not reflected in these figures. \"Loss\" here means detected "
+            "stand-replacement disturbance, not confirmed deforestation with an attributed cause."
         ),
     },
     "soil_moisture": {
@@ -637,8 +694,8 @@ ANALYSIS_EXTRAS: Dict[str, Dict[str, Any]] = {
         "glossary": [
             ("SAR", "Synthetic Aperture Radar \u2014 an active sensor that transmits its own microwave "
                      "signal and measures the reflection, working day/night and through cloud cover."),
-            ("VH Backscatter", "The returned radar signal strength in the vertical-transmit, "
-                                "horizontal-receive polarization; standing water produces a characteristic drop in this value."),
+            ("VV Backscatter", "The returned radar signal strength in the vertical-transmit, "
+                                "vertical-receive polarization; standing water produces a characteristic drop in this value."),
             ("dB (decibel)", "The logarithmic unit SAR backscatter is measured in; lower (more negative) "
                               "values indicate a smoother surface (e.g. calm water), higher values a rougher one (e.g. buildings, vegetation)."),
         ],
@@ -926,7 +983,7 @@ def _moisture_legend_for(observed_range):
         "unit": "Volumetric soil moisture — range fit to this AOI (2nd–98th percentile)",
     }
 SAR_LEGEND = {"palette": ["#0a0a0a", "#4a4a4a", "#8a8a8a", "#c8c8c8", "#f5f5f5"], "min": -25, "max": 0,
-               "labels": ["-25 dB (smooth/water)", "-12.5", "0 dB (rough/urban)"], "unit": "VH backscatter"}
+               "labels": ["-25 dB (smooth/water)", "-12.5", "0 dB (rough/urban)"], "unit": "VV backscatter"}
 THERMAL_LEGEND = {"palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"], "min": 0, "max": 45,
                     "labels": ["0\u00b0C", "22.5\u00b0C", "45\u00b0C"], "unit": "Land surface temperature"}
 PRECIP_LEGEND = {"palette": ["#8b6b3d", "#c9a86a", "#e8e88a", "#4a9ec9", "#1a4d7a"], "min": 0, "max": 400,
@@ -1607,7 +1664,7 @@ def build_analysis_report(
     flow += _study_area_section(styles, aoi_geojson)
     flow.append(PageBreak())
     if analysis_type == "flood_detection":
-        img_source_caption = "Sentinel-1 SAR (VH polarization), \u00b115 days around each date"
+        img_source_caption = "Sentinel-1 SAR (VV polarization), \u00b115 days around each date"
         img_legend = SAR_LEGEND
         before_caption, after_caption = img_source_caption, img_source_caption
     else:

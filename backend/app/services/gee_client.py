@@ -82,19 +82,74 @@ def _cap_end_date(end_date: str) -> ee.Date:
 
 
 def _polygon_geometry(aoi: Dict[str, Any]) -> ee.Geometry:
-    """Accept Polygon, MultiPolygon, Feature, or FeatureCollection."""
+    """Accept Polygon, MultiPolygon, Feature, or FeatureCollection.
+
+    FeatureCollection handling: previously took only features[0], silently
+    dropping every other feature in a multi-feature AOI (e.g. a district
+    boundary drawn as several disjoint polygons, or a place-search result
+    returning multiple parts) -- the analysis would run over a fraction of
+    the actual AOI without any indication that had happened. Multi-feature
+    collections are now combined into a single ee.Geometry via
+    ee.FeatureCollection(...).geometry(), which covers all of them.
+    """
+    if not aoi or not isinstance(aoi, dict):
+        raise ValueError("AOI is empty or invalid.")
+
     geo_type = aoi.get("type")
+
     if geo_type == "Feature":
-        aoi = aoi["geometry"]
-        geo_type = aoi.get("type")
+        geom = aoi.get("geometry")
+        if not geom:
+            raise ValueError("AOI Feature has no geometry.")
+        return _polygon_geometry(geom)
+
     if geo_type == "FeatureCollection":
-        aoi = aoi["features"][0]["geometry"]
-        geo_type = aoi.get("type")
+        features = aoi.get("features") or []
+        if not features:
+            raise ValueError("AOI FeatureCollection has no features.")
+        if len(features) == 1:
+            geom = features[0].get("geometry")
+            if not geom:
+                raise ValueError("AOI feature has no geometry.")
+            return _polygon_geometry(geom)
+        ee_features = []
+        for f in features:
+            geom = f.get("geometry")
+            if not geom:
+                continue
+            ee_features.append(ee.Feature(_polygon_geometry(geom)))
+        if not ee_features:
+            raise ValueError("AOI FeatureCollection has no valid geometries.")
+        return ee.FeatureCollection(ee_features).geometry()
+
     if geo_type == "Polygon":
-        return ee.Geometry.Polygon(aoi["coordinates"])
+        coords = aoi.get("coordinates")
+        if not coords:
+            raise ValueError("AOI Polygon has no coordinates.")
+        return ee.Geometry.Polygon(coords)
     if geo_type == "MultiPolygon":
-        return ee.Geometry.MultiPolygon(aoi["coordinates"])
-    raise ValueError(f"Unsupported geometry type: {geo_type}")
+        coords = aoi.get("coordinates")
+        if not coords:
+            raise ValueError("AOI MultiPolygon has no coordinates.")
+        return ee.Geometry.MultiPolygon(coords)
+    raise ValueError(f"Unsupported or missing geometry type: {geo_type}")
+
+
+def _validate_date_range(start_date: str, end_date: str):
+    """Reject nonsensical date ranges before spending any GEE compute on
+    them, and do it the same way for every processor rather than each
+    handling (or not handling) malformed/backwards/future dates
+    differently."""
+    try:
+        start = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
+        end = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        raise ValueError(f"Dates must be in YYYY-MM-DD format (got start_date={start_date!r}, end_date={end_date!r}).")
+    today = datetime.datetime.utcnow().date()
+    if start > today:
+        raise ValueError(f"start_date {start_date} is in the future (today is {today.isoformat()}).")
+    if start > end:
+        raise ValueError(f"start_date {start_date} is after end_date {end_date}.")
 
 
 def _require_start_after(start_date: str, cutoff: str, dataset_name: str):
@@ -175,6 +230,7 @@ def _region_area_km2(region: ee.Geometry) -> float:
 
 def compute_vegetation_change(aoi: Dict, start_date: str, end_date: str) -> Dict:
     logger.info(f"GEE: vegetation_change {start_date} → {end_date}")
+    _validate_date_range(start_date, end_date)
     _require_start_after(start_date, "2015-06-23", "Sentinel-2")
     end_ee = _cap_end_date(end_date)
     region = _polygon_geometry(aoi)
@@ -184,8 +240,18 @@ def compute_vegetation_change(aoi: Dict, start_date: str, end_date: str) -> Dict
     end_ndvi = _sentinel2_ndvi_composite(region, end_ee.advance(-1, "year"), end_ee)
 
     threshold = 0.2
-    start_veg = start_ndvi.gte(threshold).unmask(0)
-    end_veg = end_ndvi.gte(threshold).unmask(0)
+    # NOT unmasking to 0 here (a prior version did) -- a cloud-masked or
+    # otherwise invalid pixel in either period is genuinely unknown, not
+    # "definitely not vegetated". Forcing it to 0 meant a pixel that was
+    # real, valid vegetation in one period but cloud-masked in the other
+    # got counted as a definite loss or gain, when the honest answer is
+    # "no comparable data at this pixel". GEE boolean ops (.And/.Not)
+    # propagate masks, so leaving these masked naturally excludes any
+    # pixel invalid in EITHER period from loss_mask/gain_mask below --
+    # exactly the "only use pixels valid in both comparison periods"
+    # requirement, achieved by removing code rather than adding it.
+    start_veg = start_ndvi.gte(threshold)
+    end_veg = end_ndvi.gte(threshold)
     loss_mask = start_veg.And(end_veg.Not())
     gain_mask = end_veg.And(start_veg.Not())
 
@@ -233,6 +299,7 @@ def compute_vegetation_change(aoi: Dict, start_date: str, end_date: str) -> Dict
 
 def compute_builtup_change(aoi: Dict, start_date: str, end_date: str) -> Dict:
     logger.info(f"GEE: builtup_change {start_date} → {end_date}")
+    _validate_date_range(start_date, end_date)
     _require_start_after(start_date, "2015-06-27", "Dynamic World")
     end_ee = _cap_end_date(end_date)
     region = _polygon_geometry(aoi)
@@ -241,8 +308,28 @@ def compute_builtup_change(aoi: Dict, start_date: str, end_date: str) -> Dict:
 
     dw = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterBounds(region)
 
-    start_img = dw.filterDate(start_ee, start_ee.advance(1, "year")).mode()
-    end_img = dw.filterDate(end_ee.advance(-1, "year"), end_ee).mode()
+    start_col = dw.filterDate(start_ee, start_ee.advance(1, "year"))
+    end_col = dw.filterDate(end_ee.advance(-1, "year"), end_ee)
+    # .mode() on an empty ImageCollection doesn't error -- it silently
+    # returns a fully-masked image, which _calc_area_km2 then silently
+    # sums as 0 km². Without this check, "no Dynamic World coverage for
+    # this AOI/period" and "genuinely zero built-up change" were
+    # indistinguishable in the output.
+    if start_col.size().getInfo() == 0 or end_col.size().getInfo() == 0:
+        logger.warning("GEE: builtup_change — no Dynamic World imagery for this AOI/period")
+        return {
+            "metrics": {
+                "builtup_gain_km2": None, "builtup_loss_km2": None, "initial_builtup_km2": None,
+                "final_builtup_km2": None, "net_change_km2": None, "gain_pct": None,
+                "region_area_km2": None, "initial_builtup_pct_of_aoi": None, "final_builtup_pct_of_aoi": None,
+                "data_availability_note": "No Dynamic World imagery found for this AOI in the start or end period.",
+            },
+            "ee_image": ee.Image(0).clip(region),
+            "ee_geometry": region,
+        }
+
+    start_img = start_col.mode()
+    end_img = end_col.mode()
 
     start_mask = start_img.select("label").eq(BUILT_UP)
     end_mask = end_img.select("label").eq(BUILT_UP)
@@ -294,6 +381,7 @@ def compute_builtup_change(aoi: Dict, start_date: str, end_date: str) -> Dict:
 
 def compute_water_change(aoi: Dict, start_date: str, end_date: str) -> Dict:
     logger.info(f"GEE: water_change {start_date} → {end_date}")
+    _validate_date_range(start_date, end_date)
     _require_start_after(start_date, "1984-01-01", "JRC Water")
     end_ee = _cap_end_date(end_date)
     region = _polygon_geometry(aoi)
@@ -301,8 +389,31 @@ def compute_water_change(aoi: Dict, start_date: str, end_date: str) -> Dict:
     jrc = ee.ImageCollection("JRC/GSW1_4/MonthlyHistory").filterBounds(region)
 
     start_ee = ee.Date(start_date)
-    start_water = jrc.filterDate(start_ee, start_ee.advance(1, "year")).mode().eq(2)
-    end_water = jrc.filterDate(end_ee.advance(-1, "year"), end_ee).mode().eq(2)
+    start_col = jrc.filterDate(start_ee, start_ee.advance(1, "year"))
+    end_col = jrc.filterDate(end_ee.advance(-1, "year"), end_ee)
+    # Same "empty collection silently reads as zero change" issue as
+    # built-up change above -- JRC GSW's MonthlyHistory has a real
+    # historical cutoff, so a recent end_date can easily land past its
+    # coverage and silently report "no water change" instead of "no data".
+    if start_col.size().getInfo() == 0 or end_col.size().getInfo() == 0:
+        logger.warning("GEE: water_change — no JRC imagery for this AOI/period")
+        return {
+            "metrics": {
+                "water_gain_km2": None, "water_loss_km2": None, "initial_water_km2": None, "net_change_km2": None,
+                "data_availability_note": "No JRC Global Surface Water imagery found for this AOI in the start or end period (this dataset has a historical coverage cutoff and may not extend to very recent dates).",
+            },
+            "ee_image": ee.Image(0).clip(region),
+            "ee_geometry": region,
+        }
+
+    # mode() = the pixel's most common monthly state across the whole
+    # year-long window, i.e. the water body's TYPICAL/dominant state that
+    # year -- not the maximum extent reached at any single month (a lake
+    # that floods for 6 weeks and is otherwise dry most of the year would
+    # correctly show as "not water" here, since dry was the dominant
+    # state, even though it was wet at its peak).
+    start_water = start_col.mode().eq(2)
+    end_water = end_col.mode().eq(2)
 
     gain_mask = end_water.And(start_water.Not())
     loss_mask = start_water.And(end_water.Not())
@@ -354,6 +465,7 @@ def compute_flood_detection(aoi: Dict, start_date: str, end_date: str) -> Dict:
     opaque number.
     """
     logger.info(f"GEE: flood_detection {start_date} → {end_date}")
+    _validate_date_range(start_date, end_date)
     _require_start_after(start_date, "2014-04-01", "Sentinel-1")
     end_ee = _cap_end_date(end_date)
     region = _polygon_geometry(aoi)
@@ -469,6 +581,7 @@ def compute_flood_detection(aoi: Dict, start_date: str, end_date: str) -> Dict:
 def compute_fire_detection(aoi: Dict, start_date: str, end_date: str) -> Dict:
     """Burn scar detection using MODIS burned area."""
     logger.info(f"GEE: fire_detection {start_date} → {end_date}")
+    _validate_date_range(start_date, end_date)
     _require_start_after(start_date, "2000-11-01", "MODIS Burned Area")
     end_ee = _cap_end_date(end_date)
     region = _polygon_geometry(aoi)
@@ -484,19 +597,38 @@ def compute_fire_detection(aoi: Dict, start_date: str, end_date: str) -> Dict:
     burned_mask = modis_ba.max().gt(0)
     burned_km2 = _calc_area_km2(burned_mask, region, scale=500)
 
-    # Count fire events using MODIS active fire
+    # Count fire-detection days using MODIS active fire. The previous
+    # version filtered on "system:asset_size" > 0, a storage-size metadata
+    # field that's essentially always nonzero for any real image -- that
+    # filter did nothing, so it was silently counting how many MOD14A1
+    # images existed in the date range, not how many contained an actual
+    # fire detection. FireMask pixel values 7/8/9 mean low/nominal/high-
+    # confidence fire (0-6 are various non-fire/no-data/cloud/water
+    # states per the MOD14A1 product spec) -- count a day as a fire-
+    # detection day only if at least one such pixel falls within the AOI.
     active_fire = (
         ee.ImageCollection("MODIS/061/MOD14A1")
         .filterBounds(region)
         .filterDate(start_ee, end_ee)
         .select("FireMask")
     )
-    active_count = active_fire.filter(ee.Filter.gt("system:asset_size", 0)).size().getInfo()
+
+    def _flag_fire_day(img):
+        fire_pixel_count = img.gte(7).reduceRegion(
+            reducer=ee.Reducer.sum(), geometry=region, scale=1000,
+            maxPixels=1e9, bestEffort=True, tileScale=4,
+        ).get("FireMask")
+        has_fire = ee.Algorithms.If(ee.Number(fire_pixel_count).gt(0), 1, 0)
+        return img.set("has_fire_in_aoi", has_fire)
+
+    fire_event_count = active_fire.map(_flag_fire_day).filter(
+        ee.Filter.eq("has_fire_in_aoi", 1)
+    ).size().getInfo()
 
     return {
         "metrics": {
             "burned_area_km2": round(burned_km2, 4),
-            "fire_event_count": float(active_count),
+            "fire_event_count": float(fire_event_count),
         },
         "ee_image": burned_mask,
         "ee_geometry": region,
@@ -506,6 +638,7 @@ def compute_fire_detection(aoi: Dict, start_date: str, end_date: str) -> Dict:
 def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
     """Drought severity using NDDI (Normalized Difference Drought Index)."""
     logger.info(f"GEE: drought_index {start_date} → {end_date}")
+    _validate_date_range(start_date, end_date)
     _require_start_after(start_date, "2015-06-23", "Sentinel-2")
     end_ee = _cap_end_date(end_date)
     region = _polygon_geometry(aoi)
@@ -526,8 +659,16 @@ def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
         col = col_raw.median()
         ndvi = col.normalizedDifference(["B8", "B4"]).rename("NDVI")
         ndwi = col.normalizedDifference(["B3", "B8"]).rename("NDWI")
-        # NDDI = (NDVI - NDWI) / (NDVI + NDWI)
-        return ndvi.subtract(ndwi).divide(ndvi.add(ndwi)).rename("NDDI")
+        # NDDI = (NDVI - NDWI) / (NDVI + NDWI). Unprotected division blows
+        # up (or silently returns a meaningless huge value) wherever
+        # NDVI+NDWI is near zero -- explicitly mask those pixels out as
+        # invalid rather than let a near-zero denominator produce a wild
+        # or infinite NDDI that then pollutes the area threshold masks
+        # and the regional mean below.
+        denom = ndvi.add(ndwi)
+        valid_denom = denom.abs().gt(0.01)
+        nddi = ndvi.subtract(ndwi).divide(denom).updateMask(valid_denom).rename("NDDI")
+        return nddi
 
     start_nddi = get_nddi(start_ee, start_ee.advance(1, "year"))
     end_nddi = get_nddi(end_ee.advance(-1, "year"), end_ee)
@@ -542,14 +683,21 @@ def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
     drought_affected_pct = round(min(max(drought_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
     severe_drought_pct = round(min(max(severe_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
 
+    # Not defaulting a missing reduceRegion result to 0 -- "no valid NDDI
+    # pixels in this AOI/window" (e.g. every pixel had a near-zero
+    # denominator, or no imagery) is a genuinely different situation than
+    # "the average NDDI here is exactly zero", and collapsing them to the
+    # same 0 would misrepresent missing data as a real (and specifically
+    # neutral-sounding) measurement.
     avg_nddi_start = start_nddi.reduceRegion(
         reducer=ee.Reducer.mean(), geometry=region, scale=30, maxPixels=1e9,
         bestEffort=True, tileScale=4,
-    ).get("NDDI").getInfo() or 0
+    ).get("NDDI").getInfo()
     avg_nddi_end = end_nddi.reduceRegion(
         reducer=ee.Reducer.mean(), geometry=region, scale=30, maxPixels=1e9,
         bestEffort=True, tileScale=4,
-    ).get("NDDI").getInfo() or 0
+    ).get("NDDI").getInfo()
+    nddi_data_available = avg_nddi_start is not None and avg_nddi_end is not None
 
     return {
         "metrics": {
@@ -558,40 +706,73 @@ def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
             "region_area_km2": round(region_area_km2, 4),
             "drought_affected_pct": drought_affected_pct,
             "severe_drought_pct": severe_drought_pct,
-            "avg_nddi_start": round(avg_nddi_start, 4),
-            "avg_nddi_end": round(avg_nddi_end, 4),
-            "nddi_change": round(avg_nddi_end - avg_nddi_start, 4),
+            "avg_nddi_start": round(avg_nddi_start, 4) if avg_nddi_start is not None else None,
+            "avg_nddi_end": round(avg_nddi_end, 4) if avg_nddi_end is not None else None,
+            "nddi_change": round(avg_nddi_end - avg_nddi_start, 4) if nddi_data_available else None,
         },
         "ee_image": drought_mask,
         "ee_geometry": region,
     }
 
 
+def _mask_landsat_clouds(img: ee.Image) -> ee.Image:
+    """Pixel-level cloud/shadow masking for Landsat Collection 2 surface
+    products via the QA_PIXEL bit flags. Scene-level CLOUD_COVER < 20 (used
+    when building the collection) only filters out scenes that are mostly
+    cloudy overall -- a scene passing that filter can still have real
+    localized cloud/shadow over part of the AOI, which would otherwise
+    contaminate the mean LST for exactly the pixels under that cloud."""
+    qa = img.select("QA_PIXEL")
+    dilated_cloud = 1 << 1
+    cloud = 1 << 3
+    cloud_shadow = 1 << 4
+    mask = (
+        qa.bitwiseAnd(dilated_cloud).eq(0)
+        .And(qa.bitwiseAnd(cloud).eq(0))
+        .And(qa.bitwiseAnd(cloud_shadow).eq(0))
+    )
+    return img.updateMask(mask)
+
+
+def _landsat89_collection(region: ee.Geometry, start: ee.Date, end: ee.Date) -> ee.ImageCollection:
+    """Landsat 8 + 9 surface-temperature-ready collection for a window.
+
+    Merges both satellites rather than using either/or: a prior version
+    used Landsat 9 only when Landsat 8 had zero scenes for the window,
+    discarding every Landsat 9 observation whenever Landsat 8 had even one
+    -- even if Landsat 9 had substantially better coverage (less cloud,
+    more scenes) for that specific AOI/period. Combined 8-day revisit
+    (16 days each, offset) also gives denser temporal sampling than either
+    alone, which matters for a mean LST composite.
+    """
+    l8 = (
+        ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+        .filterBounds(region).filterDate(start, end)
+        .filter(ee.Filter.lt("CLOUD_COVER", 20))
+    )
+    l9 = (
+        ee.ImageCollection("LANDSAT/LC09/C02/T1_L2")
+        .filterBounds(region).filterDate(start, end)
+        .filter(ee.Filter.lt("CLOUD_COVER", 20))
+    )
+    return l8.merge(l9)
+
+
 def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) -> Dict:
     """LST analysis using Landsat 8/9."""
     logger.info(f"GEE: LST {start_date} → {end_date}")
+    _validate_date_range(start_date, end_date)
     _require_start_after(start_date, "2013-03-18", "Landsat 8")
     end_ee = _cap_end_date(end_date)
     region = _polygon_geometry(aoi)
     start_ee = ee.Date(start_date)
 
     def get_lst(start, end):
-        col = (
-            ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
-            .filterBounds(region)
-            .filterDate(start, end)
-            .filter(ee.Filter.lt("CLOUD_COVER", 20))
-        )
+        col = _landsat89_collection(region, start, end)
         if col.size().getInfo() == 0:
-            # Fallback to Landsat 9
-            col = (
-                ee.ImageCollection("LANDSAT/LC09/C02/T1_L2")
-                .filterBounds(region)
-                .filterDate(start, end)
-                .filter(ee.Filter.lt("CLOUD_COVER", 20))
-            )
+            return None
         # ST_B10 is the surface temperature band (in Kelvin * 0.00341802 + 149.0)
-        lst = col.map(
+        lst = col.map(_mask_landsat_clouds).map(
             lambda img: img.select("ST_B10")
             .multiply(0.00341802)
             .add(149.0)
@@ -602,6 +783,17 @@ def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) 
 
     start_lst = get_lst(start_ee, start_ee.advance(1, "year"))
     end_lst = get_lst(end_ee.advance(-1, "year"), end_ee)
+    if start_lst is None or end_lst is None:
+        logger.warning("GEE: land_surface_temperature — no cloud-free Landsat 8/9 imagery for this AOI/period")
+        return {
+            "metrics": {
+                "start_mean_lst_c": None, "end_mean_lst_c": None, "end_min_lst_c": None,
+                "end_max_lst_c": None, "lst_change_c": None, "uhi_area_km2": None,
+                "data_availability_note": "No cloud-free Landsat 8/9 thermal imagery found for the start or end period.",
+            },
+            "ee_image": ee.Image(0).clip(region),
+            "ee_geometry": region,
+        }
 
     # Stats
     def get_stats(img):
@@ -624,11 +816,11 @@ def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) 
 
     return {
         "metrics": {
-            "start_mean_lst_c": round(start_stats.get("LST_C_mean") or 0, 2),
-            "end_mean_lst_c": round(end_stats.get("LST_C_mean") or 0, 2),
-            "end_min_lst_c": round(end_stats.get("LST_C_min") or 0, 2),
-            "end_max_lst_c": round(end_stats.get("LST_C_max") or 0, 2),
-            "lst_change_c": round((end_stats.get("LST_C_mean") or 0) - (start_stats.get("LST_C_mean") or 0), 2),
+            "start_mean_lst_c": round(start_stats.get("LST_C_mean"), 2) if start_stats.get("LST_C_mean") is not None else None,
+            "end_mean_lst_c": round(end_stats.get("LST_C_mean"), 2) if end_stats.get("LST_C_mean") is not None else None,
+            "end_min_lst_c": round(end_stats.get("LST_C_min"), 2) if end_stats.get("LST_C_min") is not None else None,
+            "end_max_lst_c": round(end_stats.get("LST_C_max"), 2) if end_stats.get("LST_C_max") is not None else None,
+            "lst_change_c": round(end_stats["LST_C_mean"] - start_stats["LST_C_mean"], 2) if start_stats.get("LST_C_mean") is not None and end_stats.get("LST_C_mean") is not None else None,
             "uhi_area_km2": round(uhi_km2, 4),
         },
         "ee_image": uhi_mask,
@@ -647,27 +839,11 @@ def compute_temperature_context(aoi: Dict, as_of: str = None, recent_days: int =
     end_dt = ee.Date(as_of) if as_of else ee.Date(datetime.datetime.utcnow().strftime("%Y-%m-%d"))
     start_dt = end_dt.advance(-recent_days, "day")
 
-    def _collection(start, end):
-        col = (
-            ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
-            .filterBounds(region)
-            .filterDate(start, end)
-            .filter(ee.Filter.lt("CLOUD_COVER", 20))
-        )
-        if col.size().getInfo() == 0:
-            col = (
-                ee.ImageCollection("LANDSAT/LC09/C02/T1_L2")
-                .filterBounds(region)
-                .filterDate(start, end)
-                .filter(ee.Filter.lt("CLOUD_COVER", 20))
-            )
-        return col
-
-    col = _collection(start_dt, end_dt)
+    col = _landsat89_collection(region, start_dt, end_dt)
     if col.size().getInfo() == 0:
         return {"status": "no_data", "note": "No cloud-free Landsat 8/9 thermal imagery found for this AOI/period."}
 
-    lst = col.map(
+    lst = col.map(_mask_landsat_clouds).map(
         lambda img: img.select("ST_B10").multiply(0.00341802).add(149.0).subtract(273.15).rename("LST_C")
     ).mean()
 
@@ -684,8 +860,8 @@ def compute_temperature_context(aoi: Dict, as_of: str = None, recent_days: int =
     return {
         "status": "ok",
         "mean_lst_c": round(mean_c, 2),
-        "min_lst_c": round(stats.get("LST_C_min") or 0, 2),
-        "max_lst_c": round(stats.get("LST_C_max") or 0, 2),
+        "min_lst_c": round(stats["LST_C_min"], 2) if stats.get("LST_C_min") is not None else None,
+        "max_lst_c": round(stats["LST_C_max"], 2) if stats.get("LST_C_max") is not None else None,
         "recent_days": recent_days,
         "resolution_note": "Landsat 8/9 thermal band, ~100 m (resampled) resolution.",
         "source": "LANDSAT/LC08-LC09/C02/T1_L2 (ST_B10)",
@@ -695,14 +871,15 @@ def compute_temperature_context(aoi: Dict, as_of: str = None, recent_days: int =
 def compute_deforestation(aoi: Dict, start_date: str, end_date: str) -> Dict:
     """Forest loss using Hansen Global Forest Watch."""
     logger.info(f"GEE: deforestation {start_date} → {end_date}")
+    _validate_date_range(start_date, end_date)
     region = _polygon_geometry(aoi)
 
-    # Dataset's own name states its coverage — "2024_v1_13" means loss
-    # years through 2024 are present in this asset. This was previously
-    # hard-clamped to 2023 from an older dataset version and never updated
-    # when the asset was bumped to v1_13, silently making the newest year
-    # of data unreachable even though it was already being fetched.
-    HANSEN_MAX_LOSS_YEAR = 2024
+    # Dataset's own name states its coverage. The valid GEE catalog asset
+    # pairing is 2025_v1_13 (loss years through 2025) -- 2024_v1_13 (the
+    # combination previously here) isn't a real asset at all; the valid
+    # 2024-year pairing is v1_12, not v1_13. Confirmed against GEE's public
+    # data catalog rather than assumed.
+    HANSEN_MAX_LOSS_YEAR = 2025
     HANSEN_MIN_LOSS_YEAR = 2001
 
     # Parse year range from dates
@@ -713,7 +890,7 @@ def compute_deforestation(aoi: Dict, start_date: str, end_date: str) -> Dict:
     if end_year > HANSEN_MAX_LOSS_YEAR:
         end_year = HANSEN_MAX_LOSS_YEAR
 
-    hansen = ee.Image("UMD/hansen/global_forest_change_2024_v1_13")
+    hansen = ee.Image("UMD/hansen/global_forest_change_2025_v1_13")
     loss_year = hansen.select("lossyear")
     tree_cover = hansen.select("treecover2000")
 
@@ -760,6 +937,7 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
     every time). SPL4SMGP.008 is NASA's actively-maintained 3-hourly
     replacement (band "sm_surface")."""
     logger.info(f"GEE: soil_moisture {start_date} → {end_date}")
+    _validate_date_range(start_date, end_date)
     _require_start_after(start_date, "2015-04-01", "SMAP")
     end_ee = _cap_end_date(end_date)
     region = _polygon_geometry(aoi)
@@ -786,6 +964,20 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
 
     start_stats = get_sm_stats(start_ee, start_ee.advance(3, "month"))
     end_stats = get_sm_stats(end_ee.advance(-3, "month"), end_ee)
+
+    # SMAP's fixed 3-month averaging window on each side doesn't adapt to
+    # the requested period's actual length -- for a short requested window
+    # (e.g. a 2-week analysis), the start window (start_date to +3mo) and
+    # end window (end_date to -3mo) can overlap substantially or entirely,
+    # meaning "start" and "end" partly or fully share the same underlying
+    # imagery rather than representing genuinely distinct before/after
+    # conditions. Not redesigning the windowing here (SMAP's coarse
+    # ~10km/3-hourly nature genuinely benefits from some real temporal
+    # averaging even for a short request), but disclosing it rather than
+    # silently returning a "change" figure computed from overlapping data.
+    start_window_end = start_ee.advance(3, "month")
+    end_window_start = end_ee.advance(-3, "month")
+    window_overlap_caveat = start_window_end.difference(end_window_start, "day").getInfo() > 0
 
     start_mean = (start_stats or {}).get("ssm_mean")
     end_mean = (end_stats or {}).get("ssm_mean")
@@ -821,6 +1013,7 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
             "end_min_sm": round((end_stats or {}).get("ssm_min"), 4) if (end_stats or {}).get("ssm_min") is not None else None,
             "end_max_sm": round((end_stats or {}).get("ssm_max"), 4) if (end_stats or {}).get("ssm_max") is not None else None,
             "data_available": data_available,
+            "window_overlap_caveat": window_overlap_caveat,
         },
         "ee_image": dry_mask,
         "ee_geometry": region,
