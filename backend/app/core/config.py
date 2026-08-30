@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     OPENSKY_CLIENT_ID: str = ""
     OPENSKY_CLIENT_SECRET: str = ""
 
+    # Commodity price ticker (free — register at alphavantage.co, no card).
+    # Free tier has a low daily request budget, so this is polled once a
+    # day server-side and cached — see services/intel/commodity_prices.py.
+    ALPHAVANTAGE_API_KEY: str = ""
+
     # Job TTL
     JOB_TTL_SECONDS: int = 3600
 

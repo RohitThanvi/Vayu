@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { Analytics } from '@vercel/analytics/react';
 import IntelPanel from './components/IntelPanel';
+import CommodityTicker from './components/CommodityTicker';
 import AgriPanel from './components/AgriPanel';
 // Lazy-loaded: three.js is a large dependency (pulls the main bundle from
 // ~290KB to ~830KB) that only the Orbital tab needs — code-splitting it
@@ -1898,53 +1899,63 @@ export default function App() {
   // between mobile and desktop, so resizing across the breakpoint never remounts
   // (and thus never destroys) the underlying Leaflet map instance.
   return (
-    <div style={{ width:'100vw', height:'100vh', position:'relative', display: isMobile ? 'block' : 'flex', overflow:'hidden', background:'#0a0c0f' }}>
-      {!isMobile && <div style={{ width:330, flexShrink:0, height:'100%', zIndex:10 }}>{sidebarEl}</div>}
+    <div style={{ width:'100vw', height:'100vh', position:'relative', display:'flex', flexDirection:'column', overflow:'hidden', background:'#0a0c0f' }}>
+      <div style={{ flex:1, minHeight:0, position:'relative', display: isMobile ? 'block' : 'flex', overflow:'hidden' }}>
+        {!isMobile && <div style={{ width:330, flexShrink:0, height:'100%', zIndex:10 }}>{sidebarEl}</div>}
 
-      <div style={ isMobile
-        ? { position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1, overflow:'hidden' }
-        : { flex:1, height:'100%', position:'relative' } }>
-        {/* mapEl stays mounted even while the Orbital tab is active — just
-            hidden — so switching tabs never remounts (and thus never
-            destroys) the underlying Leaflet map instance, same reasoning
-            as the mobile/desktop layout comment above. */}
-        <div style={{ display: tab === 'Orbital' ? 'none' : 'contents' }}>
-          {mapEl}
-          <PlaceSearchBar mapRef={mapRef} drawGroupRef={drawGroupRef} aoiBoundsRef={aoiBoundsRef} onAreaDrawn={handlePlaceSelected} isMobile={isMobile} />
-          <MapOverlay result={result} isLoading={isLoading} drawnAOI={drawnAOI} isMobile={isMobile} />
+        <div style={ isMobile
+          ? { position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1, overflow:'hidden' }
+          : { flex:1, height:'100%', position:'relative' } }>
+          {/* mapEl stays mounted even while the Orbital tab is active — just
+              hidden — so switching tabs never remounts (and thus never
+              destroys) the underlying Leaflet map instance, same reasoning
+              as the mobile/desktop layout comment above. */}
+          <div style={{ display: tab === 'Orbital' ? 'none' : 'contents' }}>
+            {mapEl}
+            <PlaceSearchBar mapRef={mapRef} drawGroupRef={drawGroupRef} aoiBoundsRef={aoiBoundsRef} onAreaDrawn={handlePlaceSelected} isMobile={isMobile} />
+            <MapOverlay result={result} isLoading={isLoading} drawnAOI={drawnAOI} isMobile={isMobile} />
+          </div>
+          {tab === 'Orbital' && (
+            <div style={{ position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1 }}>
+              <Suspense fallback={
+                <div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center',
+                  fontFamily:'monospace', fontSize:13, color:'#7a8088', background:'#05070a' }}>
+                  Loading orbital view…
+                </div>
+              }>
+                <OrbitalGlobe
+                  stations={orbitalStations} otherSats={orbitalOtherSats} aircraft={orbitalAircraftValid}
+                  showSatellites={orbitalShowSatellites} showAircraft={orbitalShowAircraft}
+                  onSelect={setOrbitalSelected}
+                />
+              </Suspense>
+            </div>
+          )}
         </div>
-        {tab === 'Orbital' && (
-          <div style={{ position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1 }}>
-            <Suspense fallback={
-              <div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center',
-                fontFamily:'monospace', fontSize:13, color:'#7a8088', background:'#05070a' }}>
-                Loading orbital view…
-              </div>
-            }>
-              <OrbitalGlobe
-                stations={orbitalStations} otherSats={orbitalOtherSats} aircraft={orbitalAircraftValid}
-                showSatellites={orbitalShowSatellites} showAircraft={orbitalShowAircraft}
-                onSelect={setOrbitalSelected}
-              />
-            </Suspense>
+
+        {!isMobile && tab !== 'Orbital' && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{intelPanelEl}</div>}
+
+        {isMobile && mobilePanel === 'analyze' && (
+          <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:S.surface, overflow:'hidden' }}>
+            {sidebarEl}
           </div>
         )}
+        {isMobile && mobilePanel === 'intel' && (
+          <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:'#0a0c0f', overflow:'hidden' }}>
+            {intelPanelEl}
+          </div>
+        )}
+
+        {isMobile && <MobileBottomNav active={mobilePanel} onChange={setMobilePanel} />}
       </div>
 
-      {!isMobile && tab !== 'Orbital' && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{intelPanelEl}</div>}
+      {/* Commodity ticker: desktop only, as a real flex sibling (not a
+          fixed overlay) so it never covers the mobile bottom nav or
+          anything else — it just claims its own 28px row at the very
+          bottom of the viewport, same as the sidebar/map/intel panel
+          claim their own columns above it. */}
+      {!isMobile && <CommodityTicker apiUrl={API_URL} />}
 
-      {isMobile && mobilePanel === 'analyze' && (
-        <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:S.surface, overflow:'hidden' }}>
-          {sidebarEl}
-        </div>
-      )}
-      {isMobile && mobilePanel === 'intel' && (
-        <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:'#0a0c0f', overflow:'hidden' }}>
-          {intelPanelEl}
-        </div>
-      )}
-
-      {isMobile && <MobileBottomNav active={mobilePanel} onChange={setMobilePanel} />}
       <Analytics />
     </div>
   );
