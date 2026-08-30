@@ -9,6 +9,7 @@ REST:
   GET  /api/v1/intel/aircraft        — currently tracked aircraft (adsb.lol, via ais-bridge)
   GET  /api/v1/intel/aircraft/stats  — aviation tracking statistics
   GET  /api/v1/intel/satellites/tle  — cached satellite orbital elements (CelesTrak)
+  GET  /api/v1/intel/commodities     — cached global commodity prices (Alpha Vantage)
   GET  /api/v1/intel/wind-field      — animated wind vector grid (U/V components)
 
 WebSocket:
@@ -43,6 +44,7 @@ from ..services.intel.scheduler import get_scheduler
 from ..services.intel.vessel_store import vessel_store, CATEGORY_LABELS
 from ..services.intel.aircraft_store import aircraft_store
 from ..services.intel import satellite_tle
+from ..services.intel import commodity_prices
 from ..services.weather.wind_field import wind_field_store
 
 logger = logging.getLogger(__name__)
@@ -313,6 +315,19 @@ async def get_satellite_tles():
     this endpoint. Cached server-side; refreshes every ~6h since TLEs don't
     meaningfully change faster than that for display purposes."""
     return satellite_tle.get_satellites()
+
+
+# ── Commodity price ticker (Alpha Vantage, free) ────────────────────────────
+
+@router.get("/commodities", summary="Cached global commodity prices")
+async def get_commodities():
+    """Global commodity prices (crude oil, natural gas, metals, agri
+    commodities) for the marquee ticker. NOT MCX real-time data — MCX's
+    live feed is a paid exchange subscription with no free/legal
+    alternative; this uses Alpha Vantage's free Commodities API instead,
+    which is monthly-resolution for most symbols. Refreshed once a day
+    server-side and cached — see services/intel/commodity_prices.py."""
+    return commodity_prices.get_commodities()
 
 
 @router.get("/wind-field", summary="Animated wind vector grid (U/V components)")
