@@ -48,10 +48,11 @@ INTERVAL_AIRCRAFT = 90   # OpenSky anonymous tier is rate-limited; global
                           # to the free, keyless tier
 INTERVAL_WIND   = 45 * 60
 INTERVAL_TLE    = 6 * 60 * 60   # matches satellite_tle.CACHE_TTL_SECONDS
-INTERVAL_COMMODITIES = 24 * 60 * 60   # matches commodity_prices.CACHE_TTL_SECONDS —
-                                        # free Alpha Vantage tier has a low daily
-                                        # request budget (10 calls/refresh), and
-                                        # this data is monthly-resolution anyway
+INTERVAL_COMMODITIES = 3 * 60 * 60   # matches commodity_prices.CACHE_TTL_SECONDS —
+                                       # Yahoo Finance's unofficial API has no hard
+                                       # daily cap (unlike the Alpha Vantage source
+                                       # this replaced), so this can run more often
+                                       # while staying a good citizen about it
 INTERVAL_PURGE  = 30 * 60
 
 
@@ -64,7 +65,6 @@ class IntelScheduler:
         ais_bridge_api_key: str = "",
         opensky_client_id: str = "",
         opensky_client_secret: str = "",
-        alphavantage_api_key: str = "",
     ):
         self.acled_email = acled_email
         self.acled_password = acled_password
@@ -72,7 +72,6 @@ class IntelScheduler:
         self.ais_bridge_api_key = ais_bridge_api_key
         self.opensky_client_id = opensky_client_id
         self.opensky_client_secret = opensky_client_secret
-        self.alphavantage_api_key = alphavantage_api_key
         self._tasks: list[asyncio.Task] = []
         self._running = False
 
@@ -258,13 +257,12 @@ class IntelScheduler:
             await asyncio.sleep(INTERVAL_TLE)
 
     async def _poll_commodities(self):
-        if not self.alphavantage_api_key:
-            logger.info("Commodity poll: no ALPHAVANTAGE_API_KEY configured, skipping commodity ticker")
-            return
+        # No API key needed — Yahoo Finance's unofficial chart API is fully
+        # keyless (see commodity_prices.py for why it replaced Alpha Vantage).
         await asyncio.sleep(15)
         while self._running:
             try:
-                count = await commodity_prices.refresh(self.alphavantage_api_key)
+                count = await commodity_prices.refresh()
                 logger.info(f"Commodity poll: {count} commodities cached")
             except Exception as e:
                 logger.error(f"Commodity poll error: {type(e).__name__}: {e}")
@@ -291,7 +289,6 @@ def get_scheduler(
     ais_bridge_api_key: str = "",
     opensky_client_id: str = "",
     opensky_client_secret: str = "",
-    alphavantage_api_key: str = "",
 ) -> IntelScheduler:
     global _scheduler
     if _scheduler is None:
@@ -302,6 +299,5 @@ def get_scheduler(
             ais_bridge_api_key=ais_bridge_api_key,
             opensky_client_id=opensky_client_id,
             opensky_client_secret=opensky_client_secret,
-            alphavantage_api_key=alphavantage_api_key,
         )
     return _scheduler

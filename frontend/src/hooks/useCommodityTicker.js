@@ -1,11 +1,11 @@
 /**
  * useCommodityTicker.js
  * Polls /api/v1/intel/commodities on an interval. Data is refreshed
- * server-side only once a day (see backend commodity_prices.py — free
- * Alpha Vantage tier has a low daily budget, and the data itself is
- * monthly-resolution for most symbols anyway), so this hook polls far
- * less aggressively than the live-tracking hooks — there's nothing new
- * to see on a tighter interval.
+ * server-side every few hours (see backend commodity_prices.py — Yahoo
+ * Finance's unofficial chart API has no hard daily cap, unlike the
+ * Alpha Vantage source this originally used), so this hook still polls
+ * less aggressively than the live-tracking hooks since there's nothing
+ * new between server-side refreshes.
  *
  * Usage:
  *   const { commodities, lastError } = useCommodityTicker(apiUrl);
@@ -13,7 +13,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const POLL_INTERVAL_MS = 30 * 60 * 1000;   // 30 min — plenty for daily-refreshed data
+const POLL_INTERVAL_MS = 15 * 60 * 1000;   // 15 min — matches the shorter server-side refresh cadence now
 
 export function useCommodityTicker(apiUrl, enabled = true) {
   const [commodities, setCommodities] = useState([]);
