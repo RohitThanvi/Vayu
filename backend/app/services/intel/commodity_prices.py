@@ -23,6 +23,7 @@ import asyncio
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -34,17 +35,19 @@ CACHE_TTL_SECONDS = 24 * 60 * 60
 ALPHAVANTAGE_URL = "https://www.alphavantage.co/query"
 
 # (function code, display label, unit fallback if the API doesn't return one)
+# Cut from all 10 Alpha Vantage commodities down to a curated 5 — halves
+# the per-refresh-cycle request cost, giving real headroom against
+# Render's free-tier cold-start behavior (see refresh() below for why
+# that matters more than the naive "10 req/day vs 25/day budget" math
+# suggests). Kept a spread across energy/metals/agri rather than an
+# arbitrary subset, and cotton/wheat tie in with Vayu's existing
+# agri-risk module.
 COMMODITIES = [
     ("WTI", "Crude Oil (WTI)", "USD/barrel"),
-    ("BRENT", "Crude Oil (Brent)", "USD/barrel"),
     ("NATURAL_GAS", "Natural Gas", "USD/MMBtu"),
     ("COPPER", "Copper", "USD/metric ton"),
-    ("ALUMINUM", "Aluminum", "USD/metric ton"),
     ("WHEAT", "Wheat", "USD/metric ton"),
-    ("CORN", "Corn", "USD/metric ton"),
     ("COTTON", "Cotton", "USD/lb"),
-    ("SUGAR", "Sugar", "USD/lb"),
-    ("COFFEE", "Coffee", "USD/lb"),
 ]
 
 _cache: Dict[str, Any] = {"commodities": [], "cached_at": 0.0, "last_error": None}
@@ -99,24 +102,53 @@ async def _fetch_one(client: httpx.AsyncClient, function: str, label: str, unit_
     }
 
 
-async def refresh(api_key: str) -> int:
+async def refresh(api_key: str, force: bool = False) -> int:
     """Fetch all configured commodities and refresh the cache. Returns the
     count that succeeded (a partial failure — e.g. hitting the daily rate
     limit partway through — still caches whatever succeeded rather than
     discarding it for an all-or-nothing refresh).
 
-    CONFIRMED IN PRODUCTION: firing all ten commodity requests back-to-back
-    with no delay tripped Alpha Vantage's burst limiter (their error
-    message is explicit: "1 request per second") on every single one,
-    which meant `results` stayed empty and the cache never got populated
-    at all — not a partial-failure case, a total one. Sequential with real
-    spacing fixed it, same fix (and same underlying mistake) as the
-    concurrent-burst issue hit earlier with adsb.lol.
+    CONFIRMED IN PRODUCTION (round 1): firing all ten commodity requests
+    back-to-back with no delay tripped Alpha Vantage's burst limiter
+    ("1 request per second") on every single one, so results stayed
+    totally empty. Fixed with real spacing between requests (see below).
+
+    CONFIRMED IN PRODUCTION (round 2): even at a spaced-out ~10 req/day
+    (safely under the 25/day cap on naive math), the daily limit still
+    got hit. Root cause: this runs on Render's free tier, which spins the
+    whole process down after ~15 min with no incoming HTTP traffic and
+    cold-starts a fresh one on the next request. Each cold start resets
+    this in-process "once every 24h" timer back to zero and immediately
+    fires a full fresh batch, regardless of how recently a previous
+    (now-dead) process instance last ran — so several restarts in one
+    day can each contribute their own batch, blowing past the daily
+    budget even though no single instance ever "runs too often" on its
+    own. Two mitigations, since there's no cross-restart persistence
+    available without adding new infrastructure: (1) a same-UTC-day guard
+    below skips the fetch entirely if this specific process instance
+    already has same-day cached data (protects against redundant fetches
+    within one instance's uptime, which round 1's fix didn't address),
+    and (2) the commodity list itself was cut from 10 to 5, halving the
+    per-cycle cost so the daily budget tolerates roughly twice as many
+    cold-start cycles before being exhausted. Neither fully eliminates
+    the possibility of hitting the limit on a bad day of frequent
+    restarts -- that's a real, currently-accepted limitation of running
+    on free-tier infrastructure against a 25-req/day free API, not
+    something fixable purely in this function.
     """
     if not api_key:
         with _lock:
             _cache["last_error"] = "ALPHAVANTAGE_API_KEY not configured"
         return 0
+
+    if not force:
+        with _lock:
+            cached_at = _cache["cached_at"]
+        if cached_at:
+            cached_day = datetime.fromtimestamp(cached_at, tz=timezone.utc).date()
+            if cached_day == datetime.now(timezone.utc).date():
+                logger.debug("Commodity refresh skipped — already have data cached from today")
+                return len(_cache["commodities"])
 
     results = []
     async with httpx.AsyncClient(headers={"User-Agent": "VAYU-Intelligence-Terminal/2.0"}) as client:
