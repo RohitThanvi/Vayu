@@ -6,11 +6,15 @@
  *
  * NOT MCX (India's commodity exchange) real-time data — MCX's live feed
  * is a paid exchange subscription with no free/legal alternative. This
- * shows global commodity prices (crude oil, natural gas, metals, agri
- * commodities) via Alpha Vantage's free Commodities API instead, which
- * is monthly-resolution for most of these symbols, refreshed once a day
- * server-side — a slow-moving market-context strip, not a live trading
- * ticker. The UI says so plainly rather than implying real-time data.
+ * shows real global futures prices (crude oil, natural gas, metals, agri
+ * commodities) via Yahoo Finance's unofficial keyless chart API instead
+ * (~15-20min delayed, refreshed every few hours server-side) — an
+ * unofficial/reverse-engineered endpoint, not a documented API with an
+ * SLA, but extremely widely used and has been stable for years. That's
+ * a real, honestly-accepted tradeoff for something free — see backend
+ * services/intel/commodity_prices.py for the full history (originally
+ * used Alpha Vantage, whose 25-requests/day cap proved unworkable
+ * against Render's free-tier cold-start pattern).
  *
  * Pure CSS marquee (no external ticker library) — a single row of items
  * duplicated once and animated with a linear translateX loop, which is

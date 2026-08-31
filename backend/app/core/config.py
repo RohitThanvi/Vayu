@@ -52,9 +52,13 @@ class Settings(BaseSettings):
     OPENSKY_CLIENT_ID: str = ""
     OPENSKY_CLIENT_SECRET: str = ""
 
-    # Commodity price ticker (free — register at alphavantage.co, no card).
-    # Free tier has a low daily request budget, so this is polled once a
-    # day server-side and cached — see services/intel/commodity_prices.py.
+    # Commodity price ticker — no config needed here anymore. Originally
+    # used Alpha Vantage (needed a key, 25/day cap proved unworkable
+    # against Render's free-tier cold-start pattern), replaced with Yahoo
+    # Finance's unofficial keyless chart API — see
+    # services/intel/commodity_prices.py. ALPHAVANTAGE_API_KEY left here,
+    # unused, only so an already-set Render env var doesn't error at
+    # startup — safe to remove from Render whenever convenient.
     ALPHAVANTAGE_API_KEY: str = ""
 
     # Job TTL

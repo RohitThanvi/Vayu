@@ -1,161 +1,140 @@
 """
 commodity_prices.py — a "market intelligence" layer for the ticker at the
-bottom of the screen: global commodity prices (crude oil, natural gas,
-metals, agri commodities), free and keyless-adjacent (needs a free
-Alpha Vantage API key, no card).
+bottom of the screen: global commodity futures prices (crude oil, natural
+gas, metals, agri commodities).
 
-Honest scope note: this is NOT MCX (India's commodity exchange) real-time
-data — MCX's actual live feed is a paid exchange subscription with no
-free/legal real-time alternative. This uses Alpha Vantage's free global
-Commodities API instead, which is monthly-resolution for most of these
-symbols (their docs note interval availability varies "depending on the
-commodity" — energy has daily/weekly options, but not consistently across
-all ten), not a live tick feed. That's fine for a slow-moving ticker
-that's meant to show general market context, not a trading terminal.
+History: originally used Alpha Vantage's free Commodities API, but its
+25-requests/day cap turned out unworkable in production -- Render's free
+tier cold-starts the process repeatedly (each restart reset the in-process
+refresh timer), and even with request spacing and a same-day cache guard,
+the daily budget was too thin to be reliable. Switched to Yahoo Finance's
+unofficial chart API instead (query1.finance.yahoo.com/v8/finance/chart) --
+completely keyless, no formal daily cap, and gives real (if ~15-20min
+delayed) futures prices instead of Alpha Vantage's monthly-resolution data.
 
-Each commodity is its own API call (function=WTI, function=BRENT, etc.)
-— ten calls per refresh — and the free tier's daily request budget is
-low, so this refreshes once a day server-side and caches the result,
-the same pattern used for the satellite-imagery layers.
+Honest tradeoff, stated plainly: this is an unofficial, reverse-engineered
+endpoint, not a documented/contracted API -- it's extremely widely used
+(countless tools and libraries rely on exactly this endpoint) and has been
+stable for years, but Yahoo could change its shape or soft-block abusive
+traffic without notice. That's a real but generally low production risk,
+different in kind from Alpha Vantage's hard 25/day wall -- there's no
+formal SLA either way, but nothing here depends on one.
+
+Still NOT MCX (India's commodity exchange) real-time data -- MCX's actual
+live feed is a paid exchange subscription with no free/legal alternative;
+this shows global futures prices instead.
 """
 
 import asyncio
 import logging
 import threading
 import time
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-CACHE_TTL_SECONDS = 24 * 60 * 60
+CACHE_TTL_SECONDS = 3 * 60 * 60   # refresh every few hours — no hard daily cap here, but still polite/bounded
 
-ALPHAVANTAGE_URL = "https://www.alphavantage.co/query"
+YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
-# (function code, display label, unit fallback if the API doesn't return one)
-# Cut from all 10 Alpha Vantage commodities down to a curated 5 — halves
-# the per-refresh-cycle request cost, giving real headroom against
-# Render's free-tier cold-start behavior (see refresh() below for why
-# that matters more than the naive "10 req/day vs 25/day budget" math
-# suggests). Kept a spread across energy/metals/agri rather than an
-# arbitrary subset, and cotton/wheat tie in with Vayu's existing
-# agri-risk module.
+# (Yahoo futures symbol, display label, unit) — real CME/ICE front-month
+# contract tickers, not a proprietary commodity code the way Alpha
+# Vantage used.
 COMMODITIES = [
-    ("WTI", "Crude Oil (WTI)", "USD/barrel"),
-    ("NATURAL_GAS", "Natural Gas", "USD/MMBtu"),
-    ("COPPER", "Copper", "USD/metric ton"),
-    ("WHEAT", "Wheat", "USD/metric ton"),
-    ("COTTON", "Cotton", "USD/lb"),
+    ("CL=F", "Crude Oil (WTI)", "USD/barrel"),
+    ("BZ=F", "Crude Oil (Brent)", "USD/barrel"),
+    ("NG=F", "Natural Gas", "USD/MMBtu"),
+    ("HG=F", "Copper", "USD/lb"),
+    ("GC=F", "Gold", "USD/oz"),
+    ("ZW=F", "Wheat", "USD/bushel"),
+    ("ZC=F", "Corn", "USD/bushel"),
+    ("CT=F", "Cotton", "USD/lb"),
+    ("SB=F", "Sugar", "USD/lb"),
+    ("KC=F", "Coffee", "USD/lb"),
 ]
 
 _cache: Dict[str, Any] = {"commodities": [], "cached_at": 0.0, "last_error": None}
 _lock = threading.Lock()
 
+_HEADERS = {
+    # Yahoo's endpoint is known to reject requests with no browser-like
+    # User-Agent (community-documented behavior for this specific
+    # unofficial endpoint) — this isn't spoofing a browser session,
+    # just avoiding the default python-httpx UA that gets a blanket reject.
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+}
 
-async def _fetch_one(client: httpx.AsyncClient, function: str, label: str, unit_fallback: str, api_key: str) -> Optional[Dict[str, Any]]:
+
+async def _fetch_one(client: httpx.AsyncClient, symbol: str, label: str, unit: str) -> Optional[Dict[str, Any]]:
+    url = YAHOO_CHART_URL.format(symbol=symbol)
     try:
-        resp = await client.get(
-            ALPHAVANTAGE_URL,
-            params={"function": function, "interval": "monthly", "apikey": api_key},
-            timeout=15,
-        )
+        resp = await client.get(url, params={"interval": "1d", "range": "5d"}, timeout=15)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        logger.warning(f"Commodity fetch failed for {function}: {type(e).__name__}: {e}")
+        logger.warning(f"Commodity fetch failed for {symbol}: {type(e).__name__}: {e}")
         return None
 
-    # Alpha Vantage returns a 200 with a "Note"/"Information" body instead
-    # of a real error status when the daily rate limit is hit -- treat
-    # that as a failure for this symbol rather than crashing on missing keys.
-    series = data.get("data")
-    if not series:
-        note = data.get("Note") or data.get("Information") or data.get("Error Message")
-        if note:
-            logger.warning(f"Commodity fetch for {function} returned no data: {note}")
-        return None
-
-    latest = series[0]
-    previous = series[1] if len(series) > 1 else None
     try:
-        latest_value = float(latest["value"])
-    except (KeyError, TypeError, ValueError):
+        result = data["chart"]["result"][0]
+        meta = result.get("meta", {})
+        price = meta.get("regularMarketPrice")
+        prev_close = meta.get("previousClose") or meta.get("chartPreviousClose")
+    except (KeyError, IndexError, TypeError):
+        logger.warning(f"Commodity fetch for {symbol} returned an unexpected response shape")
         return None
-    change_pct = None
-    if previous is not None:
+
+    if price is None:
+        # Fall back to the last non-null close in the daily series if the
+        # meta block didn't have a live quote for some reason (e.g. market
+        # closed and Yahoo hasn't populated regularMarketPrice for this cycle).
         try:
-            prev_value = float(previous["value"])
-            if prev_value != 0:
-                change_pct = (latest_value - prev_value) / prev_value * 100
-        except (KeyError, TypeError, ValueError):
+            closes = result["indicators"]["quote"][0]["close"]
+            for c in reversed(closes):
+                if c is not None:
+                    price = c
+                    break
+        except (KeyError, IndexError, TypeError):
+            pass
+
+    if price is None:
+        return None
+
+    change_pct = None
+    if prev_close:
+        try:
+            change_pct = (float(price) - float(prev_close)) / float(prev_close) * 100
+        except (TypeError, ValueError, ZeroDivisionError):
             pass
 
     return {
-        "symbol": function,
+        "symbol": symbol,
         "name": label,
-        "unit": data.get("unit") or unit_fallback,
-        "value": latest_value,
-        "date": latest.get("date"),
+        "unit": unit,
+        "value": round(float(price), 4),
         "change_pct": round(change_pct, 2) if change_pct is not None else None,
     }
 
 
-async def refresh(api_key: str, force: bool = False) -> int:
+async def refresh(force: bool = False) -> int:
     """Fetch all configured commodities and refresh the cache. Returns the
-    count that succeeded (a partial failure — e.g. hitting the daily rate
-    limit partway through — still caches whatever succeeded rather than
-    discarding it for an all-or-nothing refresh).
-
-    CONFIRMED IN PRODUCTION (round 1): firing all ten commodity requests
-    back-to-back with no delay tripped Alpha Vantage's burst limiter
-    ("1 request per second") on every single one, so results stayed
-    totally empty. Fixed with real spacing between requests (see below).
-
-    CONFIRMED IN PRODUCTION (round 2): even at a spaced-out ~10 req/day
-    (safely under the 25/day cap on naive math), the daily limit still
-    got hit. Root cause: this runs on Render's free tier, which spins the
-    whole process down after ~15 min with no incoming HTTP traffic and
-    cold-starts a fresh one on the next request. Each cold start resets
-    this in-process "once every 24h" timer back to zero and immediately
-    fires a full fresh batch, regardless of how recently a previous
-    (now-dead) process instance last ran — so several restarts in one
-    day can each contribute their own batch, blowing past the daily
-    budget even though no single instance ever "runs too often" on its
-    own. Two mitigations, since there's no cross-restart persistence
-    available without adding new infrastructure: (1) a same-UTC-day guard
-    below skips the fetch entirely if this specific process instance
-    already has same-day cached data (protects against redundant fetches
-    within one instance's uptime, which round 1's fix didn't address),
-    and (2) the commodity list itself was cut from 10 to 5, halving the
-    per-cycle cost so the daily budget tolerates roughly twice as many
-    cold-start cycles before being exhausted. Neither fully eliminates
-    the possibility of hitting the limit on a bad day of frequent
-    restarts -- that's a real, currently-accepted limitation of running
-    on free-tier infrastructure against a 25-req/day free API, not
-    something fixable purely in this function.
-    """
-    if not api_key:
-        with _lock:
-            _cache["last_error"] = "ALPHAVANTAGE_API_KEY not configured"
-        return 0
-
+    count that succeeded (a partial failure still caches whatever
+    succeeded rather than discarding it for an all-or-nothing refresh)."""
     if not force:
         with _lock:
             cached_at = _cache["cached_at"]
-        if cached_at:
-            cached_day = datetime.fromtimestamp(cached_at, tz=timezone.utc).date()
-            if cached_day == datetime.now(timezone.utc).date():
-                logger.debug("Commodity refresh skipped — already have data cached from today")
-                return len(_cache["commodities"])
+        if cached_at and (time.time() - cached_at) < CACHE_TTL_SECONDS:
+            logger.debug("Commodity refresh skipped — cache is still fresh")
+            return len(_cache["commodities"])
 
     results = []
-    async with httpx.AsyncClient(headers={"User-Agent": "VAYU-Intelligence-Terminal/2.0"}) as client:
-        for i, (function, label, unit_fallback) in enumerate(COMMODITIES):
+    async with httpx.AsyncClient(headers=_HEADERS) as client:
+        for i, (symbol, label, unit) in enumerate(COMMODITIES):
             if i > 0:
-                await asyncio.sleep(1.5)   # stay under Alpha Vantage's 1 req/sec burst limit, with margin
-            item = await _fetch_one(client, function, label, unit_fallback, api_key)
+                await asyncio.sleep(0.5)   # light spacing — polite, not because of a known hard limit here
+            item = await _fetch_one(client, symbol, label, unit)
             if item:
                 results.append(item)
 
