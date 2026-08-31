@@ -19,6 +19,7 @@ low, so this refreshes once a day server-side and caches the result,
 the same pattern used for the satellite-imagery layers.
 """
 
+import asyncio
 import logging
 import threading
 import time
@@ -102,7 +103,16 @@ async def refresh(api_key: str) -> int:
     """Fetch all configured commodities and refresh the cache. Returns the
     count that succeeded (a partial failure — e.g. hitting the daily rate
     limit partway through — still caches whatever succeeded rather than
-    discarding it for an all-or-nothing refresh)."""
+    discarding it for an all-or-nothing refresh).
+
+    CONFIRMED IN PRODUCTION: firing all ten commodity requests back-to-back
+    with no delay tripped Alpha Vantage's burst limiter (their error
+    message is explicit: "1 request per second") on every single one,
+    which meant `results` stayed empty and the cache never got populated
+    at all — not a partial-failure case, a total one. Sequential with real
+    spacing fixed it, same fix (and same underlying mistake) as the
+    concurrent-burst issue hit earlier with adsb.lol.
+    """
     if not api_key:
         with _lock:
             _cache["last_error"] = "ALPHAVANTAGE_API_KEY not configured"
@@ -110,7 +120,9 @@ async def refresh(api_key: str) -> int:
 
     results = []
     async with httpx.AsyncClient(headers={"User-Agent": "VAYU-Intelligence-Terminal/2.0"}) as client:
-        for function, label, unit_fallback in COMMODITIES:
+        for i, (function, label, unit_fallback) in enumerate(COMMODITIES):
+            if i > 0:
+                await asyncio.sleep(1.5)   # stay under Alpha Vantage's 1 req/sec burst limit, with margin
             item = await _fetch_one(client, function, label, unit_fallback, api_key)
             if item:
                 results.append(item)
