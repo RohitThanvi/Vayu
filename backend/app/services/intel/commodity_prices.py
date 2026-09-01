@@ -39,20 +39,20 @@ CACHE_TTL_SECONDS = 3 * 60 * 60   # refresh every few hours — no hard daily ca
 
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
-# (Yahoo futures symbol, display label, unit) — real CME/ICE front-month
-# contract tickers, not a proprietary commodity code the way Alpha
-# Vantage used.
+# (Yahoo futures symbol, display label, unit, category) — real CME/ICE
+# front-month contract tickers, not a proprietary commodity code the way
+# Alpha Vantage used. Category drives icon/color grouping on the frontend.
 COMMODITIES = [
-    ("CL=F", "Crude Oil (WTI)", "USD/barrel"),
-    ("BZ=F", "Crude Oil (Brent)", "USD/barrel"),
-    ("NG=F", "Natural Gas", "USD/MMBtu"),
-    ("HG=F", "Copper", "USD/lb"),
-    ("GC=F", "Gold", "USD/oz"),
-    ("ZW=F", "Wheat", "USD/bushel"),
-    ("ZC=F", "Corn", "USD/bushel"),
-    ("CT=F", "Cotton", "USD/lb"),
-    ("SB=F", "Sugar", "USD/lb"),
-    ("KC=F", "Coffee", "USD/lb"),
+    ("CL=F", "Crude Oil (WTI)", "USD/barrel", "energy"),
+    ("BZ=F", "Crude Oil (Brent)", "USD/barrel", "energy"),
+    ("NG=F", "Natural Gas", "USD/MMBtu", "energy"),
+    ("HG=F", "Copper", "USD/lb", "metal"),
+    ("GC=F", "Gold", "USD/oz", "metal"),
+    ("ZW=F", "Wheat", "USD/bushel", "agri"),
+    ("ZC=F", "Corn", "USD/bushel", "agri"),
+    ("CT=F", "Cotton", "USD/lb", "agri"),
+    ("SB=F", "Sugar", "USD/lb", "agri"),
+    ("KC=F", "Coffee", "USD/lb", "agri"),
 ]
 
 _cache: Dict[str, Any] = {"commodities": [], "cached_at": 0.0, "last_error": None}
@@ -67,7 +67,7 @@ _HEADERS = {
 }
 
 
-async def _fetch_one(client: httpx.AsyncClient, symbol: str, label: str, unit: str) -> Optional[Dict[str, Any]]:
+async def _fetch_one(client: httpx.AsyncClient, symbol: str, label: str, unit: str, category: str) -> Optional[Dict[str, Any]]:
     url = YAHOO_CHART_URL.format(symbol=symbol)
     try:
         resp = await client.get(url, params={"interval": "1d", "range": "5d"}, timeout=15)
@@ -109,12 +109,24 @@ async def _fetch_one(client: httpx.AsyncClient, symbol: str, label: str, unit: s
         except (TypeError, ValueError, ZeroDivisionError):
             pass
 
+    def _num(key):
+        v = meta.get(key)
+        return round(float(v), 4) if isinstance(v, (int, float)) else None
+
     return {
         "symbol": symbol,
         "name": label,
         "unit": unit,
+        "category": category,
         "value": round(float(price), 4),
         "change_pct": round(change_pct, 2) if change_pct is not None else None,
+        "prev_close": round(float(prev_close), 4) if prev_close else None,
+        "day_high": _num("regularMarketDayHigh"),
+        "day_low": _num("regularMarketDayLow"),
+        "week52_high": _num("fiftyTwoWeekHigh"),
+        "week52_low": _num("fiftyTwoWeekLow"),
+        "exchange": meta.get("fullExchangeName") or meta.get("exchangeName"),
+        "market_time": meta.get("regularMarketTime"),   # unix seconds — last quote update
     }
 
 
@@ -131,10 +143,10 @@ async def refresh(force: bool = False) -> int:
 
     results = []
     async with httpx.AsyncClient(headers=_HEADERS) as client:
-        for i, (symbol, label, unit) in enumerate(COMMODITIES):
+        for i, (symbol, label, unit, category) in enumerate(COMMODITIES):
             if i > 0:
                 await asyncio.sleep(0.5)   # light spacing — polite, not because of a known hard limit here
-            item = await _fetch_one(client, symbol, label, unit)
+            item = await _fetch_one(client, symbol, label, unit, category)
             if item:
                 results.append(item)
 
