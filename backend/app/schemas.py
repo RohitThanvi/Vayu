@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Any, List, Literal
 import uuid
 
 MetricType = Literal[
@@ -55,20 +55,29 @@ class JobStatusResponse(BaseModel):
 class FinalQueryResponse(BaseModel):
     request_id: uuid.UUID
     status: str = "done"
-    metric: str
-    summary: str
+    result_type: str = "analysis"   # "analysis" (the original GEE metrics pipeline) or "research" (web-search-grounded agent answer)
+    metric: Optional[str] = None
+    summary: Optional[str] = None
     insight: Optional[str] = None
-    metrics: Dict[str, float]
+    metrics: Optional[Dict[str, float]] = None
     geojson_url: Optional[str] = None
     tile_url: Optional[str] = None
-    start_date: str
-    end_date: str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     region: Optional[str] = None
     raw: Optional[Dict[str, Any]] = None
+    # Research-agent-only fields — populated when result_type == "research"
+    place_name: Optional[str] = None
+    reasoning: Optional[str] = None
+    radius_km: Optional[float] = None
+    confidence: Optional[str] = None
+    source_urls: Optional[List[str]] = None
+    search_results_used: Optional[int] = None
 
 
 class StructuredQuery(BaseModel):
-    metric: MetricType
+    metric: Optional[MetricType] = None
+    in_scope: bool = True
     region: Optional[str] = None
     aoi_geojson: Optional[Dict[str, Any]] = None
     start_date: str

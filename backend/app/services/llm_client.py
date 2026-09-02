@@ -32,14 +32,31 @@ Return ONLY a valid JSON object — no explanation, no markdown, no code fences.
 
 JSON schema:
 {
-  "metric": one of ["vegetation_change","builtup_change","water_change","flood_detection","fire_detection","drought_index","land_surface_temperature","deforestation","soil_moisture"],
+  "in_scope": true or false,
+  "metric": one of ["vegetation_change","builtup_change","water_change","flood_detection","fire_detection","drought_index","land_surface_temperature","deforestation","soil_moisture"] or null,
   "region": string or null,
   "start_date": "YYYY-MM-DD" or null,
   "end_date": "YYYY-MM-DD" or null
 }
 
 Rules:
-- If no start year mentioned, use 5 years before today.
+- "in_scope" is true ONLY if the question is genuinely asking to MEASURE
+  CHANGE OVER TIME in one of the nine metrics below via satellite data —
+  even if worded informally, vaguely, or with imperfect English, as long
+  as the underlying intent clearly matches one of them.
+- "in_scope" is false for anything else — site/location RECOMMENDATIONS
+  ("where should we put a new mobile tower", "best location for a new
+  warehouse", "where is underserved by X"), general research questions,
+  questions about things this system has no dataset for, or anything
+  that isn't a "how much did X change" measurement question. When false,
+  set "metric" to null — do NOT force a guess at one of the nine metrics
+  just because the question is geospatial in nature.
+- Do not default to a metric when the question doesn't clearly match one
+  — an unclear question that's actually about change-over-time should
+  still map to its closest metric (in_scope true); an unclear question
+  that ISN'T about change-over-time at all should be in_scope false, not
+  forced into "vegetation_change" as a fallback guess.
+- If no start year mentioned (and in_scope is true), use 5 years before today.
 - If no end date, use today.
 - "deforestation" for tree/forest loss queries.
 - "drought_index" for drought, dry, water stress queries.
@@ -50,17 +67,22 @@ Rules:
 - "vegetation_change" for green cover, NDVI, plants.
 - "builtup_change" for buildings, urban, construction.
 - "water_change" for lakes, rivers, water bodies.
-- If a [Metric: X] prefix is present in the query, use that as the metric.
-- Default metric if unclear: "vegetation_change".
+- If a [Metric: X] prefix is present in the query, use that as the metric and set in_scope true.
 
 Today is {TODAY}.
 
 Examples:
 Input: "how much green cover did this area lose since 2020"
-Output: {"metric": "vegetation_change", "region": null, "start_date": "2020-01-01", "end_date": "{TODAY}"}
+Output: {"in_scope": true, "metric": "vegetation_change", "region": null, "start_date": "2020-01-01", "end_date": "{TODAY}"}
 
 Input: "[Metric: deforestation] how much deforestation has happened in this region over 5 years"
-Output: {"metric": "deforestation", "region": null, "start_date": "{FIVE_YEARS_AGO}", "end_date": "{TODAY}"}
+Output: {"in_scope": true, "metric": "deforestation", "region": null, "start_date": "{FIVE_YEARS_AGO}", "end_date": "{TODAY}"}
+
+Input: "where should we add a new mobile tower near jaipur"
+Output: {"in_scope": false, "metric": null, "region": "Jaipur", "start_date": null, "end_date": null}
+
+Input: "best area for a new warehouse close to this AOI"
+Output: {"in_scope": false, "metric": null, "region": null, "start_date": null, "end_date": null}
 """
 
 _SUMMARY_SYSTEM = """\
@@ -122,11 +144,19 @@ def parse_natural_language_query(text: str) -> StructuredQuery:
         logger.info(f"LLM raw response: {raw}")
         parsed = _extract_json(raw)
 
-        # Inject defaults for missing dates
-        if not parsed.get("start_date"):
-            parsed["start_date"] = five_years_ago
-        if not parsed.get("end_date"):
-            parsed["end_date"] = today
+        # Inject defaults for missing dates — only meaningful for in-scope
+        # (metric) queries; an out-of-scope query genuinely has no date
+        # range to default, so leave those as None rather than injecting
+        # a misleading 5-years-to-today window onto a question that was
+        # never about a time-series measurement in the first place.
+        if parsed.get("in_scope", True):
+            if not parsed.get("start_date"):
+                parsed["start_date"] = five_years_ago
+            if not parsed.get("end_date"):
+                parsed["end_date"] = today
+        else:
+            parsed.setdefault("start_date", today)
+            parsed.setdefault("end_date", today)
 
         return StructuredQuery(**parsed)
 

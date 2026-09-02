@@ -11,7 +11,7 @@ from ..schemas import (
     JobStatusResponse,
     FinalQueryResponse,
 )
-from ..services import llm_client, gee_client, geoprocess
+from ..services import llm_client, gee_client, geoprocess, research_agent
 from ..core.job_store import job_store
 
 logger = logging.getLogger(__name__)
@@ -49,10 +49,44 @@ def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict
         _update_stage(request_id, "llm_parsing")
         structured_query = llm_client.parse_natural_language_query(text)
         _update_stage(request_id, "llm_parsed")
-        logger.info(f"[{request_id}] Metric={structured_query.metric}, Region={structured_query.region}")
+        logger.info(f"[{request_id}] in_scope={structured_query.in_scope}, Metric={structured_query.metric}, Region={structured_query.region}")
     except Exception as e:
         logger.error(f"[{request_id}] LLM parse error: {e}", exc_info=True)
         job_store.update(request_id, {"status": "failed", "error": f"Query parsing failed: {str(e)}"})
+        return
+
+    # ── 1b. Out-of-scope branch ───────────────────────────────────────────────
+    # The query isn't asking to measure change in one of the nine fixed
+    # metrics this system has real datasets for (e.g. "where should we add
+    # a mobile tower near here") -- route to the web-search-grounded
+    # research agent instead of forcing it through the GEE pipeline. This
+    # is a genuinely different result shape (a suggested place + reasoning
+    # + sources, not a metrics table), so it skips AOI/GEE/geoprocessing
+    # entirely and finalizes the job here.
+    if not structured_query.in_scope:
+        try:
+            _update_stage(request_id, "generating_summary", {"stage_label": "Researching (web search)"})
+            import asyncio
+            answer = asyncio.run(research_agent.ask(text, structured_query.region))
+        except Exception as e:
+            logger.error(f"[{request_id}] Research agent error: {e}", exc_info=True)
+            job_store.update(request_id, {"status": "failed", "error": f"Research agent failed: {str(e)}"})
+            return
+
+        job_store.update(request_id, {
+            "status": "done",
+            "stage": "done",
+            "progress_pct": 100,
+            "result_type": "research",
+            "region": structured_query.region,
+            "place_name": answer.get("place_name"),
+            "reasoning": answer.get("reasoning"),
+            "radius_km": answer.get("radius_km"),
+            "confidence": answer.get("confidence"),
+            "source_urls": answer.get("source_urls", []),
+            "search_results_used": answer.get("search_results_used", 0),
+        })
+        logger.info(f"[{request_id}] Research agent complete: place_name={answer.get('place_name')!r}")
         return
 
     # ── 2. Resolve AOI ────────────────────────────────────────────────────────

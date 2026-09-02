@@ -996,6 +996,51 @@ function MetricSelector({ selected, onChange }) {
   );
 }
 
+// ── Research agent result — a suggested place + reasoning + sources,
+// genuinely different shape from a measured-metric result, so it gets
+// its own small panel rather than being squeezed into ResultsPanel's
+// metrics-table layout. ─────────────────────────────────────────────────────
+function ResearchResultPanel({ result }) {
+  const confColor = { high:'#7ec88f', medium:'#e8c15c', low:'#e8746b' }[result.confidence] || S.text3;
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+      <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, textTransform:'uppercase' }}>
+        Research Agent
+      </div>
+      {result.place_name ? (
+        <>
+          <div style={{ fontSize:18, fontWeight:700, color:'#c9a86a' }}>{result.place_name}</div>
+          <div style={{ fontSize:13, color:S.text2, lineHeight:1.6 }}>{result.reasoning}</div>
+          <div style={{ display:'flex', gap:14, fontSize:12, fontFamily:S.mono, color:S.text3 }}>
+            <span>Confidence: <span style={{ color:confColor }}>{result.confidence || 'low'}</span></span>
+            {result.radius_km != null && <span>Marked radius: {result.radius_km} km</span>}
+          </div>
+        </>
+      ) : (
+        <div style={{ fontSize:13, color:S.text2, lineHeight:1.6 }}>
+          {result.reasoning || "Couldn't find a specific answer grounded in web search results for this question."}
+        </div>
+      )}
+      {result.source_urls && result.source_urls.length > 0 && (
+        <div>
+          <div style={{ fontSize:11, color:S.text3, fontFamily:S.mono, letterSpacing:1, textTransform:'uppercase', marginBottom:6 }}>Sources</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+            {result.source_urls.map((u, i) => (
+              <a key={i} href={u} target="_blank" rel="noreferrer"
+                style={{ fontSize:11, color:S.accent, wordBreak:'break-all', textDecoration:'none' }}>
+                {u}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{ fontSize:11, color:S.text3, lineHeight:1.5, borderTop:`1px solid ${S.border}`, paddingTop:10 }}>
+        Web search via a public search index — a suggestion grounded in current search results, not a verified survey. Confirm on the ground before acting on it.
+      </div>
+    </div>
+  );
+}
+
 // ── Results ───────────────────────────────────────────────────────────────────
 function ResultsPanel({ result, drawnAOI, apiUrl }) {
   const m = METRICS_META[result.metric] || { label:result.metric, color:S.accent };
@@ -1169,7 +1214,9 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
                 <div style={{ fontSize:15, color:S.text2 }}>{error}</div>
               </div>
             )}
-            {result && <ResultsPanel result={result} drawnAOI={drawnAOI} apiUrl={apiUrl} />}
+            {result && (result.result_type === 'research'
+              ? <ResearchResultPanel result={result} />
+              : <ResultsPanel result={result} drawnAOI={drawnAOI} apiUrl={apiUrl} />)}
           </>
         )}
         {tab === 'Maritime' && (
@@ -1855,6 +1902,28 @@ export default function App() {
         else if (aoiBoundsRef.current) mapRef.current.fitBounds(aoiBoundsRef.current, { padding:[40,40] });
         layersRef.current.push(layer);
       }).catch(()=>{ if (aoiBoundsRef.current) mapRef.current.fitBounds(aoiBoundsRef.current, { padding:[40,40] }); });
+    }
+    // Research-agent result: geocode the suggested place (client-side,
+    // same Nominatim source PlaceSearchBar already uses) and mark it
+    // with a circle instead of the usual metric tile/geojson overlay —
+    // a genuinely different result shape for a genuinely different kind
+    // of answer (a suggested place, not a measured area).
+    if (result.result_type === 'research' && result.place_name) {
+      const geocodeQuery = result.region ? `${result.place_name}, ${result.region}` : result.place_name;
+      fetch(`https://nominatim.openstreetmap.org/search?` + new URLSearchParams({
+        q: geocodeQuery, format: 'jsonv2', limit: '1',
+      })).then(r => r.json()).then(matches => {
+        if (!matches || matches.length === 0 || !mapRef.current) return;
+        const { lat, lon } = matches[0];
+        const latNum = parseFloat(lat), lonNum = parseFloat(lon);
+        const radiusM = (result.radius_km || 2) * 1000;
+        const circle = L.circle([latNum, lonNum], {
+          radius: radiusM, color:'#c9a86a', weight:2, fillColor:'#c9a86a', fillOpacity:0.15,
+        }).addTo(mapRef.current);
+        circle.bindPopup(`<b>${result.place_name}</b><br/>${result.reasoning || ''}`);
+        layersRef.current.push(circle);
+        mapRef.current.fitBounds(circle.getBounds(), { padding:[60,60] });
+      }).catch(() => {});
     }
   }, [result]);
 
