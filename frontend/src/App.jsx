@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react'
 import { Analytics } from '@vercel/analytics/react';
 import IntelPanel from './components/IntelPanel';
 import CommodityTicker from './components/CommodityTicker';
+import ErrorBoundary from './components/ErrorBoundary';
 import AgriPanel from './components/AgriPanel';
 // Lazy-loaded: three.js is a large dependency (pulls the main bundle from
 // ~290KB to ~830KB) that only the Orbital tab needs — code-splitting it
@@ -2032,7 +2033,7 @@ export default function App() {
           anything else — it just claims its own 28px row at the very
           bottom of the viewport, same as the sidebar/map/intel panel
           claim their own columns above it. */}
-      {!isMobile && <CommodityTicker apiUrl={API_URL} />}
+      {!isMobile && <ErrorBoundary fallback={null}><CommodityTicker apiUrl={API_URL} /></ErrorBoundary>}
 
       <Analytics />
     </div>

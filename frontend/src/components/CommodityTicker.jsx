@@ -99,12 +99,16 @@ function TickerItem({ item }) {
         <span style={{ color: changeColor }}>{changePositive ? '▲' : '▼'} {Math.abs(item.change_pct).toFixed(2)}%</span>
       )}
 
-      {/* Hover detail card — pure CSS reveal, no JS state */}
+      {/* Hover detail card — pure CSS reveal, no JS state. display/flexDirection
+          live in the <style> block below (not here) so the .vayu-ticker-item:hover
+          rule can actually override them — an inline style here would always
+          win over a stylesheet rule regardless of :hover, silently making the
+          hover reveal never work. */}
       <span className="vayu-ticker-tooltip" style={{
         position:'absolute', bottom:'calc(100% + 10px)', left:'50%', transform:'translateX(-50%)',
         background:'#15181d', border:`1px solid ${S.border}`, borderRadius:6, padding:'12px 14px',
         minWidth:220, boxShadow:'0 8px 24px rgba(0,0,0,0.5)', zIndex:100,
-        display:'none', flexDirection:'column', gap:5, textAlign:'left', whiteSpace:'normal',
+        gap:5, textAlign:'left', whiteSpace:'normal',
       }}>
         <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:2 }}>
           <CommodityIcon symbol={item.symbol} color={color} size={20} />
@@ -171,6 +175,9 @@ export default function CommodityTicker({ apiUrl }) {
         }
         .vayu-ticker-track:hover {
           animation-play-state: paused;
+        }
+        .vayu-ticker-tooltip {
+          display: none;
         }
         .vayu-ticker-item:hover .vayu-ticker-tooltip {
           display: flex;
