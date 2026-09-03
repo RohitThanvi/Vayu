@@ -144,19 +144,28 @@ def parse_natural_language_query(text: str) -> StructuredQuery:
         logger.info(f"LLM raw response: {raw}")
         parsed = _extract_json(raw)
 
-        # Inject defaults for missing dates — only meaningful for in-scope
-        # (metric) queries; an out-of-scope query genuinely has no date
-        # range to default, so leave those as None rather than injecting
-        # a misleading 5-years-to-today window onto a question that was
-        # never about a time-series measurement in the first place.
+        # Inject placeholder dates for missing values — StructuredQuery
+        # requires real strings for start_date/end_date regardless of
+        # scope (an out-of-scope query has no meaningful date range, but
+        # the schema still needs a valid value, not None). BUG FIXED HERE:
+        # .setdefault() only inserts when a key is entirely ABSENT from
+        # the dict — it does nothing when the key exists with value None,
+        # which is exactly what the LLM returns for out-of-scope queries
+        # per the prompt ("start_date": null is present, not missing).
+        # That let None flow straight into a required str field and blew
+        # up with a Pydantic validation error the first time a real
+        # out-of-scope query was tried. Using the same falsy-check
+        # overwrite pattern as the in-scope branch fixes it for both.
         if parsed.get("in_scope", True):
             if not parsed.get("start_date"):
                 parsed["start_date"] = five_years_ago
             if not parsed.get("end_date"):
                 parsed["end_date"] = today
         else:
-            parsed.setdefault("start_date", today)
-            parsed.setdefault("end_date", today)
+            if not parsed.get("start_date"):
+                parsed["start_date"] = today
+            if not parsed.get("end_date"):
+                parsed["end_date"] = today
 
         return StructuredQuery(**parsed)
 
