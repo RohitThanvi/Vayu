@@ -1366,11 +1366,20 @@ function MapOverlay({ result, isLoading, drawnAOI, isMobile }) {
     </div>
   );
   if (result) {
+    if (result.result_type === 'research') {
+      return (
+        <div style={{ position:'absolute', top:12, right:12, zIndex:1000, pointerEvents:'none' }}>
+          <div style={{ padding:'6px 12px', fontSize:15, fontFamily:"'Courier New',monospace", letterSpacing:1, background:'rgba(13,17,23,0.92)', border:'1px solid #c9a86a', color:'#c9a86a' }}>
+            RESEARCH AGENT{result.place_name ? ` · ${result.place_name.toUpperCase()}` : ''}
+          </div>
+        </div>
+      );
+    }
     const m = METRICS_META[result.metric]||{ label:result.metric };
     return (
       <div style={{ position:'absolute', top:12, right:12, zIndex:1000, pointerEvents:'none' }}>
         <div style={{ padding:'6px 12px', fontSize:15, fontFamily:"'Courier New',monospace", letterSpacing:1, background:'rgba(13,17,23,0.92)', border:'1px solid #3a4250', color:'#ffffff' }}>
-          {m.label.toUpperCase()} · {result.start_date?.slice(0,4)}--{result.end_date?.slice(0,4)}
+          {(m.label || '').toUpperCase()} · {result.start_date?.slice(0,4)}--{result.end_date?.slice(0,4)}
         </div>
       </div>
     );
