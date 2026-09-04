@@ -33,7 +33,7 @@ fabricating an answer, same failure-handling contract as before.
 
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 
