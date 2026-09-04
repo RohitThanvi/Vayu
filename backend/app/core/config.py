@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     OPENSKY_CLIENT_ID: str = ""
     OPENSKY_CLIENT_SECRET: str = ""
 
+    # CPCB real-time Air Quality Index (India) — free, register at
+    # data.gov.in (email signup, no card) and get a key from your account's
+    # "My Account" -> API keys. See services/intel/air_quality.py.
+    AQI_API_KEY: str = ""
+
     # Commodity price ticker — no config needed here anymore. Originally
     # used Alpha Vantage (needed a key, 25/day cap proved unworkable
     # against Render's free-tier cold-start pattern), replaced with Yahoo
