@@ -12,26 +12,28 @@ slower cold starts on Render's free tier, which has already caused real
 problems elsewhere in this project. A plain function chain does the
 same job and is far easier to debug.
 
-Web search source: public SearXNG instances. This is a real, accepted
-production tradeoff, not a naive choice -- most public instances disable
-JSON output by default (operators do this deliberately, since JSON/CSV
-access is a much cheaper way to scrape an instance at scale than
-rendering full HTML, and plenty of operators want to discourage exactly
-that), and there's no single public instance guaranteed to keep
-supporting it. Mitigated by probing searx.space's live-checked instance
-list at runtime rather than hardcoding a guess, verifying the actual
-Content-Type of a live response before trusting it (not a claimed
-capability), and caching whichever instance is confirmed working so
-normal requests don't re-probe every time. If every candidate instance
-fails, this returns an empty result rather than crashing -- the calling
-endpoint then reports "search unavailable" rather than fabricating an
-answer.
+Web search source: SerpApi (Google Search results, real JSON API,
+serpapi.com). Replaced the previous public-SearXNG-probing approach —
+that source proved unreliable in practice (unclear whether from failing
+to find a working JSON-capable public instance, or finding one but
+returning irrelevant results). Alternatives considered and rejected:
+Google's own Custom Search API (discontinued for new signups, redirects
+to the paid Vertex AI Search API), Brave Search API (requires card
+details on file even for its free tier). SerpApi's free plan is
+genuinely signup-only (email, no card) for 100 searches/month, which is
+comfortably enough for an occasional out-of-scope-query fallback path,
+not the primary traffic driver of this app.
+
+Needs SERPAPI_KEY set in the environment (get one free at
+serpapi.com/manage-api-key after signup). If it's missing or every
+request fails, this returns an empty result rather than crashing — the
+calling endpoint then reports "search unavailable" rather than
+fabricating an answer, same failure-handling contract as before.
 """
 
 import logging
-import random
-import time
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, List
 
 import httpx
 
@@ -39,98 +41,48 @@ from .llm_client import _get_client, _extract_json
 
 logger = logging.getLogger(__name__)
 
-SEARX_SPACE_INSTANCES_URL = "https://searx.space/data/instances.json"
-INSTANCE_LIST_TTL = 24 * 60 * 60      # refresh the candidate list once a day
-KNOWN_GOOD_TTL = 6 * 60 * 60          # re-probe even a working instance periodically, in case it silently changes settings
-MAX_CANDIDATES_TRIED = 40             # cap how many instances one search will ever probe through
-
-_instance_list_cache: List[str] = []
-_instance_list_cached_at: float = 0.0
-_known_good_instance: Optional[str] = None
-_known_good_checked_at: float = 0.0
+SERPAPI_URL = "https://serpapi.com/search.json"
+SERPAPI_KEY = os.environ.get("SERPAPI_KEY", "")
 
 _HEADERS = {"User-Agent": "VAYU-Research-Agent/1.0"}
 
 
-async def _get_candidate_instances(client: httpx.AsyncClient) -> List[str]:
-    global _instance_list_cache, _instance_list_cached_at
-    if _instance_list_cache and (time.time() - _instance_list_cached_at) < INSTANCE_LIST_TTL:
-        return _instance_list_cache
-    try:
-        resp = await client.get(SEARX_SPACE_INSTANCES_URL, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        instances_dict = data.get("instances", data) if isinstance(data, dict) else {}
-        urls = [u.rstrip("/") for u in instances_dict.keys() if isinstance(u, str) and u.startswith("http")]
-        # Don't try instances in the same order every deployment does — a
-        # fixed "first alphabetically" order just concentrates everyone
-        # building this same pattern onto the same few instances.
-        random.shuffle(urls)
-        _instance_list_cache = urls[:MAX_CANDIDATES_TRIED]
-        _instance_list_cached_at = time.time()
-        logger.info(f"Research agent: refreshed candidate instance list ({len(_instance_list_cache)} instances)")
-    except Exception as e:
-        logger.warning(f"Research agent: failed to fetch searx.space instance list: {type(e).__name__}: {e}")
-        # Keep whatever we had before, even if stale, rather than going to nothing
-    return _instance_list_cache
-
-
-async def _probe_instance(client: httpx.AsyncClient, base_url: str) -> bool:
-    """Ground truth check: does a real request to this instance actually
-    return JSON? Never trust a claimed capability from a listing —
-    verify the live Content-Type instead (see module docstring)."""
-    try:
-        resp = await client.get(f"{base_url}/search", params={"q": "test", "format": "json"}, timeout=8)
-        return resp.status_code == 200 and "application/json" in resp.headers.get("content-type", "")
-    except Exception:
-        return False
-
-
-async def _get_working_instance(client: httpx.AsyncClient) -> Optional[str]:
-    global _known_good_instance, _known_good_checked_at
-    if _known_good_instance and (time.time() - _known_good_checked_at) < KNOWN_GOOD_TTL:
-        return _known_good_instance
-
-    candidates = await _get_candidate_instances(client)
-    for base_url in candidates:
-        if await _probe_instance(client, base_url):
-            _known_good_instance = base_url
-            _known_good_checked_at = time.time()
-            logger.info(f"Research agent: using SearXNG instance {base_url}")
-            return base_url
-
-    logger.warning(f"Research agent: none of {len(candidates)} candidate SearXNG instances serve JSON right now")
-    _known_good_instance = None
-    return None
-
-
 async def search_web(query: str, num_results: int = 6) -> List[Dict[str, str]]:
-    """Search the web via a live-probed public SearXNG instance. Returns
-    an empty list (not an exception) on total failure — every candidate
-    instance being down/JSON-disabled is a real, expected possibility
-    with this free source, not a bug to crash on."""
-    async with httpx.AsyncClient(headers=_HEADERS) as client:
-        base_url = await _get_working_instance(client)
-        if not base_url:
-            return []
-        try:
-            resp = await client.get(f"{base_url}/search", params={"q": query, "format": "json"}, timeout=15)
-            if "application/json" not in resp.headers.get("content-type", ""):
-                # This instance stopped serving JSON since it was last
-                # probed (operators can flip this at any time) — don't
-                # trust this response, and force a fresh probe next call.
-                global _known_good_instance
-                _known_good_instance = None
-                return []
+    """Search the web via SerpApi (Google results, real JSON, no
+    JSON-availability guessing needed unlike public SearXNG). Returns an
+    empty list (not an exception) on any failure — missing key, quota
+    exhausted, network error — so the research agent degrades to
+    "search unavailable" instead of crashing the request."""
+    if not SERPAPI_KEY:
+        logger.warning("Research agent: SERPAPI_KEY not configured, skipping web search")
+        return []
+
+    params = {
+        "q": query,
+        "api_key": SERPAPI_KEY,
+        "engine": "google",
+        "num": num_results,
+    }
+    try:
+        async with httpx.AsyncClient(headers=_HEADERS) as client:
+            resp = await client.get(SERPAPI_URL, params=params, timeout=15)
+            resp.raise_for_status()
             data = resp.json()
-        except Exception as e:
-            logger.warning(f"Research agent: search failed against {base_url}: {type(e).__name__}: {e}")
-            _known_good_instance = None
-            return []
+    except Exception as e:
+        logger.warning(f"Research agent: SerpApi search failed: {type(e).__name__}: {e}")
+        return []
+
+    if data.get("error"):
+        # SerpApi returns HTTP 200 with an "error" field for things like
+        # an exhausted monthly quota or an invalid key — treat the same
+        # as a failed request rather than silently returning nothing
+        # with no signal in the logs.
+        logger.warning(f"Research agent: SerpApi returned an error: {data['error']}")
+        return []
 
     results = []
-    for r in (data.get("results") or [])[:num_results]:
-        title, url, snippet = r.get("title"), r.get("url"), r.get("content")
+    for r in (data.get("organic_results") or [])[:num_results]:
+        title, url, snippet = r.get("title"), r.get("link"), r.get("snippet")
         if title and url:
             results.append({"title": title, "url": url, "snippet": snippet or ""})
     return results

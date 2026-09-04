@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>VAYU — Signal Lost (404)</title>
+<link rel="icon" href="/favicon.ico" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root { --gold: #e8c15c; --gold-bright: #f5d98a; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #05070c; }
+  #scene-container { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  #scene-container:active { cursor: grabbing; }
+
+  #hud { position: fixed; inset: 0; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; z-index: 10; }
+  .top-copy { margin-top: clamp(28px, 6vh, 72px); text-align: center; padding: 0 20px; }
+
+  .code-404 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: clamp(64px, 14vw, 150px);
+    line-height: 1;
+    letter-spacing: 0.05em;
+    background: linear-gradient(180deg, var(--gold-bright) 0%, var(--gold) 55%, #a9781f 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 40px rgba(232, 193, 92, 0.35);
+    margin: 0;
+  }
+
+  .signal-line {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-style: italic;
+    font-size: clamp(18px, 3.4vw, 32px);
+    letter-spacing: 0.12em;
+    color: var(--gold);
+    text-transform: uppercase;
+    margin: 6px 0 10px;
+    text-shadow: 0 0 18px rgba(232, 193, 92, 0.4);
+  }
+
+  .sub-copy {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 500;
+    font-size: clamp(13px, 1.7vw, 16px);
+    letter-spacing: 0.04em;
+    color: rgba(232, 193, 92, 0.65);
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  .telemetry {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.15em;
+    color: rgba(232, 193, 92, 0.4);
+    text-transform: uppercase;
+    margin-top: 10px;
+  }
+
+  .bottom-bar {
+    position: fixed;
+    bottom: clamp(20px, 5vh, 48px);
+    left: 0; right: 0;
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    pointer-events: auto;
+    padding: 0 20px;
+  }
+
+  .hint {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.35);
+  }
+
+  .home-link {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #05070c;
+    background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+    border: 1px solid rgba(232, 193, 92, 0.6);
+    border-radius: 4px;
+    padding: 12px 26px;
+    text-decoration: none;
+    box-shadow: 0 0 24px rgba(232, 193, 92, 0.25);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .home-link:hover { transform: translateY(-1px); box-shadow: 0 0 32px rgba(232, 193, 92, 0.45); }
+
+  #loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #05070c; z-index: 20;
+    font-family: 'Rajdhani', sans-serif; letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--gold); font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<div id="loading">Acquiring signal&hellip;</div>
+
+<div id="scene-container"></div>
+
+<div id="hud">
+  <div class="top-copy">
+    <div class="code-404">404</div>
+    <div class="signal-line">Signal Lost in Orbit</div>
+    <div class="sub-copy">The page you're looking for has drifted out of range. Drag to look around — the satellite is still listening.</div>
+    <div class="telemetry">VAYU · Geospatial Intelligence · No Downlink</div>
+  </div>
+</div>
+
+<div class="bottom-bar">
+  <div class="hint">Drag / swipe to rotate the view · scroll or pinch to zoom</div>
+  <a class="home-link" href="/">Return to Mission Control</a>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const container = document.getElementById('scene-container');
+const loadingEl = document.getElementById('loading');
+
+// ── Renderer / scene / camera ────────────────────────────────────────────
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 4000);
+camera.position.set(0, 3.2, 13);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+container.appendChild(renderer.domElement);
+
+// ── Controls (this is the "playable" part — full drag-orbit + zoom) ─────
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 6;
+controls.maxDistance = 40;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.35;
+controls.enablePan = false;
+
+// ── Starfield background ─────────────────────────────────────────────────
+function makeStarfield(count, radius) {
+  const positions = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const r = radius * (0.6 + Math.random() * 0.4);
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    positions[i*3]   = r * Math.sin(phi) * Math.cos(theta);
+    positions[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+    positions[i*3+2] = r * Math.cos(phi);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 1.1, sizeAttenuation: true, transparent: true, opacity: 0.75 });
+  return new THREE.Points(geo, mat);
+}
+scene.add(makeStarfield(2200, 900));
+
+// ── Earth (below/behind the satellite, same free NASA texture Vayu's
+// Orbital tab already uses — no key, no billing) ─────────────────────────
+const EARTH_RADIUS = 9;
+const loader = new THREE.TextureLoader();
+const earthGeo = new THREE.SphereGeometry(EARTH_RADIUS, 64, 64);
+const earthMat = new THREE.MeshPhongMaterial({ shininess: 5 });
+loader.load('https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg', (tex) => {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  earthMat.map = tex;
+  earthMat.needsUpdate = true;
+});
+const earth = new THREE.Mesh(earthGeo, earthMat);
+earth.position.set(0, -EARTH_RADIUS - 4.2, -6);
+scene.add(earth);
+
+// Atmosphere glow shell
+const atmoGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.02, 64, 64);
+const atmoMat = new THREE.MeshBasicMaterial({ color: 0x6fa8dc, transparent: true, opacity: 0.12, side: THREE.BackSide });
+const atmo = new THREE.Mesh(atmoGeo, atmoMat);
+atmo.position.copy(earth.position);
+scene.add(atmo);
+
+// ── Lighting ──────────────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0x223344, 1.1));
+const sun = new THREE.DirectionalLight(0xfff2d0, 1.6);
+sun.position.set(-12, 8, 10);
+scene.add(sun);
+const rim = new THREE.DirectionalLight(0xe8c15c, 0.5);
+rim.position.set(8, -4, -6);
+scene.add(rim);
+
+// ── Geostationary communications satellite — built from primitives, with
+// the components a real GEO comsat actually has: a central bus, dual
+// deployed solar array wings, a main parabolic downlink dish, smaller
+// omni/feed antennas, an apogee thruster nozzle, and MLI-gold foil
+// wrapping (the actual reason most real satellites look "gold foil"
+// wrapped is multi-layer insulation, not decoration — reused here as the
+// satellite's honest material, not just theme-matching). ────────────────
+const satellite = new THREE.Group();
+
+const goldFoil = new THREE.MeshStandardMaterial({ color: 0xd4a13a, metalness: 0.75, roughness: 0.35, emissive: 0x2a1a05, emissiveIntensity: 0.15 });
+const busMetal  = new THREE.MeshStandardMaterial({ color: 0xb9bec4, metalness: 0.6, roughness: 0.4 });
+const panelBlue = new THREE.MeshStandardMaterial({ color: 0x14213b, metalness: 0.3, roughness: 0.55 });
+const panelGrid = new THREE.MeshStandardMaterial({ color: 0x1c2c52, metalness: 0.35, roughness: 0.5, wireframe: false });
+const whiteAnt  = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, metalness: 0.2, roughness: 0.4 });
+const darkAnt   = new THREE.MeshStandardMaterial({ color: 0x2a2a2e, metalness: 0.5, roughness: 0.3 });
+
+// Central bus (main body)
+const bus = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.6, 2.2), goldFoil);
+satellite.add(bus);
+
+// Bus corner ribbing detail (thin trim boxes, real MLI panel seams)
+for (const dx of [-1.12, 1.12]) {
+  const seam = new THREE.Mesh(new THREE.BoxGeometry(0.05, 2.6, 2.2), busMetal);
+  seam.position.set(dx, 0, 0);
+  satellite.add(seam);
+}
+
+// Main parabolic downlink dish (LatheGeometry — an actual paraboloid, not a flat disc)
+const dishPoints = [];
+for (let i = 0; i <= 20; i++) {
+  const t = i / 20;
+  const r = t * 1.4;
+  const y = r * r * 0.28;
+  dishPoints.push(new THREE.Vector2(r, y));
+}
+const dish = new THREE.Mesh(new THREE.LatheGeometry(dishPoints, 40), whiteAnt);
+dish.rotation.x = Math.PI;
+dish.position.set(0, 0.4, 1.9);
+satellite.add(dish);
+// Dish feed horn (the small antenna that sits at a paraboloid's focus)
+const feed = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.6, 12), darkAnt);
+feed.rotation.x = Math.PI / 2;
+feed.position.set(0, 0.4, 1.15);
+satellite.add(feed);
+const feedStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.9, 8), darkAnt);
+feedStrut.rotation.x = Math.PI / 2;
+feedStrut.position.set(0, 0.4, 1.55);
+satellite.add(feedStrut);
+
+// Secondary omni antennas (whip antennas, top of bus)
+for (const [dx, dz] of [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]]) {
+  const whip = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.1, 6), darkAnt);
+  whip.position.set(dx, 1.85, dz);
+  satellite.add(whip);
+}
+
+// Apogee/attitude thruster nozzle (rear of bus, opposite the dish)
+const nozzle = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.7, 16, 1, true), darkAnt);
+nozzle.rotation.x = Math.PI / 2;
+nozzle.position.set(0, 0, -1.55);
+satellite.add(nozzle);
+
+// Star tracker / sensor block (small box, side of bus)
+const startracker = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.5), darkAnt);
+startracker.position.set(1.0, 0.9, 0.6);
+satellite.add(startracker);
+
+// Solar array wings — boom + a grid of panel cells on each side (a real
+// deployed GEO array is many hinged panel segments, approximated here as
+// a ribbed single plane so it reads clearly at this scale)
+function buildSolarWing(direction) {
+  const wing = new THREE.Group();
+  const boomLen = 1.1;
+  const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, boomLen, 10), busMetal);
+  boom.rotation.z = Math.PI / 2;
+  boom.position.set(direction * (1.1 + boomLen / 2), 0, 0);
+  wing.add(boom);
+
+  const panelW = 3.6, panelH = 1.5;
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(panelW, panelH, 0.06), panelBlue);
+  panel.position.set(direction * (1.1 + boomLen + panelW / 2), 0, 0);
+  wing.add(panel);
+
+  // cell grid lines (thin emissive strips reading as solar cell seams)
+  const segs = 7;
+  for (let i = 1; i < segs; i++) {
+    const line = new THREE.Mesh(new THREE.BoxGeometry(0.02, panelH, 0.07), panelGrid);
+    line.position.set(direction * (1.1 + boomLen + (panelW / segs) * i), 0, 0);
+    wing.add(line);
+  }
+  // gold trim edge (matches real array edge conductors)
+  const edge = new THREE.Mesh(new THREE.BoxGeometry(panelW, 0.06, 0.08), goldFoil);
+  edge.position.set(direction * (1.1 + boomLen + panelW / 2), panelH / 2, 0);
+  wing.add(edge);
+  const edge2 = edge.clone();
+  edge2.position.y = -panelH / 2;
+  wing.add(edge2);
+
+  return wing;
+}
+satellite.add(buildSolarWing(-1));
+satellite.add(buildSolarWing(1));
+
+satellite.scale.setScalar(0.85);
+satellite.position.set(0, 1.4, 0);
+scene.add(satellite);
+
+// Gentle independent tumble on top of the drag-orbit, so it reads as
+// "alive" even before the user touches it
+let t0 = performance.now();
+
+// ── Resize handling (responsive) ─────────────────────────────────────────
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+window.addEventListener('resize', onResize);
+
+// ── Render loop ───────────────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate);
+  const t = (performance.now() - t0) / 1000;
+  satellite.rotation.y = t * 0.12;
+  satellite.position.y = 1.4 + Math.sin(t * 0.5) * 0.15;
+  earth.rotation.y = t * 0.02;
+  try {
+    controls.update();
+    renderer.render(scene, camera);
+  } catch (e) {
+    console.error('404 scene render error (frame skipped):', e);
+  }
+}
+animate();
+
+loadingEl.style.display = 'none';
+</script>
+</body>
+</html>
