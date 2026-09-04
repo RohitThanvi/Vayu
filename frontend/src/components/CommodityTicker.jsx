@@ -23,6 +23,8 @@
  * duplicated-track loop without extra re-render logic.
  */
 
+import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useCommodityTicker } from '../hooks/useCommodityTicker';
 
 const S = {
@@ -89,8 +91,36 @@ function TickerItem({ item }) {
   const color = CATEGORY_COLOR[item.category] || S.text2;
   const lastUpdated = formatTime(item.market_time);
 
+  // Hover tooltip is rendered via a React portal straight into
+  // document.body, NOT as a nested absolutely-positioned child — the
+  // parent scroll track has overflowX:'hidden' (needed for the marquee
+  // clip), and per the CSS overflow spec, setting overflow-x to anything
+  // other than 'visible' forces the computed value of overflow-y to
+  // 'auto' too, even though this file explicitly sets overflowY:'visible'
+  // — browsers ignore that combination. So the tooltip was ALWAYS being
+  // clipped vertically before it even got compared with the map's
+  // z-index; a z-index fix alone (previous attempt) couldn't fix this,
+  // since it never got a chance to paint at all. A portal is the actual
+  // fix: it escapes the clipping ancestor's DOM subtree entirely, so
+  // fixed positioning + z-index work exactly as written.
+  const itemRef = useRef(null);
+  const [hovered, setHovered] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  const handleEnter = () => {
+    const r = itemRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.top, left: r.left + r.width / 2 });
+    setHovered(true);
+  };
+
   return (
-    <span className="vayu-ticker-item" style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'0 24px', fontFamily:S.mono, fontSize:13, whiteSpace:'nowrap', position:'relative', cursor:'default' }}>
+    <span
+      ref={itemRef}
+      className="vayu-ticker-item"
+      onMouseEnter={handleEnter}
+      onMouseLeave={() => setHovered(false)}
+      style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'0 24px', fontFamily:S.mono, fontSize:13, whiteSpace:'nowrap', position:'relative', cursor:'default' }}
+    >
       <CommodityIcon symbol={item.symbol} color={color} />
       <span style={{ color, letterSpacing:0.5, fontWeight:600 }}>{item.name}</span>
       <span style={{ color:'#f0f0f0', fontWeight:600 }}>${formatValue(item.value)}</span>
@@ -99,42 +129,32 @@ function TickerItem({ item }) {
         <span style={{ color: changeColor }}>{changePositive ? '▲' : '▼'} {Math.abs(item.change_pct).toFixed(2)}%</span>
       )}
 
-      {/* Hover detail card — pure CSS reveal, no JS state. display/flexDirection
-          live in the <style> block below (not here) so the .vayu-ticker-item:hover
-          rule can actually override them — an inline style here would always
-          win over a stylesheet rule regardless of :hover, silently making the
-          hover reveal never work. */}
-      <span className="vayu-ticker-tooltip" style={{
-        position:'absolute', bottom:'calc(100% + 10px)', left:'50%', transform:'translateX(-50%)',
-        background:'#15181d', border:`1px solid ${S.border}`, borderRadius:6, padding:'12px 14px',
-        minWidth:220, boxShadow:'0 8px 24px rgba(0,0,0,0.5)',
-        // z-index 100 was invisible: it pops up over the map area, and
-        // since no ancestor between here and the page root isolates a
-        // new stacking context, this z-index competes directly against
-        // Leaflet's own pane z-indexes (tiles 200, markers 600, popups
-        // 700) — the tooltip DOM node existed and even had the `display`
-        // toggle working, it was just painting BEHIND the map. Needs to
-        // clear Leaflet's highest pane (700) with real margin, matching
-        // the app's other top-of-stack overlays (mobile panels use 2000).
-        zIndex:3000,
-        gap:5, textAlign:'left', whiteSpace:'normal',
-      }}>
-        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:2 }}>
-          <CommodityIcon symbol={item.symbol} color={color} size={20} />
-          <span style={{ color, fontWeight:700, fontSize:13 }}>{item.name}</span>
-        </div>
-        <div style={{ display:'grid', gridTemplateColumns:'auto auto', gap:'3px 12px', fontSize:11, color:S.text2 }}>
-          <span style={{ color:S.text3 }}>Symbol</span><span>{item.symbol}</span>
-          {item.exchange && <><span style={{ color:S.text3 }}>Exchange</span><span>{item.exchange}</span></>}
-          {item.prev_close != null && <><span style={{ color:S.text3 }}>Prev. close</span><span>${formatValue(item.prev_close)}</span></>}
-          {(item.day_low != null && item.day_high != null) && <><span style={{ color:S.text3 }}>Day range</span><span>${formatValue(item.day_low)} – ${formatValue(item.day_high)}</span></>}
-          {(item.week52_low != null && item.week52_high != null) && <><span style={{ color:S.text3 }}>52-week range</span><span>${formatValue(item.week52_low)} – ${formatValue(item.week52_high)}</span></>}
-          {lastUpdated && <><span style={{ color:S.text3 }}>Last quote</span><span>{lastUpdated}</span></>}
-        </div>
-        <div style={{ fontSize:9, color:S.text3, marginTop:4, lineHeight:1.4 }}>
-          Yahoo Finance, ~15–20min delayed. Not MCX real-time data.
-        </div>
-      </span>
+      {hovered && createPortal(
+        <span style={{
+          position:'fixed', top: pos.top - 10, left: pos.left, transform:'translate(-50%, -100%)',
+          background:'#15181d', border:`1px solid ${S.border}`, borderRadius:6, padding:'12px 14px',
+          minWidth:220, boxShadow:'0 8px 24px rgba(0,0,0,0.5)', zIndex:3000,
+          display:'flex', flexDirection:'column', gap:5, textAlign:'left', whiteSpace:'normal',
+          pointerEvents:'none',
+        }}>
+          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:2 }}>
+            <CommodityIcon symbol={item.symbol} color={color} size={20} />
+            <span style={{ color, fontWeight:700, fontSize:13 }}>{item.name}</span>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'auto auto', gap:'3px 12px', fontSize:11, color:S.text2 }}>
+            <span style={{ color:S.text3 }}>Symbol</span><span>{item.symbol}</span>
+            {item.exchange && <><span style={{ color:S.text3 }}>Exchange</span><span>{item.exchange}</span></>}
+            {item.prev_close != null && <><span style={{ color:S.text3 }}>Prev. close</span><span>${formatValue(item.prev_close)}</span></>}
+            {(item.day_low != null && item.day_high != null) && <><span style={{ color:S.text3 }}>Day range</span><span>${formatValue(item.day_low)} – ${formatValue(item.day_high)}</span></>}
+            {(item.week52_low != null && item.week52_high != null) && <><span style={{ color:S.text3 }}>52-week range</span><span>${formatValue(item.week52_low)} – ${formatValue(item.week52_high)}</span></>}
+            {lastUpdated && <><span style={{ color:S.text3 }}>Last quote</span><span>{lastUpdated}</span></>}
+          </div>
+          <div style={{ fontSize:9, color:S.text3, marginTop:4, lineHeight:1.4 }}>
+            Yahoo Finance, ~15–20min delayed. Not MCX real-time data.
+          </div>
+        </span>,
+        document.body
+      )}
     </span>
   );
 }
@@ -184,12 +204,6 @@ export default function CommodityTicker({ apiUrl }) {
         }
         .vayu-ticker-track:hover {
           animation-play-state: paused;
-        }
-        .vayu-ticker-tooltip {
-          display: none;
-        }
-        .vayu-ticker-item:hover .vayu-ticker-tooltip {
-          display: flex;
         }
       `}</style>
     </div>

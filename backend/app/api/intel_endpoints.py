@@ -10,6 +10,7 @@ REST:
   GET  /api/v1/intel/aircraft/stats  — aviation tracking statistics
   GET  /api/v1/intel/satellites/tle  — cached satellite orbital elements (CelesTrak)
   GET  /api/v1/intel/commodities     — cached global commodity prices (Yahoo Finance)
+  GET  /api/v1/intel/air-quality     — cached real-time CPCB Air Quality Index (India)
   GET  /api/v1/intel/wind-field      — animated wind vector grid (U/V components)
 
 WebSocket:
@@ -45,6 +46,7 @@ from ..services.intel.vessel_store import vessel_store, CATEGORY_LABELS
 from ..services.intel.aircraft_store import aircraft_store
 from ..services.intel import satellite_tle
 from ..services.intel import commodity_prices
+from ..services.intel import air_quality
 from ..services.weather.wind_field import wind_field_store
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,7 @@ async def get_sources():
         {"id": "ACLED",      "name": "ACLED Conflict",    "status": "standby", "auth": True,  "count": by_source.get("ACLED", 0),      "interval_min": 60},
         {"id": "adsb.lol",   "name": "adsb.lol Aviation",  "status": "error" if aircraft_store.get_stats().get("last_error") else "live", "auth": False, "count": aircraft_store.get_stats().get("active_aircraft", 0), "interval_min": 1.5, "last_error": aircraft_store.get_stats().get("last_error"), "last_success_at": aircraft_store.get_stats().get("last_success_at")},
         {"id": "CelesTrak",  "name": "CelesTrak Satellites", "status": "live", "auth": False, "count": satellite_tle.get_satellites().get("count", 0), "interval_min": 360},
+        {"id": "CPCB AQI",   "name": "CPCB Air Quality (India)", "status": "error" if air_quality.get_stations().get("last_error") else "live", "auth": True, "count": len(air_quality.get_stations().get("stations", [])), "interval_min": 60, "last_error": air_quality.get_stations().get("last_error")},
         {"id": "AISHub",     "name": "AISHub Maritime",   "status": "planned", "auth": True,  "count": 0, "interval_min": 5},
         {"id": "GDACS",      "name": "GDACS Disasters",   "status": "planned", "auth": False, "count": 0, "interval_min": 30},
         {"id": "ISRO",       "name": "ISRO Bhuvan",       "status": "planned", "auth": True,  "count": 0, "interval_min": 60},
@@ -328,6 +331,21 @@ async def get_commodities():
     instead (real futures prices, ~15-20min delayed). Refreshed every
     few hours server-side and cached — see services/intel/commodity_prices.py."""
     return commodity_prices.get_commodities()
+
+
+# ── Air quality (CPCB, India-only, free data.gov.in key) ───────────────────
+
+@router.get("/air-quality", summary="Cached real-time CPCB Air Quality Index stations")
+async def get_air_quality():
+    """Real-time AQI from CPCB's monitoring network (~800+ India stations,
+    hourly). India-only, matching CPCB's actual coverage — not a global
+    layer like the other intel sources. Each station's overall AQI is the
+    max of its reported pollutant sub-indices (CPCB's own National AQI
+    convention). Refreshed hourly server-side and cached — see
+    services/intel/air_quality.py. Empty stations list + a populated
+    last_error means AQI_API_KEY isn't configured or CPCB's API is
+    unreachable this cycle, not that there's genuinely no data."""
+    return air_quality.get_stations()
 
 
 @router.get("/wind-field", summary="Animated wind vector grid (U/V components)")

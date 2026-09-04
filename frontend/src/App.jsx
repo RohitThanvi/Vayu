@@ -64,6 +64,7 @@ const SATELLITE_LAYERS = {
   // Free for non-commercial use; requires attribution, shown in the UI
   // note wherever this layer is toggled (see EOX_ATTRIBUTION).
   true_color: { label: 'True Color',      icon: 'map',    opacity: 0.9,  desc: 'Sentinel-2 cloudless global mosaic (EOX), any zoom' },
+  worldview:  { label: 'Daily Worldview', icon: 'globe',  opacity: 0.9,  desc: "NASA GIBS daily satellite view (MODIS Terra), any zoom" },
   ndvi:       { label: 'NDVI Vegetation', icon: 'leaf',   opacity: 0.75, desc: 'Vegetation health index' },
   sar:        { label: 'SAR / Microwave', icon: 'radio',  opacity: 0.75, desc: 'Sentinel-1, sees through cloud cover' },
   thermal:    { label: 'Thermal / IR',    icon: 'thermo', opacity: 0.75, desc: 'Landsat surface temperature' },
@@ -75,8 +76,24 @@ const SATELLITE_LAYERS = {
 const EOX_TRUE_COLOR_URL = 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg';
 const EOX_ATTRIBUTION = 'Sentinel-2 cloudless \u2013 s2maps.eu by EOX IT Services GmbH';
 
+// NASA GIBS ("Global Imagery Browse Services") — the same free, keyless,
+// pre-tiled WMTS service that actually powers nasa.gov's own Worldview
+// tool. Requested by name ("something like NASA's Worldview") as a data
+// source to add if feasible — this is that exact source, not a lookalike.
+// Same architectural category as True Color: pre-tiled, no GEE compute,
+// no minZoom gate. Imagery has ~1 day processing latency, so this
+// requests YESTERDAY's date, not "today" (GIBS has no "latest" alias in
+// its plain XYZ URL scheme — a real date must be supplied).
+function gibsWorldviewUrl() {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  const dateStr = d.toISOString().slice(0, 10);
+  return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/${dateStr}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`;
+}
+const GIBS_ATTRIBUTION = 'Imagery courtesy NASA GIBS/Worldview';
+
 // Only these three genuinely need the low-zoom gate (live GEE compute,
-// see global_layers.py) — True Color is pre-tiled and exempt.
+// see global_layers.py) — True Color and Worldview are both pre-tiled and exempt.
 const GEE_GATED_LAYERS = new Set(['ndvi', 'sar', 'thermal']);
 
 
@@ -362,6 +379,7 @@ function Icon({ name, size = 16, style }) {
     case 'anchor':     return <svg {...p}><circle cx="12" cy="5" r="2"/><path d="M12 7v14M6 13a6 6 0 0 0 12 0M4 13h4M16 13h4"/></svg>;
     case 'book':       return <svg {...p}><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H12v18H5.5A1.5 1.5 0 0 1 4 19.5Z"/><path d="M20 4.5A1.5 1.5 0 0 0 18.5 3H12v18h6.5a1.5 1.5 0 0 0 1.5-1.5Z"/></svg>;
     case 'map':        return <svg {...p}><path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2Z"/><path d="M9 4v14M15 6v14"/></svg>;
+    case 'globe':      return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg>;
     case 'sliders':    return <svg {...p}><path d="M4 6h9M17 6h3M4 18h3M11 18h9"/><circle cx="14" cy="6" r="2.2"/><circle cx="8" cy="18" r="2.2"/></svg>;
     case 'radio':      return <svg {...p}><circle cx="12" cy="12" r="2.2"/><path d="M8.3 15.7a5.5 5.5 0 0 1 0-7.4M15.7 8.3a5.5 5.5 0 0 1 0 7.4M5.5 18.5a10 10 0 0 1 0-13M18.5 5.5a10 10 0 0 1 0 13"/></svg>;
     case 'plane':      return <svg {...p}><path d="M2.5 12.5 21 6.5v3.6L13 14v5.3l3 2.2v1.4l-4-1.3-4 1.3v-1.4l3-2.2V14L2.5 16.1Z"/></svg>;
@@ -1130,6 +1148,7 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI, aoiRegionName,
   isLoading,error,result,jobStatus, onSubmit, vesselStats, onClose, isMobile,
   weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey, mapZoom,
+  aqiOn, aqiLoading, onToggleAqi,
   orbitalShowSatellites, setOrbitalShowSatellites, orbitalShowAircraft, setOrbitalShowAircraft,
   orbitalSatellites, orbitalSatLoaded, orbitalSatDebug, orbitalAircraftStats, orbitalAircraftValid,
   orbitalSearch, setOrbitalSearch, orbitalFilteredList, orbitalSelected, setOrbitalSelected }) {
@@ -1282,6 +1301,19 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
         {tab === 'Weather' && (
           <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
             <WeatherLayerToggles active={weatherLayers} onToggle={onToggleWeather} />
+            <div style={{ marginTop:14 }}>
+              <button onClick={onToggleAqi} disabled={aqiLoading}
+                style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44, width:'100%',
+                  fontFamily:S.mono, letterSpacing:0.3,
+                  background: aqiOn ? 'rgba(126,184,212,0.10)' : S.surface2,
+                  border: `1px solid ${aqiOn ? S.accent : S.border}`, borderRadius:3,
+                  color: aqiOn ? S.accent : S.text2, cursor: aqiLoading ? 'wait' : 'pointer',
+                  textAlign:'left', opacity: aqiLoading ? 0.6 : 1 }}>
+                <Icon name="thermo" size={18} style={{ flexShrink:0, opacity: aqiOn ? 1 : 0.75 }} />
+                <span style={{ fontSize:14, flex:1 }}>Air Quality (CPCB, India)</span>
+                <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{aqiLoading ? '…' : (aqiOn ? 'ON' : 'OFF')}</span>
+              </button>
+            </div>
             <div style={{ fontSize:13, color:S.text3, lineHeight:1.6 }}>
             </div>
             {!OWM_API_KEY && (
@@ -1413,15 +1445,18 @@ export default function App() {
   const [jobStatus, setJobStatus] = useState(null);
   const [, setHistory]     = useState([]);   // history tab removed from UI for now — still tracked in case it comes back
   const [weatherLayers, setWeatherLayers] = useState({ temp:false, wind:false, pressure:false });
-  const [satelliteLayers, setSatelliteLayers] = useState({ true_color:false, ndvi:false, sar:false, thermal:false });
+  const [satelliteLayers, setSatelliteLayers] = useState({ true_color:false, ndvi:false, sar:false, thermal:false, worldview:false });
   const [satelliteLoadingKey, setSatelliteLoadingKey] = useState(null);
   const [mapZoom, setMapZoom] = useState(null);
+  const [aqiOn, setAqiOn] = useState(false);
+  const [aqiLoading, setAqiLoading] = useState(false);
 
   const mapRef          = useRef(null);
   const drawGroupRef    = useRef(null);
   const layersRef       = useRef([]);
   const weatherTileRefs = useRef({});     // 'temp'|'wind'|'pressure' -> L.tileLayer instance
-  const satelliteTileRefs = useRef({});   // 'true_color'|'ndvi'|'sar'|'thermal' -> L.tileLayer instance
+  const satelliteTileRefs = useRef({});   // 'true_color'|'ndvi'|'sar'|'thermal'|'worldview' -> L.tileLayer instance
+  const aqiLayerRef     = useRef(null);   // LayerGroup for CPCB AQI station markers
   const pollRef         = useRef(null);
   const aoiBoundsRef    = useRef(null);
   const intelLayerRef   = useRef(null);   // LayerGroup for intel markers
@@ -1697,6 +1732,51 @@ export default function App() {
 
   // ── Handle click on feed item: fly map + highlight marker ──────────────────
   // ── Toggle a weather overlay on/off — each layer is independent ────────────
+  const handleToggleAqi = useCallback(() => {
+    if (!mapRef.current) return;
+
+    // Turning off: synchronous, no fetch needed.
+    if (aqiOn) {
+      if (aqiLayerRef.current) { try { mapRef.current.removeLayer(aqiLayerRef.current); } catch(e) {} }
+      aqiLayerRef.current = null;
+      setAqiOn(false);
+      return;
+    }
+
+    setAqiLoading(true);
+    fetch(`${API_URL}/api/v1/intel/air-quality`)
+      .then(r => { if (!r.ok) throw new Error(`air-quality ${r.status}`); return r.json(); })
+      .then(data => {
+        setAqiLoading(false);
+        if (!mapRef.current) return;
+        const stations = data.stations || [];
+        const group = L.layerGroup();
+        stations.forEach(st => {
+          if (typeof st.lat !== 'number' || typeof st.lon !== 'number') return;
+          const color = st.category?.color || '#9a9fa8';
+          const marker = L.circleMarker([st.lat, st.lon], {
+            radius: 7, color: '#0d0f12', weight: 1.5, fillColor: color, fillOpacity: 0.9,
+          });
+          const pollutantRows = Object.entries(st.pollutants || {})
+            .map(([k, v]) => `<div style="display:flex;justify-content:space-between;gap:10px;"><span style="opacity:0.6">${k}</span><span>${v}</span></div>`)
+            .join('');
+          marker.bindPopup(
+            `<div style="font-family:'JetBrains Mono',monospace;font-size:12px;min-width:180px;">` +
+            `<div style="font-weight:700;color:${color};margin-bottom:4px;">${st.station_name || 'Station'}</div>` +
+            `<div style="opacity:0.7;margin-bottom:6px;">${st.city || ''}${st.city && st.state ? ', ' : ''}${st.state || ''}</div>` +
+            `<div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:4px;"><span>AQI</span><span style="color:${color}">${st.aqi} \u00b7 ${st.category?.label || ''}</span></div>` +
+            pollutantRows +
+            `</div>`
+          );
+          group.addLayer(marker);
+        });
+        group.addTo(mapRef.current);
+        aqiLayerRef.current = group;
+        setAqiOn(true);
+      })
+      .catch(() => { setAqiLoading(false); });
+  }, [aqiOn]);
+
   const handleToggleWeather = useCallback((key) => {
     if (!mapRef.current) return;
     const meta = WEATHER_LAYERS[key];
@@ -1781,6 +1861,19 @@ export default function App() {
       }).addTo(mapRef.current);
       satelliteTileRefs.current.true_color = tl;
       setSatelliteLayers(prev => ({ ...prev, true_color: true }));
+      return;
+    }
+
+    // Worldview (NASA GIBS) — same deal as True Color: pre-tiled, keyless,
+    // no backend round-trip, no minZoom, no loading state.
+    if (key === 'worldview') {
+      const meta = SATELLITE_LAYERS.worldview;
+      const tl = L.tileLayer(gibsWorldviewUrl(), {
+        opacity: meta.opacity, zIndex: 4, maxZoom: 9,
+        attribution: GIBS_ATTRIBUTION,
+      }).addTo(mapRef.current);
+      satelliteTileRefs.current.worldview = tl;
+      setSatelliteLayers(prev => ({ ...prev, worldview: true }));
       return;
     }
 
@@ -1946,6 +2039,7 @@ export default function App() {
       onSubmit={handleSubmit}
       vesselStats={vesselStats}
       weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
+      aqiOn={aqiOn} aqiLoading={aqiLoading} onToggleAqi={handleToggleAqi}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
       satelliteLoadingKey={satelliteLoadingKey} mapZoom={mapZoom}
       orbitalShowSatellites={orbitalShowSatellites} setOrbitalShowSatellites={setOrbitalShowSatellites}
