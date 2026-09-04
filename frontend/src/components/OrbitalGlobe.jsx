@@ -254,25 +254,29 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     raycaster.params.Points.threshold = EARTH_RADIUS * 0.06;
     const pointer = new THREE.Vector2();
     const onClick = (ev) => {
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(pointer, camera);
+      try {
+        const rect = renderer.domElement.getBoundingClientRect();
+        pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
 
-      const candidates = [
-        { kind: 'station', obj: stationPointsRef.current, data: stationDataRef.current },
-        { kind: 'satellite', obj: satellitePointsRef.current, data: satelliteDataRef.current },
-        { kind: 'aircraft', obj: aircraftPointsRef.current, data: aircraftDataRef.current },
-      ];
-      let best = null;
-      for (const c of candidates) {
-        if (!c.obj || !c.obj.visible) continue;
-        const hits = raycaster.intersectObject(c.obj, false);
-        if (hits.length > 0 && (!best || hits[0].distance < best.distance)) {
-          best = { distance: hits[0].distance, kind: c.kind, item: c.data[hits[0].index] };
+        const candidates = [
+          { kind: 'station', obj: stationPointsRef.current, data: stationDataRef.current },
+          { kind: 'satellite', obj: satellitePointsRef.current, data: satelliteDataRef.current },
+          { kind: 'aircraft', obj: aircraftPointsRef.current, data: aircraftDataRef.current },
+        ];
+        let best = null;
+        for (const c of candidates) {
+          if (!c.obj || !c.obj.visible) continue;
+          const hits = raycaster.intersectObject(c.obj, false);
+          if (hits.length > 0 && (!best || hits[0].distance < best.distance)) {
+            best = { distance: hits[0].distance, kind: c.kind, item: c.data[hits[0].index] };
+          }
         }
+        if (best && best.item && onSelectRef.current) onSelectRef.current({ kind: best.kind, ...best.item });
+      } catch (e) {
+        console.error('OrbitalGlobe click-select error:', e);
       }
-      if (best && best.item && onSelectRef.current) onSelectRef.current({ kind: best.kind, ...best.item });
     };
     renderer.domElement.addEventListener('click', onClick);
 
@@ -284,8 +288,17 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       // positions specifically already account for Earth's true rotation
       // via GMST in the SGP4 propagation), so an unrelated decorative spin
       // desyncs the visible coastlines from every correctly-placed point.
-      controls.update();
-      renderer.render(scene, camera);
+      // Wrapped in try/catch: this loop runs outside React's tree, so an
+      // uncaught exception here (e.g. a transient NaN from bad data)
+      // would silently freeze the canvas on its last frame every future
+      // tick instead of surfacing to the ErrorBoundary — one bad frame
+      // should not kill the whole loop.
+      try {
+        controls.update();
+        renderer.render(scene, camera);
+      } catch (e) {
+        console.error('OrbitalGlobe render error (frame skipped):', e);
+      }
     };
     animate();
 
@@ -328,8 +341,19 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
 
     stationPts.visible = showSatellites;
     satPts.visible = showSatellites;
-    stationDataRef.current = stations;
-    satelliteDataRef.current = otherSats;
+    // Filter out any record with a missing/non-numeric lat, lon, or
+    // alt_km BEFORE it reaches the trig in satelliteAltToVec3 — an
+    // occasional malformed CelesTrak/propagation record (undefined ->
+    // NaN position) was silently poisoning the BufferAttribute and
+    // geometry.computeBoundingSphere(), which OrbitControls/raycasting
+    // then read every animation frame outside React's render tree, so
+    // it never hit the ErrorBoundary and instead froze/blanked the
+    // canvas intermittently. Aircraft already had this guard; stations
+    // and other satellites didn't.
+    const validStations = stations.filter(s => typeof s.lat === 'number' && typeof s.lon === 'number' && typeof s.alt_km === 'number');
+    const validSats = otherSats.filter(s => typeof s.lat === 'number' && typeof s.lon === 'number' && typeof s.alt_km === 'number');
+    stationDataRef.current = validStations;
+    satelliteDataRef.current = validSats;
 
     const fill = (pts, list) => {
       if (list.length === 0) { pts.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3)); return; }
@@ -341,8 +365,8 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       pts.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       pts.geometry.computeBoundingSphere();
     };
-    fill(stationPts, stations);
-    fill(satPts, otherSats);
+    fill(stationPts, validStations);
+    fill(satPts, validSats);
   }, [stations, otherSats, showSatellites]);
 
   // ── Update aircraft point positions whenever props change ──────────────

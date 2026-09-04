@@ -107,7 +107,16 @@ function TickerItem({ item }) {
       <span className="vayu-ticker-tooltip" style={{
         position:'absolute', bottom:'calc(100% + 10px)', left:'50%', transform:'translateX(-50%)',
         background:'#15181d', border:`1px solid ${S.border}`, borderRadius:6, padding:'12px 14px',
-        minWidth:220, boxShadow:'0 8px 24px rgba(0,0,0,0.5)', zIndex:100,
+        minWidth:220, boxShadow:'0 8px 24px rgba(0,0,0,0.5)',
+        // z-index 100 was invisible: it pops up over the map area, and
+        // since no ancestor between here and the page root isolates a
+        // new stacking context, this z-index competes directly against
+        // Leaflet's own pane z-indexes (tiles 200, markers 600, popups
+        // 700) — the tooltip DOM node existed and even had the `display`
+        // toggle working, it was just painting BEHIND the map. Needs to
+        // clear Leaflet's highest pane (700) with real margin, matching
+        // the app's other top-of-stack overlays (mobile panels use 2000).
+        zIndex:3000,
         gap:5, textAlign:'left', whiteSpace:'normal',
       }}>
         <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:2 }}>
