@@ -38,6 +38,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from .llm_client import _get_client, _extract_json
+from . import data_router
 
 logger = logging.getLogger(__name__)
 
@@ -169,8 +170,16 @@ def _synthesize_answer(question: str, region_context: Optional[str], search_resu
 
 
 async def ask(question: str, region_context: Optional[str] = None) -> Dict[str, Any]:
-    """Full pipeline: search -> ground an LLM answer in the results ->
-    return a structured answer for the frontend to geocode and draw."""
+    """Full pipeline: try Vayu's own live intel feeds first (AIS/ADS-B/
+    USGS/FIRMS — see data_router.py) for questions those can genuinely
+    answer, then fall back to search -> ground an LLM answer in the
+    results -> return a structured answer for the frontend to geocode
+    and draw."""
+    live_answer = data_router.try_answer_from_live_data(question)
+    if live_answer is not None:
+        live_answer["search_results_used"] = 0
+        return live_answer
+
     search_query = f"{question} {region_context}" if region_context else question
     results = await search_web(search_query)
     answer = _synthesize_answer(question, region_context, results)
