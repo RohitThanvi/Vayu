@@ -10,7 +10,7 @@ REST:
   GET  /api/v1/intel/aircraft/stats  — aviation tracking statistics
   GET  /api/v1/intel/satellites/tle  — cached satellite orbital elements (CelesTrak)
   GET  /api/v1/intel/commodities     — cached global commodity prices (Yahoo Finance)
-  GET  /api/v1/intel/air-quality     — cached real-time CPCB Air Quality Index (India)
+  GET  /api/v1/intel/air-quality/cpcb-stations — cached real-time CPCB Air Quality Index (India)
   GET  /api/v1/intel/wind-field      — animated wind vector grid (U/V components)
 
 WebSocket:
@@ -335,7 +335,7 @@ async def get_commodities():
 
 # ── Air quality (CPCB, India-only, free data.gov.in key) ───────────────────
 
-@router.get("/air-quality", summary="Cached real-time CPCB Air Quality Index stations")
+@router.get("/air-quality/cpcb-stations", summary="Cached real-time CPCB Air Quality Index stations")
 async def get_air_quality():
     """Real-time AQI from CPCB's monitoring network (~800+ India stations,
     hourly). India-only, matching CPCB's actual coverage — not a global
@@ -344,7 +344,13 @@ async def get_air_quality():
     convention). Refreshed hourly server-side and cached — see
     services/intel/air_quality.py. Empty stations list + a populated
     last_error means AQI_API_KEY isn't configured or CPCB's API is
-    unreachable this cycle, not that there's genuinely no data."""
+    unreachable this cycle, not that there's genuinely no data.
+
+    Deliberately NOT at /air-quality — that path is already the existing
+    point-lookup endpoint (?lat=&lon=, OpenWeatherMap-backed) a few lines
+    below. Registering both under the same path would have made this one
+    silently intercept every call to the older endpoint, since FastAPI
+    matches routes in declaration order."""
     return air_quality.get_stations()
 
 

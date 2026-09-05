@@ -1744,7 +1744,7 @@ export default function App() {
     }
 
     setAqiLoading(true);
-    fetch(`${API_URL}/api/v1/intel/air-quality`)
+    fetch(`${API_URL}/api/v1/intel/air-quality/cpcb-stations`)
       .then(r => { if (!r.ok) throw new Error(`air-quality ${r.status}`); return r.json(); })
       .then(data => {
         setAqiLoading(false);
