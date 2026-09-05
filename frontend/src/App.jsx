@@ -1217,14 +1217,14 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
               background: drawnAOI ? 'rgba(74,124,89,0.08)' : S.surface2,
               border: `1px solid ${drawnAOI ? '#4a7c59' : S.border}`,
               color: drawnAOI ? '#4a7c59' : S.text3 }}>
-              {drawnAOI ? 'AOI DEFINED' : 'DRAW AOI ON MAP'}
+              {drawnAOI ? 'AOI DEFINED' : 'NO AOI DRAWN (OPTIONAL)'}
             </div>
-            <button onClick={onSubmit} disabled={isLoading||!queryText||!drawnAOI}
+            <button onClick={onSubmit} disabled={isLoading||!queryText}
               style={{ padding:'10px', fontSize:15, fontFamily:S.mono, letterSpacing:2, textTransform:'uppercase',
-                background: isLoading||!queryText||!drawnAOI ? S.surface2 : 'rgba(126,184,212,0.1)',
-                border: `1px solid ${isLoading||!queryText||!drawnAOI ? S.border : S.accent}`,
-                color: isLoading||!queryText||!drawnAOI ? S.text3 : S.accent,
-                cursor: isLoading||!queryText||!drawnAOI ? 'not-allowed' : 'pointer' }}>
+                background: isLoading||!queryText ? S.surface2 : 'rgba(126,184,212,0.1)',
+                border: `1px solid ${isLoading||!queryText ? S.border : S.accent}`,
+                color: isLoading||!queryText ? S.text3 : S.accent,
+                cursor: isLoading||!queryText ? 'not-allowed' : 'pointer' }}>
               {isLoading ? 'ANALYZING...' : 'RUN ANALYSIS'}
             </button>
             {isLoading && jobStatus && <ProgressBar pct={jobStatus.progress_pct||0} label={jobStatus.stage_label||jobStatus.stage||'Processing...'} />}
@@ -1349,7 +1349,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
           <div style={{ display:'flex', flexDirection:'column', gap:14, fontSize:15, color:S.text2 }}>
             <div>
               <div style={{ fontSize:15, fontFamily:S.mono, color:S.accent, letterSpacing:2, marginBottom:10, textTransform:'uppercase' }}>How to use</div>
-              {[['1','Select an analysis type'],['2','Draw a polygon on the map'],['3','Enter a natural language query'],['4','Click Run Analysis']].map(([n,t]) => (
+              {[['1','Select an analysis type (optional — Vayu can infer it from your query)'],['2','Draw a polygon on the map, or just name a place in your query — the 9 fixed metrics will auto-locate it'],['3','Enter a natural language query'],['4','Click Run Analysis']].map(([n,t]) => (
                 <div key={n} style={{ display:'flex', gap:10, marginBottom:8, alignItems:'flex-start' }}>
                   <span style={{ fontSize:14, fontFamily:S.mono, color:S.accent, border:`1px solid ${S.border}`, padding:'2px 6px', flexShrink:0 }}>{n}</span>
                   <span style={{ fontSize:15, color:S.text2 }}>{t}</span>
