@@ -4,6 +4,7 @@ import IntelPanel from './components/IntelPanel';
 import CommodityTicker from './components/CommodityTicker';
 import ErrorBoundary from './components/ErrorBoundary';
 import AgriPanel from './components/AgriPanel';
+import DroughtDashboard from './components/DroughtDashboard';
 // Lazy-loaded: three.js is a large dependency (pulls the main bundle from
 // ~290KB to ~830KB) that only the Orbital tab needs — code-splitting it
 // means everyone else's initial load stays fast, and it's only fetched
@@ -2146,6 +2147,14 @@ export default function App() {
     />
   );
 
+  // The Agri tab gets its own dedicated charts/graphs panel here instead
+  // of the live Intel Feed — swapped purely by conditional render on
+  // `tab`, so leaving Agri (any other tab selected) automatically
+  // restores Intel Feed with no extra state/cleanup to manage.
+  const rightPanelEl = tab === 'Agri'
+    ? <DroughtDashboard drawnAOI={drawnAOI} apiUrl={API_URL} searchedRegionName={aoiRegionName} isMobile={isMobile} onClose={() => setMobilePanel('map')} />
+    : intelPanelEl;
+
   const mapEl = (
     <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} onZoomChange={setMapZoom} />
   );
@@ -2188,7 +2197,7 @@ export default function App() {
           )}
         </div>
 
-        {!isMobile && tab !== 'Orbital' && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{intelPanelEl}</div>}
+        {!isMobile && tab !== 'Orbital' && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{rightPanelEl}</div>}
 
         {isMobile && mobilePanel === 'analyze' && (
           <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:S.surface, overflow:'hidden' }}>
@@ -2197,7 +2206,7 @@ export default function App() {
         )}
         {isMobile && mobilePanel === 'intel' && (
           <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:'#0a0c0f', overflow:'hidden' }}>
-            {intelPanelEl}
+            {rightPanelEl}
           </div>
         )}
 

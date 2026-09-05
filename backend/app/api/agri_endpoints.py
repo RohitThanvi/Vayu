@@ -6,7 +6,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ..services.agri import db, mandi, groundwater
-from ..services.agri.risk_scoring import compute_risk_score
+from ..services.agri.risk_scoring import compute_risk_score, compute_drought_trend
 from ..services.agri.baseline import compute_seasonal_baseline
 from ..services.agri.rollup import get_rollup
 from ..services.agri.whatsapp import build_twiml_reply, handle_inbound_message
@@ -62,6 +62,41 @@ async def baseline(req: BaselineRequest):
     except Exception as e:
         logger.error(f"baseline endpoint failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Baseline computation failed: {e}")
+
+
+@router.post("/drought-dashboard", summary="Composite drought dashboard: current score + historical trend, for the Agri sidebar panel")
+async def drought_dashboard(req: RiskScoreRequest):
+    """
+    Everything the Drought Monitoring panel needs in one call: the full
+    3-source composite risk score (unchanged, reuses compute_risk_score
+    exactly as /risk-score does) plus a drought-stress trend series (see
+    compute_drought_trend's docstring for why the trend uses a cheaper
+    single-source computation than the headline score).
+
+    A trend failure never blocks the headline score — this is a genuine
+    "these two things degrade independently" case, not a single atomic
+    operation, so trend errors are captured and returned alongside a
+    working current score rather than failing the whole request.
+    """
+    try:
+        current = compute_risk_score(aoi=req.aoi_geojson, as_of=req.as_of, region_id=req.region_id)
+    except Exception as e:
+        logger.error(f"drought_dashboard endpoint failed (current score): {e}", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Drought dashboard failed: {e}")
+
+    trend = []
+    trend_error = None
+    try:
+        trend = compute_drought_trend(aoi=req.aoi_geojson, as_of=req.as_of)
+    except Exception as e:
+        logger.warning(f"drought_dashboard: trend computation failed: {e}", exc_info=True)
+        trend_error = str(e)
+
+    return {
+        "current": current,
+        "trend": trend,
+        "trend_error": trend_error,
+    }
 
 
 # ── Watchlist / alerting ─────────────────────────────────────────────────────
