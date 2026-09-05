@@ -1,0 +1,16 @@
+# VAYU — Geospatial Intelligence Platform
+# https://github.com/RohitThanvi/Vayu
+#
+# This is a client-rendered single-page app — search engines get very
+# little from crawling routes directly (there's no server-rendered
+# content per-route to index), so this stays a simple allow-all rather
+# than pretending there's a page structure worth guiding a crawler
+# through. Disallowed below is only what should never be indexed even
+# if a crawler somehow reached it.
+
+User-agent: *
+Allow: /
+Disallow: /404.html
+
+# If/when a sitemap is published, add its absolute URL here, e.g.:
+# Sitemap: https://your-domain.example/sitemap.xml

@@ -5,6 +5,8 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 
+from ..core.rate_limit import limiter
+
 from ..schemas import (
     QueryRequest,
     QueryInitiatedResponse,
@@ -53,6 +55,17 @@ def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict
     except Exception as e:
         logger.error(f"[{request_id}] LLM parse error: {e}", exc_info=True)
         job_store.update(request_id, {"status": "failed", "error": f"Query parsing failed: {str(e)}"})
+        return
+
+    # ── 1a. Off-topic / prompt-injection rejection ────────────────────────────
+    # Not even a geospatial question at all — general chit-chat, an
+    # unrelated request, or an attempt to manipulate the query parser
+    # itself (see llm_client._PARSE_SYSTEM's SECURITY note). Reject here,
+    # before ever reaching the research agent / SerpApi, so an off-topic
+    # or adversarial query can't burn a web-search call or return
+    # nonsense framed as a real answer.
+    if not structured_query.domain_relevant:
+        job_store.update(request_id, {"status": "failed", "error": "This doesn't look like a geospatial question Vayu can help with. Try asking about a location, satellite data, or Earth observation."})
         return
 
     # ── 1b. Out-of-scope branch ───────────────────────────────────────────────
@@ -200,6 +213,7 @@ def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict
     status_code=202,
     summary="Submit a geospatial analysis query",
 )
+@limiter.limit("10/minute")
 async def create_query(query: QueryRequest, background_tasks: BackgroundTasks, request: Request):
     request_id = uuid.uuid4()
     job_store.set(request_id, {"status": "processing", "stage": "queued", "progress_pct": 0})
