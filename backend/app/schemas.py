@@ -81,6 +81,7 @@ class FinalQueryResponse(BaseModel):
 class StructuredQuery(BaseModel):
     metric: Optional[MetricType] = None
     in_scope: bool = True
+    domain_relevant: bool = True   # false = not a geospatial question at all (chit-chat, unrelated request, or a prompt-injection attempt) — see llm_client._PARSE_SYSTEM
     region: Optional[str] = None
     aoi_geojson: Optional[Dict[str, Any]] = None
     start_date: str

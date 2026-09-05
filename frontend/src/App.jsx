@@ -13,6 +13,25 @@ import { useVesselTracker } from './hooks/useVesselTracker';
 import { useSatelliteTracker } from './hooks/useSatelliteTracker';
 import { useAircraftTracker } from './hooks/useAircraftTracker';
 
+// Any string that ends up interpolated into a raw HTML string passed to
+// Leaflet's bindPopup() (Leaflet has no JSX-style auto-escaping — it's
+// literal innerHTML) needs escaping first. Several of these strings
+// ultimately trace back to a user-typed search box query (the research
+// agent's place_name/reasoning are LLM output grounded in live web
+// search results, so an attacker-controlled page the LLM reads from, or
+// a crafted query, could otherwise land a stored-XSS payload in a
+// popup). Third-party data (AQI/vessel/aircraft feeds) gets the same
+// treatment for defense-in-depth, even though those sources are lower-risk.
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 const MOBILE_BREAKPOINT = 860;
 
 /** Tracks whether the viewport is narrow enough to need the mobile layout. */
@@ -1391,18 +1410,19 @@ function MapOverlay({ result, isLoading, drawnAOI, isMobile }) {
       </div>
     </div>
   );
-  if (isLoading) return (
-    <div style={{ position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', zIndex:1000, pointerEvents:'none' }}>
-      <div style={{ padding:'6px 16px', fontSize:15, fontFamily:"'Courier New',monospace", letterSpacing:1.5, background:'rgba(13,17,23,0.92)', border:'1px solid #7eb8d4', color:'#7eb8d4' }}>
-        ANALYZING SATELLITE DATA
-      </div>
-    </div>
-  );
+  // The "analyzing" state used to show a top-center banner here, at the
+  // exact same position (top:12, centered) as PlaceSearchBar — on mobile,
+  // where the search bar spans ~88% of the width, this banner sat right
+  // on top of it, blocking the input while a query ran. Progress is
+  // already shown via ProgressBar in the sidebar, so this was a fully
+  // redundant, position-colliding duplicate — removed rather than
+  // repositioned.
+  if (isLoading) return null;
   if (result) {
     if (result.result_type === 'research') {
       return (
-        <div style={{ position:'absolute', top:12, right:12, zIndex:1000, pointerEvents:'none' }}>
-          <div style={{ padding:'6px 12px', fontSize:15, fontFamily:"'Courier New',monospace", letterSpacing:1, background:'rgba(13,17,23,0.92)', border:'1px solid #c9a86a', color:'#c9a86a' }}>
+        <div style={{ position:'absolute', top: isMobile ? 56 : 12, right:12, left: isMobile ? 12 : 'auto', zIndex:900, pointerEvents:'none', textAlign: isMobile ? 'center' : 'right' }}>
+          <div style={{ padding:'6px 12px', fontSize: isMobile ? 11 : 15, fontFamily:"'Courier New',monospace", letterSpacing:1, background:'rgba(13,17,23,0.92)', border:'1px solid #c9a86a', color:'#c9a86a', display:'inline-block' }}>
             RESEARCH AGENT{result.place_name ? ` · ${result.place_name.toUpperCase()}` : ''}
           </div>
         </div>
@@ -1410,8 +1430,8 @@ function MapOverlay({ result, isLoading, drawnAOI, isMobile }) {
     }
     const m = METRICS_META[result.metric]||{ label:result.metric };
     return (
-      <div style={{ position:'absolute', top:12, right:12, zIndex:1000, pointerEvents:'none' }}>
-        <div style={{ padding:'6px 12px', fontSize:15, fontFamily:"'Courier New',monospace", letterSpacing:1, background:'rgba(13,17,23,0.92)', border:'1px solid #3a4250', color:'#ffffff' }}>
+      <div style={{ position:'absolute', top: isMobile ? 56 : 12, right:12, left: isMobile ? 12 : 'auto', zIndex:900, pointerEvents:'none', textAlign: isMobile ? 'center' : 'right' }}>
+        <div style={{ padding:'6px 12px', fontSize: isMobile ? 11 : 15, fontFamily:"'Courier New',monospace", letterSpacing:1, background:'rgba(13,17,23,0.92)', border:'1px solid #3a4250', color:'#ffffff', display:'inline-block' }}>
           {(m.label || '').toUpperCase()} · {result.start_date?.slice(0,4)}--{result.end_date?.slice(0,4)}
         </div>
       </div>
@@ -1758,13 +1778,13 @@ export default function App() {
             radius: 7, color: '#0d0f12', weight: 1.5, fillColor: color, fillOpacity: 0.9,
           });
           const pollutantRows = Object.entries(st.pollutants || {})
-            .map(([k, v]) => `<div style="display:flex;justify-content:space-between;gap:10px;"><span style="opacity:0.6">${k}</span><span>${v}</span></div>`)
+            .map(([k, v]) => `<div style="display:flex;justify-content:space-between;gap:10px;"><span style="opacity:0.6">${escapeHtml(k)}</span><span>${escapeHtml(v)}</span></div>`)
             .join('');
           marker.bindPopup(
             `<div style="font-family:'JetBrains Mono',monospace;font-size:12px;min-width:180px;">` +
-            `<div style="font-weight:700;color:${color};margin-bottom:4px;">${st.station_name || 'Station'}</div>` +
-            `<div style="opacity:0.7;margin-bottom:6px;">${st.city || ''}${st.city && st.state ? ', ' : ''}${st.state || ''}</div>` +
-            `<div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:4px;"><span>AQI</span><span style="color:${color}">${st.aqi} \u00b7 ${st.category?.label || ''}</span></div>` +
+            `<div style="font-weight:700;color:${color};margin-bottom:4px;">${escapeHtml(st.station_name || 'Station')}</div>` +
+            `<div style="opacity:0.7;margin-bottom:6px;">${escapeHtml(st.city || '')}${st.city && st.state ? ', ' : ''}${escapeHtml(st.state || '')}</div>` +
+            `<div style="display:flex;justify-content:space-between;font-weight:700;margin-bottom:4px;"><span>AQI</span><span style="color:${color}">${escapeHtml(st.aqi)} \u00b7 ${escapeHtml(st.category?.label || '')}</span></div>` +
             pollutantRows +
             `</div>`
           );
@@ -2059,8 +2079,24 @@ export default function App() {
           const circle = L.circle([latNum, lonNum], {
             radius: radiusM, color:'#c9a86a', weight:2, fillColor:'#c9a86a', fillOpacity:0.15,
           }).addTo(mapRef.current);
-          circle.bindPopup(`<b>${place.place_name}</b><br/>${place.reasoning || ''}`);
+          circle.bindPopup(`<b>${escapeHtml(place.place_name)}</b><br/>${escapeHtml(place.reasoning)}`);
           layersRef.current.push(circle);
+          // Center-point marker — the circle alone doesn't mark the exact
+          // suggested spot, only the general radius around it. A small
+          // target-style pin at the true center makes the actual point
+          // unambiguous, especially once there are several circles on
+          // screen at once.
+          const centerIcon = L.divIcon({
+            className: 'vayu-place-marker',
+            html: `<svg width="26" height="26" viewBox="0 0 26 26" xmlns="http://www.w3.org/2000/svg">
+                     <circle cx="13" cy="13" r="4.5" fill="#c9a86a" stroke="#0d0f12" stroke-width="1.5"/>
+                     <circle cx="13" cy="13" r="10" fill="none" stroke="#c9a86a" stroke-width="1.5" opacity="0.6"/>
+                   </svg>`,
+            iconSize: [26, 26], iconAnchor: [13, 13],
+          });
+          const centerMarker = L.marker([latNum, lonNum], { icon: centerIcon }).addTo(mapRef.current);
+          centerMarker.bindPopup(`<b>${escapeHtml(place.place_name)}</b><br/>${escapeHtml(place.reasoning)}`);
+          layersRef.current.push(centerMarker);
           allBounds.push(circle.getBounds());
           // Fit to every successfully-geocoded circle once all requests
           // have settled, not just the first one to resolve — otherwise
