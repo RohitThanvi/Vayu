@@ -71,8 +71,10 @@ class FinalQueryResponse(BaseModel):
     reasoning: Optional[str] = None
     radius_km: Optional[float] = None
     confidence: Optional[str] = None
+    places: Optional[List[Dict[str, Any]]] = None   # 0+ candidate spots — see research_agent.py
     source_urls: Optional[List[str]] = None
     search_results_used: Optional[int] = None
+    live_data_source: Optional[str] = None   # set when answered from Vayu's own live feeds (AIS/ADS-B/USGS/FIRMS), not web search
 
 
 class StructuredQuery(BaseModel):

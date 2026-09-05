@@ -1937,7 +1937,14 @@ export default function App() {
 
   const handleSubmit = useCallback(async () => {
     if (!queryText.trim()) { setError('Please enter a query.'); return; }
-    if (!drawnAOI) { setError('Please draw an Area of Interest on the map.'); return; }
+    // No hard AOI block here anymore — an AOI is only actually required
+    // for the 9 fixed GEE metrics (vegetation change, flood detection,
+    // etc.), not for open-ended research-agent questions ("where should
+    // we place a mobile tower"), which don't need one at all. The
+    // backend now classifies the query first and only asks for an AOI
+    // if it turns out to need one (see the "aoi_required" error check
+    // below) — it can also often resolve one itself just from a place
+    // name mentioned in the query text, via server-side geocoding.
     clearLayers();
     if (drawGroupRef.current?.getLayers().length > 0) {
       try { aoiBoundsRef.current = drawGroupRef.current.getBounds(); } catch(e) {}
@@ -2006,27 +2013,53 @@ export default function App() {
         layersRef.current.push(layer);
       }).catch(()=>{ if (aoiBoundsRef.current) mapRef.current.fitBounds(aoiBoundsRef.current, { padding:[40,40] }); });
     }
-    // Research-agent result: geocode the suggested place (client-side,
-    // same Nominatim source PlaceSearchBar already uses) and mark it
-    // with a circle instead of the usual metric tile/geojson overlay —
-    // a genuinely different result shape for a genuinely different kind
-    // of answer (a suggested place, not a measured area).
-    if (result.result_type === 'research' && result.place_name) {
-      const geocodeQuery = result.region ? `${result.place_name}, ${result.region}` : result.place_name;
-      fetch(`https://nominatim.openstreetmap.org/search?` + new URLSearchParams({
-        q: geocodeQuery, format: 'jsonv2', limit: '1',
-      })).then(r => r.json()).then(matches => {
-        if (!matches || matches.length === 0 || !mapRef.current) return;
-        const { lat, lon } = matches[0];
-        const latNum = parseFloat(lat), lonNum = parseFloat(lon);
-        const radiusM = (result.radius_km || 2) * 1000;
-        const circle = L.circle([latNum, lonNum], {
-          radius: radiusM, color:'#c9a86a', weight:2, fillColor:'#c9a86a', fillOpacity:0.15,
-        }).addTo(mapRef.current);
-        circle.bindPopup(`<b>${result.place_name}</b><br/>${result.reasoning || ''}`);
-        layersRef.current.push(circle);
-        mapRef.current.fitBounds(circle.getBounds(), { padding:[60,60] });
-      }).catch(() => {});
+    // Research-agent result: geocode EACH suggested place (client-side,
+    // same Nominatim source PlaceSearchBar already uses) and mark each
+    // with its own circle instead of the usual metric tile/geojson
+    // overlay — a genuinely different result shape for a genuinely
+    // different kind of answer (suggested spots, not a measured area).
+    // The backend can suggest several distinct candidates for a question
+    // like "where could we place a mobile tower in Jaipur" (e.g.
+    // Jagatpura, Sindhi Camp) rather than forcing one — every one of
+    // them gets its own circle. `places` is the current field; falling
+    // back to the older single place_name/reasoning/radius_km fields
+    // keeps this working against any cached/older job result shape too.
+    const candidatePlaces = (result.result_type === 'research')
+      ? (Array.isArray(result.places) && result.places.length > 0
+          ? result.places
+          : (result.place_name ? [{ place_name: result.place_name, reasoning: result.reasoning, radius_km: result.radius_km }] : []))
+      : [];
+
+    if (candidatePlaces.length > 0) {
+      const allBounds = [];
+      let remaining = candidatePlaces.length;
+      candidatePlaces.forEach(place => {
+        const geocodeQuery = result.region ? `${place.place_name}, ${result.region}` : place.place_name;
+        fetch(`https://nominatim.openstreetmap.org/search?` + new URLSearchParams({
+          q: geocodeQuery, format: 'jsonv2', limit: '1',
+        })).then(r => r.json()).then(matches => {
+          remaining -= 1;
+          if (!matches || matches.length === 0 || !mapRef.current) return;
+          const { lat, lon } = matches[0];
+          const latNum = parseFloat(lat), lonNum = parseFloat(lon);
+          const radiusM = (place.radius_km || 2) * 1000;
+          const circle = L.circle([latNum, lonNum], {
+            radius: radiusM, color:'#c9a86a', weight:2, fillColor:'#c9a86a', fillOpacity:0.15,
+          }).addTo(mapRef.current);
+          circle.bindPopup(`<b>${place.place_name}</b><br/>${place.reasoning || ''}`);
+          layersRef.current.push(circle);
+          allBounds.push(circle.getBounds());
+          // Fit to every successfully-geocoded circle once all requests
+          // have settled, not just the first one to resolve — otherwise
+          // whichever geocode call happens to come back last silently
+          // wins the viewport regardless of arrival order.
+          if (remaining === 0 && allBounds.length > 0 && mapRef.current) {
+            let combined = allBounds[0];
+            for (const b of allBounds.slice(1)) combined = combined.extend(b);
+            mapRef.current.fitBounds(combined, { padding:[60,60] });
+          }
+        }).catch(() => { remaining -= 1; });
+      });
     }
   }, [result]);
 
