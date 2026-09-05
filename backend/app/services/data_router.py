@@ -102,15 +102,17 @@ def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
             f"{n} {CATEGORY_LABELS.get(c, c).lower()}"
             for c, n in sorted(by_cat.items(), key=lambda x: -x[1])
         ) or "none currently tracked"
+        reasoning = (
+            f"Live AIS tracking currently shows {len(vessels)} vessel(s) inside the "
+            f"{display_name} monitored zone: {breakdown}. This is real-time position "
+            f"data, not a web search result — vessel counts change continuously as "
+            f"ships transit the strait, so treat this as a live snapshot, not a "
+            f"historical average."
+        )
         return {
+            "places": [{"place_name": display_name, "reasoning": reasoning, "radius_km": radius, "confidence": "high"}],
             "place_name": display_name,
-            "reasoning": (
-                f"Live AIS tracking currently shows {len(vessels)} vessel(s) inside the "
-                f"{display_name} monitored zone: {breakdown}. This is real-time position "
-                f"data, not a web search result — vessel counts change continuously as "
-                f"ships transit the strait, so treat this as a live snapshot, not a "
-                f"historical average."
-            ),
+            "reasoning": reasoning,
             "radius_km": radius,
             "confidence": "high",
             "source_urls": [],
@@ -121,6 +123,7 @@ def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
     if any(w in q for w in AVIATION_WORDS) and any(k in q for k in COUNT_WORDS):
         stats = aircraft_store.get_stats()
         return {
+            "places": [],
             "place_name": None,
             "reasoning": (
                 f"Live ADS-B tracking currently shows {stats.get('active_aircraft', 0)} "
@@ -139,6 +142,7 @@ def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
         if any(w in q for w in words) and any(k in q for k in COUNT_WORDS):
             events = intel_store.query(sources=[source_name], limit=500)
             return {
+                "places": [],
                 "place_name": None,
                 "reasoning": (
                     f"Vayu's live {source_name} feed currently holds {len(events)} event(s) "

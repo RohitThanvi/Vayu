@@ -11,7 +11,7 @@ from ..schemas import (
     JobStatusResponse,
     FinalQueryResponse,
 )
-from ..services import llm_client, gee_client, geoprocess, research_agent
+from ..services import llm_client, gee_client, geoprocess, research_agent, geocode_util
 from ..core.job_store import job_store
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,7 @@ def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict
             "reasoning": answer.get("reasoning"),
             "radius_km": answer.get("radius_km"),
             "confidence": answer.get("confidence"),
+            "places": answer.get("places", []),
             "source_urls": answer.get("source_urls", []),
             "search_results_used": answer.get("search_results_used", 0),
             "live_data_source": answer.get("live_data_source"),
@@ -92,8 +93,22 @@ def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict
 
     # ── 2. Resolve AOI ────────────────────────────────────────────────────────
     effective_aoi = aoi_geojson or structured_query.aoi_geojson
+    if not effective_aoi and structured_query.region:
+        # No manually-drawn AOI, but the query named a place ("vegetation
+        # change in Jaipur") — geocode it into a real boundary polygon
+        # (or a small buffered circle, if OSM only has a point for it)
+        # rather than forcing the user to draw one by hand every time.
+        # See services/geocode_util.py.
+        try:
+            _update_stage(request_id, "llm_parsing", {"stage_label": f"Locating '{structured_query.region}'"})
+            import asyncio
+            effective_aoi = asyncio.run(geocode_util.geocode_to_aoi(structured_query.region))
+            if effective_aoi:
+                logger.info(f"[{request_id}] Auto-resolved AOI for region '{structured_query.region}' via geocoding")
+        except Exception as e:
+            logger.warning(f"[{request_id}] AOI auto-geocode failed for '{structured_query.region}': {e}")
     if not effective_aoi:
-        job_store.update(request_id, {"status": "failed", "error": "No Area of Interest provided. Please draw one on the map."})
+        job_store.update(request_id, {"status": "failed", "error": "No Area of Interest provided. Please draw one on the map, or name a specific place in your query."})
         return
 
     # ── 3. GEE Computation ────────────────────────────────────────────────────

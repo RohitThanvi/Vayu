@@ -27,6 +27,8 @@ from xml.sax.saxutils import escape
 
 import httpx
 
+from ..geocode_util import geocode_place
+
 logger = logging.getLogger(__name__)
 
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
@@ -36,25 +38,6 @@ TWILIO_WHATSAPP_FROM = os.environ.get("TWILIO_WHATSAPP_FROM", "")
 
 def build_twiml_reply(message: str) -> str:
     return f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{escape(message)}</Message></Response>'
-
-
-async def geocode_place(query: str) -> Optional[dict]:
-    """Nominatim geocode + boundary — same service the frontend search bar uses."""
-    try:
-        async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "VAYU-Agri/1.0"}) as client:
-            resp = await client.get(
-                "https://nominatim.openstreetmap.org/search",
-                params={"q": query, "format": "geojson", "polygon_geojson": 1, "limit": 1},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            features = data.get("features", [])
-            if not features:
-                return None
-            return features[0]
-    except Exception as e:
-        logger.warning(f"geocode_place failed for '{query}': {e}")
-        return None
 
 
 async def handle_inbound_message(body_text: str) -> str:

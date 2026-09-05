@@ -95,41 +95,54 @@ locations for questions a fixed dataset can't answer directly (e.g. "where \
 should we consider adding a mobile tower near this area?").
 
 You will be given a region context, a question, and a set of web search \
-result snippets. Your job: identify ONE specific named place (a locality, \
-neighborhood, landmark, or precise sub-area — NOT a whole city) that best \
-answers the question, grounded ONLY in the provided snippets.
+result snippets. Your job: identify one or more specific named places \
+(a locality, neighborhood, landmark, or precise sub-area — NOT a whole city) \
+that answer the question, grounded ONLY in the provided snippets. If the \
+question is naturally answered by several distinct candidate spots (e.g. \
+"where could we add a mobile tower in Jaipur" often has several reasonable \
+areas, not one single answer), list each one separately rather than \
+picking just one — but only ones the snippets actually support by name.
 
 Rules:
 - Never invent a place name that isn't supported by the snippets. If the \
-snippets don't contain enough specific information to name a real, precise \
-place, set "place_name" to null rather than guessing.
+snippets don't contain enough specific information to name any real, \
+precise place, return an empty "places" list rather than guessing.
+- Each place must be a real, specific, named sub-area — not a repeat of \
+the whole city/region already given as context.
 - Write "reasoning" entirely in your own words — do not quote source text \
-verbatim, even briefly.
-- Suggest a radius in kilometers for marking this location on a map, scaled \
-to how precise vs. broad the answer is (a single specific site suggestion: \
+verbatim, even briefly. Each place's reasoning should explain why THAT \
+specific spot fits, not restate the whole question.
+- Suggest a radius in kilometers for marking each location on a map, scaled \
+to how precise vs. broad that answer is (a single specific site suggestion: \
 1-2; a broader named neighborhood/area: 2-5).
-- Set "confidence" honestly based on how directly the snippets support the answer.
+- Set "confidence" per place, honestly, based on how directly the snippets \
+support that specific one.
+- Order "places" from most to least well-supported by the snippets.
 
 Return ONLY valid JSON, no markdown fences, no text outside the JSON object:
 {
-  "place_name": string or null,
-  "reasoning": string,
-  "radius_km": number,
-  "confidence": "low" | "medium" | "high",
+  "places": [
+    {"place_name": string, "reasoning": string, "radius_km": number, "confidence": "low"|"medium"|"high"}
+  ],
   "source_urls": [string, ...]
 }
 """
 
 
+def _empty_answer(reasoning: str) -> Dict[str, Any]:
+    return {
+        "places": [],
+        "place_name": None,
+        "reasoning": reasoning,
+        "radius_km": None,
+        "confidence": "low",
+        "source_urls": [],
+    }
+
+
 def _synthesize_answer(question: str, region_context: Optional[str], search_results: List[Dict[str, str]]) -> Dict[str, Any]:
     if not search_results:
-        return {
-            "place_name": None,
-            "reasoning": "No web search results were available to ground an answer — the search source was unreachable this time.",
-            "radius_km": None,
-            "confidence": "low",
-            "source_urls": [],
-        }
+        return _empty_answer("No web search results were available to ground an answer — the search source was unreachable this time.")
 
     snippets_text = "\n\n".join(
         f"[{i+1}] {r['title']}\n{r['snippet']}\nSource: {r['url']}"
@@ -146,26 +159,45 @@ def _synthesize_answer(question: str, region_context: Optional[str], search_resu
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.2,
-            max_tokens=600,
+            max_tokens=900,
         )
         parsed = _extract_json(resp.choices[0].message.content)
     except Exception as e:
         logger.error(f"Research agent: LLM synthesis error: {e}")
-        return {
-            "place_name": None,
-            "reasoning": f"The research agent hit an internal error while reasoning over search results ({type(e).__name__}).",
-            "radius_km": None,
-            "confidence": "low",
-            "source_urls": [],
-        }
+        return _empty_answer(f"The research agent hit an internal error while reasoning over search results ({type(e).__name__}).")
 
-    # Defensive defaults — a malformed/partial LLM response shouldn't crash the endpoint
+    # Defensive parsing — a malformed/partial LLM response shouldn't crash
+    # the endpoint. Accept both the new {"places": [...]} shape and, just
+    # in case the model reverts to the old single-place shape under load,
+    # a lone place_name/reasoning/radius_km/confidence set too.
+    raw_places = parsed.get("places")
+    if not isinstance(raw_places, list):
+        raw_places = [parsed] if parsed.get("place_name") else []
+
+    places = []
+    for p in raw_places:
+        if not isinstance(p, dict) or not p.get("place_name"):
+            continue
+        places.append({
+            "place_name": p.get("place_name"),
+            "reasoning": p.get("reasoning", ""),
+            "radius_km": p.get("radius_km") or 2,
+            "confidence": p.get("confidence", "low"),
+        })
+
+    source_urls = parsed.get("source_urls") or [r["url"] for r in search_results[:3]]
+    first = places[0] if places else {}
     return {
-        "place_name": parsed.get("place_name"),
-        "reasoning": parsed.get("reasoning", ""),
-        "radius_km": parsed.get("radius_km"),
-        "confidence": parsed.get("confidence", "low"),
-        "source_urls": parsed.get("source_urls") or [r["url"] for r in search_results[:3]],
+        "places": places,
+        # Backward-compatible single-place fields, mirroring the
+        # best-supported candidate — older frontend code that only reads
+        # these still works, and the map draws one circle per place in
+        # "places" when present (see App.jsx).
+        "place_name": first.get("place_name"),
+        "reasoning": first.get("reasoning", "" if places else "The available search results didn't name a specific enough place to mark on the map."),
+        "radius_km": first.get("radius_km"),
+        "confidence": first.get("confidence", "low"),
+        "source_urls": source_urls,
     }
 
 
@@ -173,8 +205,8 @@ async def ask(question: str, region_context: Optional[str] = None) -> Dict[str, 
     """Full pipeline: try Vayu's own live intel feeds first (AIS/ADS-B/
     USGS/FIRMS — see data_router.py) for questions those can genuinely
     answer, then fall back to search -> ground an LLM answer in the
-    results -> return a structured answer for the frontend to geocode
-    and draw."""
+    results -> return a structured answer (one or more candidate places)
+    for the frontend to geocode and draw."""
     live_answer = data_router.try_answer_from_live_data(question)
     if live_answer is not None:
         live_answer["search_results_used"] = 0
