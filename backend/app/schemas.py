@@ -66,6 +66,7 @@ class FinalQueryResponse(BaseModel):
     end_date: Optional[str] = None
     region: Optional[str] = None
     raw: Optional[Dict[str, Any]] = None
+    aoi_geojson: Optional[Dict[str, Any]] = None   # the AOI actually used — echoed back so the frontend can draw/reuse it even when it was auto-resolved server-side (geocoded from a place name), not drawn by hand
     # Research-agent-only fields — populated when result_type == "research"
     place_name: Optional[str] = None
     reasoning: Optional[str] = None
