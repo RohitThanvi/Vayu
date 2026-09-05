@@ -1987,14 +1987,27 @@ export default function App() {
   useEffect(() => {
     if (!result || !mapRef.current) return;
     clearLayers();
+    // If the AOI was auto-resolved server-side (the query named a place,
+    // no manual draw — see geocode_util.py) rather than drawn by hand,
+    // the frontend never learned its coordinates until now. Adopt it so
+    // the outline below actually has something to draw, and so
+    // Download Report (which needs drawnAOI to resend for regeneration)
+    // works for this run too, not just manually-drawn ones.
+    const effectiveResultAOI = drawnAOI || result.aoi_geojson;
+    if (!drawnAOI && result.aoi_geojson) setDrawnAOI(result.aoi_geojson);
     // Re-draw the AOI as a static (non-editable) outline — the editable
     // draw-tool layer was cleared when the query submitted, but the
     // boundary itself should stay visible rather than vanishing once
     // results come in.
-    if (drawnAOI) {
+    if (effectiveResultAOI) {
       try {
-        const outline = L.geoJSON(drawnAOI, { style:{ color:'#2a6abd', weight:1.5, fillOpacity:0, dashArray:'4,3' } }).addTo(mapRef.current);
+        const outline = L.geoJSON(effectiveResultAOI, { style:{ color:'#2a6abd', weight:1.5, fillOpacity:0, dashArray:'4,3' } }).addTo(mapRef.current);
         layersRef.current.push(outline);
+        // Auto-geocoded AOIs never went through handleSubmit's manual-draw
+        // path, so aoiBoundsRef was never populated for them — the
+        // fitBounds fallbacks below (tile/geojson load failure) need it
+        // regardless of how this AOI was obtained.
+        if (!aoiBoundsRef.current && outline.getBounds().isValid()) aoiBoundsRef.current = outline.getBounds();
       } catch(e) {}
     }
     if (result.tile_url) {

@@ -187,6 +187,7 @@ def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict
         "start_date": structured_query.start_date,
         "end_date": structured_query.end_date,
         "region": structured_query.region,
+        "aoi_geojson": effective_aoi,
     })
     logger.info(f"[{request_id}] Processing complete.")
 
