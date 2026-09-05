@@ -85,6 +85,7 @@ def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict
             "confidence": answer.get("confidence"),
             "source_urls": answer.get("source_urls", []),
             "search_results_used": answer.get("search_results_used", 0),
+            "live_data_source": answer.get("live_data_source"),
         })
         logger.info(f"[{request_id}] Research agent complete: place_name={answer.get('place_name')!r}")
         return
