@@ -261,3 +261,53 @@ def _explain(score: float, band: str, sub_scores: Dict, drought_m: Dict, veg_m: 
         return base + missing_note
 
     return f"Risk is {band} ({score}/100), driven mainly by: " + ", ".join(parts) + "." + missing_note
+
+
+def compute_drought_trend(aoi: Dict[str, Any], as_of: Optional[str] = None,
+                           checkpoints: int = 5, interval_days: int = 30) -> list:
+    """
+    Lightweight drought-stress trend for the Drought Dashboard's trend
+    chart — a series of {date, drought_affected_pct} points going back
+    `checkpoints` * `interval_days` days from `as_of` (default: today).
+
+    Deliberately NOT calling the full 3-source compute_risk_score() at
+    every checkpoint — that's 3 GEE calls per point (veg + drought +
+    moisture), which for a 5-point trend would mean 15 sequential GEE
+    calls on top of the "current" composite score's own 3. This calls
+    ONLY compute_drought_index per checkpoint (1 GEE call each), using
+    the same drought_affected_pct field risk_scoring's own
+    _drought_subscore already treats as the reliable one. That's a
+    deliberate accuracy/cost tradeoff: the single "right now" headline
+    score stays full-precision (all 3 sources), while the trend — which
+    is about shape/direction over time, not a precise point-in-time
+    value — uses the cheaper single-source series. Total GEE calls for
+    the whole dashboard: 3 (current) + `checkpoints` (trend, one of
+    which duplicates the current drought reading, is cheap to just
+    recompute rather than thread through as a special case).
+
+    A checkpoint that fails (no cloud-free imagery for that window, etc.)
+    is included with drought_affected_pct: None rather than dropped —
+    the frontend renders a gap, which is honest; silently skipping it
+    would compress the x-axis and make the timeline read as denser data
+    than it actually has.
+    """
+    end_dt = datetime.strptime(as_of, "%Y-%m-%d") if as_of else datetime.utcnow()
+    points = []
+    for i in range(checkpoints):
+        checkpoint_end = end_dt - timedelta(days=interval_days * i)
+        checkpoint_start = checkpoint_end - timedelta(days=365)
+        date_str = checkpoint_end.strftime("%Y-%m-%d")
+        try:
+            result = compute_drought_index(
+                aoi=aoi,
+                start_date=checkpoint_start.strftime("%Y-%m-%d"),
+                end_date=date_str,
+            )
+            pct = result["metrics"].get("drought_affected_pct")
+        except Exception as e:
+            logger.warning(f"compute_drought_trend: checkpoint {date_str} failed: {e}")
+            pct = None
+        points.append({"date": date_str, "drought_affected_pct": pct})
+
+    points.reverse()   # oldest first, for a left-to-right chart
+    return points
