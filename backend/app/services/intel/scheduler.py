@@ -31,6 +31,7 @@ from .aircraft_store import aircraft_store
 from . import satellite_tle
 from . import commodity_prices
 from . import air_quality
+from . import timeseries_store
 from ..weather.wind_field import wind_field_store
 
 import httpx
@@ -55,6 +56,7 @@ INTERVAL_COMMODITIES = 3 * 60 * 60   # matches commodity_prices.CACHE_TTL_SECOND
                                        # this replaced), so this can run more often
                                        # while staying a good citizen about it
 INTERVAL_AQI    = 60 * 60   # matches air_quality.CACHE_TTL_SECONDS — CPCB stations
+INTERVAL_CHOKEPOINT_SNAPSHOT = 15 * 60   # matches timeseries_store's baseline sampling assumption
                              # themselves only report hourly, no benefit polling tighter
 INTERVAL_PURGE  = 30 * 60
 
@@ -111,6 +113,7 @@ class IntelScheduler:
             asyncio.create_task(self._poll_tle(),    name="poll-tle"),
             asyncio.create_task(self._poll_commodities(), name="poll-commodities"),
             asyncio.create_task(self._poll_aqi(), name="poll-aqi"),
+            asyncio.create_task(self._poll_chokepoint_snapshots(), name="poll-chokepoint-snapshots"),
             asyncio.create_task(self._purge_loop(),  name="purge-loop"),
         ]
         logger.info(f"Intel scheduler: {len(self._tasks)} polling tasks started")
@@ -289,6 +292,25 @@ class IntelScheduler:
             except Exception as e:
                 logger.error(f"AQI poll error: {type(e).__name__}: {e}")
             await asyncio.sleep(INTERVAL_AQI)
+
+    async def _poll_chokepoint_snapshots(self):
+        # Periodically records each monitored chokepoint's CURRENT vessel
+        # count into timeseries_store, building the history that
+        # get_chokepoint_baseline() later compares against. This doesn't
+        # touch vessel_store itself (still the live source of truth for
+        # map rendering) — it's a one-way read into a separate durable
+        # store. See vessel_store.CHOKEPOINTS for the monitored zones.
+        await asyncio.sleep(30)
+        while self._running:
+            try:
+                for key, bbox_pair in vessel_store.CHOKEPOINTS.items():
+                    (min_lat, min_lon), (max_lat, max_lon) = bbox_pair
+                    vessels = vessel_store.query(bbox=(min_lat, min_lon, max_lat, max_lon))
+                    timeseries_store.record_chokepoint_snapshot(key, len(vessels))
+                logger.info(f"Chokepoint snapshot: recorded {len(vessel_store.CHOKEPOINTS)} zones")
+            except Exception as e:
+                logger.error(f"Chokepoint snapshot error: {type(e).__name__}: {e}")
+            await asyncio.sleep(INTERVAL_CHOKEPOINT_SNAPSHOT)
 
     async def _purge_loop(self):
         while self._running:

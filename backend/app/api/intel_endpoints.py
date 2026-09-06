@@ -11,6 +11,7 @@ REST:
   GET  /api/v1/intel/satellites/tle  — cached satellite orbital elements (CelesTrak)
   GET  /api/v1/intel/commodities     — cached global commodity prices (Yahoo Finance)
   GET  /api/v1/intel/air-quality/cpcb-stations — cached real-time CPCB Air Quality Index (India)
+  GET  /api/v1/intel/supply-chain-correlation — chokepoint traffic status vs. related commodity moves
   GET  /api/v1/intel/wind-field      — animated wind vector grid (U/V components)
 
 WebSocket:
@@ -47,6 +48,7 @@ from ..services.intel.aircraft_store import aircraft_store
 from ..services.intel import satellite_tle
 from ..services.intel import commodity_prices
 from ..services.intel import air_quality
+from ..services.intel import supply_chain
 from ..services.weather.wind_field import wind_field_store
 
 logger = logging.getLogger(__name__)
@@ -352,6 +354,22 @@ async def get_air_quality():
     silently intercept every call to the older endpoint, since FastAPI
     matches routes in declaration order."""
     return air_quality.get_stations()
+
+
+# ── Supply-chain correlation (chokepoint disruption + related commodities) ──
+
+@router.get("/supply-chain-correlation", summary="Chokepoint traffic status vs. related commodity price moves")
+async def get_supply_chain_correlation():
+    """For each of the 7 monitored maritime chokepoints: current vessel
+    count vs. its own 14-day baseline (status: normal/elevated/disrupted/
+    insufficient_history — see services/intel/timeseries_store.py), plus
+    the day-over-day price move of commodities that route heavily
+    through it (see services/intel/supply_chain.py for the mapping and
+    why it's real-world approximation, not a measured trade-flow stat).
+    A plain-language narrative sentence is included per chokepoint.
+    'insufficient_history' is expected for the first ~2 days after this
+    feature ships — baselines need real history to accumulate."""
+    return supply_chain.get_supply_chain_correlation()
 
 
 @router.get("/wind-field", summary="Animated wind vector grid (U/V components)")

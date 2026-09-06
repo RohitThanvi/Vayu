@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react'
 import { Analytics } from '@vercel/analytics/react';
 import IntelPanel from './components/IntelPanel';
 import CommodityTicker from './components/CommodityTicker';
+import SupplyChainStatus from './components/SupplyChainStatus';
 import ErrorBoundary from './components/ErrorBoundary';
 import AgriPanel from './components/AgriPanel';
 import DroughtDashboard from './components/DroughtDashboard';
@@ -1299,15 +1300,9 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
 
             <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:12 }}>
               <div style={{ fontSize:13, fontFamily:S.mono, color:S.accent, letterSpacing:1.5, marginBottom:8, textTransform:'uppercase' }}>
-                Monitored chokepoints
+                Chokepoint status
               </div>
-              <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
-                {['Strait of Hormuz','Strait of Malacca','Bab-el-Mandeb','Suez Canal','Strait of Gibraltar','Panama Canal','English Channel'].map(name => (
-                  <div key={name} style={{ display:'flex', alignItems:'center', gap:7, fontSize:13, color:S.text3, fontFamily:S.mono }}>
-                    <Icon name="anchor" size={13} style={{ flexShrink:0, opacity:0.6 }} />{name}
-                  </div>
-                ))}
-              </div>
+              <SupplyChainStatus apiUrl={apiUrl} />
             </div>
 
             {(!vesselStats || vesselStats.active_vessels === 0) && (
