@@ -20,6 +20,7 @@ rather than reimplementing satellite analysis.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
@@ -116,33 +117,45 @@ def compute_risk_score(aoi: Dict[str, Any], as_of: Optional[str] = None,
     # on genuinely distinct, adjacent 1-year periods instead.
     veg_start_date = (end_dt - timedelta(days=730)).strftime("%Y-%m-%d")
 
+    # These three GEE calls are fully independent — each builds its own
+    # ee.Image/ee.Geometry locally and shares no mutable state with the
+    # others — so they're run concurrently rather than one after another.
+    # Each is a network-bound round trip to Earth Engine's servers
+    # (reduceRegion + area calcs), and Python releases the GIL during
+    # that socket wait, so a thread pool gives a real wall-clock speedup
+    # here, not just a code-organization change: this was the direct
+    # cause of the drought dashboard taking several minutes even for a
+    # small AOI — 3 (here) + up to 5 more (compute_drought_trend) GEE
+    # calls were all running strictly sequentially.
     errors = []
     error_details = {}
     veg_metrics, drought_metrics, moisture_metrics = {}, {}, {}
 
-    try:
-        veg = compute_vegetation_change(aoi=aoi, start_date=veg_start_date, end_date=end_date)
-        veg_metrics = veg["metrics"]
-    except Exception as e:
-        logger.warning(f"risk_scoring: vegetation_change failed: {e}", exc_info=True)
-        errors.append("vegetation")
-        error_details["vegetation"] = str(e)
+    def _run_veg():
+        return compute_vegetation_change(aoi=aoi, start_date=veg_start_date, end_date=end_date)["metrics"]
 
-    try:
-        drought = compute_drought_index(aoi=aoi, start_date=start_date, end_date=end_date)
-        drought_metrics = drought["metrics"]
-    except Exception as e:
-        logger.warning(f"risk_scoring: drought_index failed: {e}", exc_info=True)
-        errors.append("drought")
-        error_details["drought"] = str(e)
+    def _run_drought():
+        return compute_drought_index(aoi=aoi, start_date=start_date, end_date=end_date)["metrics"]
 
-    try:
-        moisture = compute_soil_moisture(aoi=aoi, start_date=start_date, end_date=end_date)
-        moisture_metrics = moisture["metrics"]
-    except Exception as e:
-        logger.warning(f"risk_scoring: soil_moisture failed: {e}", exc_info=True)
-        errors.append("moisture")
-        error_details["moisture"] = str(e)
+    def _run_moisture():
+        return compute_soil_moisture(aoi=aoi, start_date=start_date, end_date=end_date)["metrics"]
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {
+            "vegetation": pool.submit(_run_veg),
+            "drought": pool.submit(_run_drought),
+            "moisture": pool.submit(_run_moisture),
+        }
+        for name, future in futures.items():
+            try:
+                result = future.result()
+                if name == "vegetation": veg_metrics = result
+                elif name == "drought": drought_metrics = result
+                else: moisture_metrics = result
+            except Exception as e:
+                logger.warning(f"risk_scoring: {name} failed: {e}", exc_info=True)
+                errors.append(name)
+                error_details[name] = str(e)
 
     sub_scores = {
         "drought": _drought_subscore(drought_metrics) if "drought" not in errors else None,
@@ -292,8 +305,13 @@ def compute_drought_trend(aoi: Dict[str, Any], as_of: Optional[str] = None,
     than it actually has.
     """
     end_dt = datetime.strptime(as_of, "%Y-%m-%d") if as_of else datetime.utcnow()
-    points = []
-    for i in range(checkpoints):
+
+    # Same reasoning as compute_risk_score's parallelization above — these
+    # `checkpoints` calls are fully independent (different date windows,
+    # no shared state), so they run concurrently rather than adding
+    # `checkpoints` more sequential round-trips on top of the 3 the
+    # current score already makes.
+    def _run_checkpoint(i):
         checkpoint_end = end_dt - timedelta(days=interval_days * i)
         checkpoint_start = checkpoint_end - timedelta(days=365)
         date_str = checkpoint_end.strftime("%Y-%m-%d")
@@ -307,7 +325,10 @@ def compute_drought_trend(aoi: Dict[str, Any], as_of: Optional[str] = None,
         except Exception as e:
             logger.warning(f"compute_drought_trend: checkpoint {date_str} failed: {e}")
             pct = None
-        points.append({"date": date_str, "drought_affected_pct": pct})
+        return {"date": date_str, "drought_affected_pct": pct}
+
+    with ThreadPoolExecutor(max_workers=checkpoints) as pool:
+        points = list(pool.map(_run_checkpoint, range(checkpoints)))
 
     points.reverse()   # oldest first, for a left-to-right chart
     return points

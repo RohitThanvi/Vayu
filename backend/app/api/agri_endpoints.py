@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
@@ -73,27 +74,38 @@ async def drought_dashboard(req: RiskScoreRequest):
     compute_drought_trend's docstring for why the trend uses a cheaper
     single-source computation than the headline score).
 
+    current and trend are also fully independent of EACH OTHER (not just
+    internally parallelized — see risk_scoring.py), so they're kicked off
+    concurrently here too via asyncio.to_thread, rather than run one
+    after the other. Combined with the internal parallelization, this
+    took the dashboard from ~8 sequential GEE round-trips (several
+    minutes, even for a small AOI) down to roughly the duration of the
+    single slowest call across the whole request.
+
     A trend failure never blocks the headline score — this is a genuine
     "these two things degrade independently" case, not a single atomic
     operation, so trend errors are captured and returned alongside a
     working current score rather than failing the whole request.
     """
-    try:
-        current = compute_risk_score(aoi=req.aoi_geojson, as_of=req.as_of, region_id=req.region_id)
-    except Exception as e:
-        logger.error(f"drought_dashboard endpoint failed (current score): {e}", exc_info=True)
-        raise HTTPException(status_code=422, detail=f"Drought dashboard failed: {e}")
+    current_task = asyncio.to_thread(compute_risk_score, aoi=req.aoi_geojson, as_of=req.as_of, region_id=req.region_id)
+    trend_task = asyncio.to_thread(compute_drought_trend, aoi=req.aoi_geojson, as_of=req.as_of)
+
+    current_result, trend_result = await asyncio.gather(current_task, trend_task, return_exceptions=True)
+
+    if isinstance(current_result, Exception):
+        logger.error(f"drought_dashboard endpoint failed (current score): {current_result}", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Drought dashboard failed: {current_result}")
 
     trend = []
     trend_error = None
-    try:
-        trend = compute_drought_trend(aoi=req.aoi_geojson, as_of=req.as_of)
-    except Exception as e:
-        logger.warning(f"drought_dashboard: trend computation failed: {e}", exc_info=True)
-        trend_error = str(e)
+    if isinstance(trend_result, Exception):
+        logger.warning(f"drought_dashboard: trend computation failed: {trend_result}", exc_info=True)
+        trend_error = str(trend_result)
+    else:
+        trend = trend_result
 
     return {
-        "current": current,
+        "current": current_result,
         "trend": trend,
         "trend_error": trend_error,
     }

@@ -16,11 +16,10 @@
  * Backend: POST /api/v1/agri/drought-dashboard — a thin orchestration
  * endpoint that reuses the exact same compute_risk_score() the sidebar's
  * button already calls (same number, same explainability), plus a new
- * lightweight drought-stress trend series (see risk_scoring.
- * compute_drought_trend's docstring for why the trend uses a cheaper
- * single-source computation than the headline score, and why a failed
- * checkpoint appears as a genuine gap rather than being silently
- * dropped or defaulted).
+ * lightweight drought-stress trend series. Both the headline score's 3
+ * GEE calls and the trend's N GEE calls now run concurrently (see
+ * risk_scoring.py) rather than sequentially — this used to take several
+ * minutes even for a small AOI.
  *
  * No new chart library dependency — custom SVG (matches this project's
  * existing pattern elsewhere: OrbitalGlobe, CommodityTicker's icons,
@@ -38,15 +37,35 @@ const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
 };
 
-const BAND_COLOR = { low: '#4a7c59', moderate: '#c9933a', high: '#c96a3a', severe: '#8b2020' };
+// Punchier, higher-saturation band colors than a first pass used —
+// these need to read clearly at a glance against the dark surface, not
+// just be "on brand." Each also gets a glow variant for the gauge/card.
+const BAND_COLOR = { low: '#2ecc71', moderate: '#f0b429', high: '#ff7a45', severe: '#ff3b3b' };
 const BAND_LABEL = { low: 'Low Risk', moderate: 'Moderate Risk', high: 'High Risk', severe: 'Severe Risk' };
 function bandColor(band) { return BAND_COLOR[band] || S.text3; }
+function bandGlow(band) { const c = bandColor(band); return `${c}33`; }   // ~20% alpha for glows/fills
 
-// ── Hero gauge: 0-100 composite score as an arc, band-colored ──────────────
+// Small inline icons — kept local rather than importing App.jsx's Icon()
+// (that component isn't exported), same "each file owns its tiny SVG
+// icon set" pattern CommodityTicker.jsx already uses.
+const ICONS = {
+  drought: <path d="M12 2C8 7 5 11 5 15a7 7 0 0 0 14 0c0-4-3-8-7-13Z" />,
+  vegetation: <path d="M12 22V12M12 12C12 7 8 4 4 4c0 5 3 9 8 9Zm0 0c0-5 4-8 8-8 0 5-3 9-8 9Z" />,
+  moisture: <path d="M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11Z" />,
+};
+function IndicatorIcon({ name, color, size = 15 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      {ICONS[name]}
+    </svg>
+  );
+}
+
+// ── Hero gauge: 0-100 composite score as a glowing arc, band-colored ───────
 function ScoreGauge({ score, band }) {
   const color = bandColor(band);
   const pct = Math.max(0, Math.min(100, score)) / 100;
-  const r = 54, cx = 64, cy = 64;
+  const r = 50, cx = 70, cy = 70;
   const startAngle = 135;
   const sweep = 270 * pct;
   const toXY = (deg) => {
@@ -58,41 +77,53 @@ function ScoreGauge({ score, band }) {
   const largeArc = sweep > 180 ? 1 : 0;
   const [bgx1, bgy1] = toXY(startAngle);
   const [bgx2, bgy2] = toXY(startAngle + 270);
+  const gradId = `gauge-grad-${band}`;
 
   return (
-    <svg width={128} height={128} viewBox="0 0 128 128">
-      <path d={`M ${bgx1} ${bgy1} A ${r} ${r} 0 1 1 ${bgx2} ${bgy2}`} fill="none" stroke={S.border} strokeWidth={10} strokeLinecap="round" />
+    <svg width={140} height={140} viewBox="0 0 140 140">
+      <defs>
+        <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor={color} stopOpacity="0.55" />
+          <stop offset="100%" stopColor={color} stopOpacity="1" />
+        </linearGradient>
+        <filter id={`glow-${band}`} x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="4" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+      <path d={`M ${bgx1} ${bgy1} A ${r} ${r} 0 1 1 ${bgx2} ${bgy2}`} fill="none" stroke={S.surface2} strokeWidth={11} strokeLinecap="round" />
       {score != null && (
-        <path d={`M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2}`} fill="none" stroke={color} strokeWidth={10} strokeLinecap="round" />
+        <path d={`M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2}`} fill="none" stroke={`url(#${gradId})`}
+          strokeWidth={11} strokeLinecap="round" filter={`url(#glow-${band})`} />
       )}
-      <text x={cx} y={cy - 2} textAnchor="middle" fontSize={30} fontWeight={700} fontFamily={S.mono} fill={score != null ? color : S.text3}>
+      <text x={cx} y={cy - 1} textAnchor="middle" fontSize={34} fontWeight={800} fontFamily={S.mono} fill={score != null ? S.text : S.text3}>
         {score != null ? Math.round(score) : '--'}
       </text>
-      <text x={cx} y={cy + 18} textAnchor="middle" fontSize={10} letterSpacing={1} fontFamily={S.mono} fill={S.text3}>
+      <text x={cx} y={cy + 20} textAnchor="middle" fontSize={10} letterSpacing={1.5} fontFamily={S.mono} fill={S.text3}>
         / 100
       </text>
     </svg>
   );
 }
 
-// ── Trend chart: drought-affected % over recent checkpoints ────────────────
+// ── Trend chart: drought-affected % over recent checkpoints, gradient fill ─
 function TrendChart({ points }) {
   const valid = points.filter(p => p.drought_affected_pct != null);
   if (valid.length < 2) {
     return (
-      <div style={{ fontSize: 12, color: S.text3, padding: '20px 0', textAlign: 'center' }}>
+      <div style={{ fontSize: 12, color: S.text3, padding: '24px 0', textAlign: 'center', background: S.surface2, borderRadius: 6 }}>
         Not enough cloud-free imagery across this window to plot a trend yet.
       </div>
     );
   }
-  const w = 260, h = 90, pad = 8;
+  const w = 260, h = 110, pad = 8, topPad = 14;
   const maxVal = Math.max(10, ...valid.map(p => p.drought_affected_pct));
   const xStep = (w - pad * 2) / (points.length - 1);
-  const toY = (v) => h - pad - (v / maxVal) * (h - pad * 2);
+  const toY = (v) => h - pad - (v / maxVal) * (h - pad - topPad);
 
-  // Build the path with gaps at missing (null) checkpoints, rather than
-  // interpolating across them — an honest break in the line, not a
-  // guessed value standing in for missing data.
   let path = '';
   let areaPath = '';
   let drawing = false;
@@ -113,26 +144,36 @@ function TrendChart({ points }) {
   const latest = valid[valid.length - 1].drought_affected_pct;
   const earliest = valid[0].drought_affected_pct;
   const delta = latest - earliest;
+  const deltaColor = delta > 0 ? '#ff7a45' : delta < 0 ? '#2ecc71' : S.text3;
 
   return (
-    <div>
-      <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ display: 'block' }}>
-        <line x1={pad} y1={h - pad} x2={w - pad} y2={h - pad} stroke={S.border} strokeWidth={1} />
-        <path d={areaPath.trim() ? `${areaPath} L ${pad + xStep * (points.length - 1)} ${h - pad} Z` : ''} fill="rgba(126,184,212,0.12)" stroke="none" />
-        <path d={path} fill="none" stroke={S.accent} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+    <div style={{ background: S.surface2, borderRadius: 6, padding: '12px 12px 10px' }}>
+      <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ display: 'block', overflow: 'visible' }}>
+        <defs>
+          <linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={S.accent} stopOpacity="0.45" />
+            <stop offset="100%" stopColor={S.accent} stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        {[0.25, 0.5, 0.75].map(f => (
+          <line key={f} x1={pad} y1={topPad + f * (h - pad - topPad)} x2={w - pad} y2={topPad + f * (h - pad - topPad)} stroke={S.border} strokeWidth={1} strokeDasharray="2,3" />
+        ))}
+        <line x1={pad} y1={h - pad} x2={w - pad} y2={h - pad} stroke={S.border2} strokeWidth={1} />
+        <path d={areaPath.trim() ? `${areaPath} L ${pad + xStep * (points.length - 1)} ${h - pad} Z` : ''} fill="url(#trend-fill)" stroke="none" />
+        <path d={path} fill="none" stroke={S.accent} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
         {points.map((p, i) => p.drought_affected_pct == null ? null : (
-          <circle key={i} cx={pad + i * xStep} cy={toY(p.drought_affected_pct)} r={2.5} fill={S.accent} />
+          <circle key={i} cx={pad + i * xStep} cy={toY(p.drought_affected_pct)} r={3} fill={S.bg} stroke={S.accent} strokeWidth={2} />
         ))}
       </svg>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: S.text3, fontFamily: S.mono, marginTop: 2 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: S.text3, fontFamily: S.mono, marginTop: 4 }}>
         <span>{points[0]?.date}</span>
         <span>{points[points.length - 1]?.date}</span>
       </div>
-      <div style={{ fontSize: 12, color: S.text2, marginTop: 6 }}>
+      <div style={{ fontSize: 12, color: S.text2, marginTop: 8 }}>
         Drought-affected area:{' '}
-        <span style={{ fontWeight: 700, color: S.accent }}>{latest.toFixed(1)}%</span>
+        <span style={{ fontWeight: 700, color: S.accent, fontSize: 14 }}>{latest.toFixed(1)}%</span>
         {' '}
-        <span style={{ color: delta > 0 ? '#c96a3a' : delta < 0 ? '#4a7c59' : S.text3 }}>
+        <span style={{ color: deltaColor, fontWeight: 600 }}>
           ({delta > 0 ? '+' : ''}{delta.toFixed(1)}pt vs {points[0]?.date})
         </span>
       </div>
@@ -140,27 +181,32 @@ function TrendChart({ points }) {
   );
 }
 
-// ── Sub-score breakdown: horizontal bars, one per contributing indicator ───
+// ── Sub-score breakdown: icon + label + gradient bar, one per indicator ────
 function SubScoreBars({ subScores, inputsFailed }) {
   const rows = [
-    { key: 'drought', label: 'Drought Stress' },
-    { key: 'vegetation_loss', label: 'Vegetation Loss' },
-    { key: 'moisture_deficit', label: 'Moisture Deficit' },
+    { key: 'drought', label: 'Drought Stress', icon: 'drought' },
+    { key: 'vegetation_loss', label: 'Vegetation Loss', icon: 'vegetation' },
+    { key: 'moisture_deficit', label: 'Moisture Deficit', icon: 'moisture' },
   ];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {rows.map(({ key, label }) => {
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {rows.map(({ key, label, icon }) => {
         const val = subScores?.[key];
         const failed = inputsFailed?.includes(key);
-        const barColor = val == null ? S.border2 : val >= 55 ? '#c96a3a' : val >= 30 ? '#c9933a' : '#4a7c59';
+        const barColor = val == null ? S.border2 : val >= 55 ? '#ff7a45' : val >= 30 ? '#f0b429' : '#2ecc71';
         return (
           <div key={key}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: S.text3, marginBottom: 3 }}>
-              <span>{label}</span>
-              <span>{failed ? 'no data' : val != null ? `${Math.round(val)}` : '—'}</span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: S.text2, marginBottom: 5 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                <IndicatorIcon name={icon} color={val == null ? S.text3 : barColor} />
+                {label}
+              </span>
+              <span style={{ fontFamily: S.mono, fontWeight: 700, color: failed ? S.text3 : barColor }}>
+                {failed ? 'NO DATA' : val != null ? Math.round(val) : '—'}
+              </span>
             </div>
-            <div style={{ height: 6, background: S.surface2, borderRadius: 3, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${val ?? 0}%`, background: barColor, transition: 'width 0.3s ease' }} />
+            <div style={{ height: 7, background: S.surface2, borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${val ?? 0}%`, background: barColor, borderRadius: 4, transition: 'width 0.4s ease', boxShadow: val ? `0 0 8px ${barColor}88` : 'none' }} />
             </div>
           </div>
         );
@@ -169,10 +215,20 @@ function SubScoreBars({ subScores, inputsFailed }) {
   );
 }
 
+function SectionHeader({ children }) {
+  return (
+    <div style={{ fontSize: 11, fontFamily: S.mono, letterSpacing: 1.8, textTransform: 'uppercase', color: S.text3, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ width: 3, height: 12, background: S.accent, borderRadius: 2, display: 'inline-block' }} />
+      {children}
+    </div>
+  );
+}
+
 export default function DroughtDashboard({ drawnAOI, apiUrl, searchedRegionName, onClose, isMobile }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [fetchedAt, setFetchedAt] = useState(null);
 
   const fetchDashboard = useCallback(async () => {
     if (!drawnAOI) return;
@@ -184,6 +240,7 @@ export default function DroughtDashboard({ drawnAOI, apiUrl, searchedRegionName,
       });
       if (!resp.ok) throw new Error((await resp.json()).detail || 'Drought dashboard failed');
       setData(await resp.json());
+      setFetchedAt(new Date());
     } catch (e) {
       setError(e.message);
     } finally {
@@ -197,55 +254,69 @@ export default function DroughtDashboard({ drawnAOI, apiUrl, searchedRegionName,
   useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
 
   const current = data?.current;
+  const glow = current ? bandGlow(current.band) : null;
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: S.bg, borderLeft: `1px solid ${S.border}`, overflowY: 'auto' }}>
-      <div style={{ padding: '14px 16px', borderBottom: `1px solid ${S.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: `linear-gradient(180deg, ${S.bg} 0%, #0b0e13 100%)`, borderLeft: `1px solid ${S.border}`, overflowY: 'auto' }}>
+      <div style={{ padding: '16px 18px', borderBottom: `1px solid ${S.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <div style={{ fontSize: 13, fontFamily: S.mono, letterSpacing: 2, textTransform: 'uppercase', color: S.text }}>Drought Monitoring</div>
-          <div style={{ fontSize: 11, color: S.text3, marginTop: 2 }}>{searchedRegionName || (drawnAOI ? 'Selected AOI' : 'No AOI selected')}</div>
+          <div style={{ fontSize: 13, fontFamily: S.mono, letterSpacing: 2.5, textTransform: 'uppercase', color: S.text, fontWeight: 700 }}>Drought Monitoring</div>
+          <div style={{ fontSize: 11, color: S.text3, marginTop: 3 }}>{searchedRegionName || (drawnAOI ? 'Selected AOI' : 'No AOI selected')}</div>
         </div>
         {isMobile && onClose && (
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: S.text3, fontSize: 20, cursor: 'pointer', padding: 4 }}>×</button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: S.text3, fontSize: 22, cursor: 'pointer', padding: 4, lineHeight: 1 }}>×</button>
         )}
       </div>
 
-      <div style={{ flex: 1, padding: '16px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ flex: 1, padding: '18px', display: 'flex', flexDirection: 'column', gap: 22 }}>
         {!drawnAOI && (
-          <div style={{ fontSize: 13, color: S.text3, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 13, color: S.text3, lineHeight: 1.7, padding: '8px 2px' }}>
             Draw an AOI on the map, or search a place, to see drought severity, trend, and contributing indicators here — auto-updates whenever the AOI changes.
           </div>
         )}
 
         {drawnAOI && loading && !data && (
-          <div style={{ fontSize: 13, color: S.text3, textAlign: 'center', padding: '30px 0' }}>Analyzing satellite data...</div>
+          <div style={{ fontSize: 13, color: S.accent, textAlign: 'center', padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 28, height: 28, border: `3px solid ${S.border}`, borderTopColor: S.accent, borderRadius: '50%', animation: 'vayu-spin 0.8s linear infinite' }} />
+            Analyzing satellite data...
+            <style>{'@keyframes vayu-spin { to { transform: rotate(360deg); } }'}</style>
+          </div>
         )}
 
         {error && (
-          <div style={{ background: 'rgba(139,32,32,0.08)', border: '1px solid rgba(139,32,32,0.3)', padding: '9px 11px', fontSize: 13, color: S.text2 }}>
+          <div style={{ background: 'rgba(255,59,59,0.08)', border: '1px solid rgba(255,59,59,0.35)', borderRadius: 6, padding: '10px 12px', fontSize: 13, color: S.text2 }}>
             {error}
           </div>
         )}
 
         {current && (
           <>
-            {/* Hero: gauge + band + confidence */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, background: S.surface, border: `1px solid ${bandColor(current.band)}`, borderRadius: 4, padding: '14px' }}>
+            {/* Hero: glowing gauge + band + confidence, band-tinted card */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 16,
+              background: `linear-gradient(135deg, ${glow} 0%, ${S.surface} 60%)`,
+              border: `1px solid ${bandColor(current.band)}55`, borderRadius: 8, padding: '16px',
+              boxShadow: `0 0 24px ${glow}`,
+            }}>
               <ScoreGauge score={current.risk_score} band={current.band} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontFamily: S.mono, letterSpacing: 1.5, textTransform: 'uppercase', color: bandColor(current.band), fontWeight: 700 }}>
+                <div style={{
+                  fontSize: 15, fontFamily: S.mono, letterSpacing: 1.5, textTransform: 'uppercase',
+                  color: bandColor(current.band), fontWeight: 800,
+                }}>
                   {BAND_LABEL[current.band] || current.band}
                 </div>
-                <div style={{ fontSize: 11, color: S.text3, marginTop: 4 }}>Confidence: {current.confidence}%</div>
-                <div style={{ fontSize: 12, color: S.text2, marginTop: 8, lineHeight: 1.5 }}>{current.reason}</div>
+                <div style={{ fontSize: 11, color: S.text3, marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: current.confidence >= 70 ? '#2ecc71' : current.confidence >= 40 ? '#f0b429' : '#ff7a45', display: 'inline-block' }} />
+                  Confidence: {current.confidence}%
+                </div>
+                <div style={{ fontSize: 12.5, color: S.text2, marginTop: 9, lineHeight: 1.6 }}>{current.reason}</div>
               </div>
             </div>
 
             {/* Trend chart */}
             <div>
-              <div style={{ fontSize: 11, fontFamily: S.mono, letterSpacing: 1.5, textTransform: 'uppercase', color: S.text3, marginBottom: 8 }}>
-                Drought Stress Trend
-              </div>
+              <SectionHeader>Drought Stress Trend</SectionHeader>
               {data.trend_error && !data.trend?.length && (
                 <div style={{ fontSize: 12, color: S.text3 }}>Trend unavailable this time — {data.trend_error}</div>
               )}
@@ -254,27 +325,29 @@ export default function DroughtDashboard({ drawnAOI, apiUrl, searchedRegionName,
 
             {/* Component breakdown */}
             <div>
-              <div style={{ fontSize: 11, fontFamily: S.mono, letterSpacing: 1.5, textTransform: 'uppercase', color: S.text3, marginBottom: 8 }}>
-                Contributing Indicators
+              <SectionHeader>Contributing Indicators</SectionHeader>
+              <div style={{ background: S.surface2, borderRadius: 6, padding: '14px 14px 6px' }}>
+                <SubScoreBars subScores={current.sub_scores} inputsFailed={current.inputs_failed} />
               </div>
-              <SubScoreBars subScores={current.sub_scores} inputsFailed={current.inputs_failed} />
             </div>
 
             {/* Provenance / transparency footer */}
-            <div style={{ fontSize: 10, color: S.text3, lineHeight: 1.6, borderTop: `1px solid ${S.border}`, paddingTop: 10 }}>
+            <div style={{ fontSize: 10, color: S.text3, lineHeight: 1.7, borderTop: `1px solid ${S.border}`, paddingTop: 12 }}>
               Sources: {current.provenance?.vegetation_source}; {current.provenance?.drought_source}; {current.provenance?.moisture_source}.
               {current.inputs_failed?.length > 0 && (
                 <> No coverage this period: {current.inputs_failed.join(', ')}.</>
               )}
+              {fetchedAt && <div style={{ marginTop: 4 }}>Last updated {fetchedAt.toLocaleTimeString()}</div>}
             </div>
 
             <button onClick={fetchDashboard} disabled={loading}
               style={{
-                padding: '9px', fontSize: 12, fontFamily: S.mono, letterSpacing: 1.5, textTransform: 'uppercase',
-                background: loading ? S.surface2 : 'rgba(126,184,212,0.1)',
-                border: `1px solid ${loading ? S.border : S.accent}`,
+                padding: '11px', fontSize: 12, fontFamily: S.mono, letterSpacing: 1.8, textTransform: 'uppercase',
+                background: loading ? S.surface2 : 'rgba(126,184,212,0.12)',
+                border: `1px solid ${loading ? S.border : S.accent}`, borderRadius: 4,
                 color: loading ? S.text3 : S.accent,
                 cursor: loading ? 'not-allowed' : 'pointer',
+                fontWeight: 700,
               }}>
               {loading ? 'REFRESHING...' : 'REFRESH'}
             </button>
