@@ -120,9 +120,21 @@ function TrendChart({ points }) {
     );
   }
   const w = 260, h = 110, pad = 8, topPad = 14;
-  const maxVal = Math.max(10, ...valid.map(p => p.drought_affected_pct));
+  // Fixed to a hardcoded 0-10 floor before — for real drought_affected_pct
+  // values (often single-digit, sometimes under 1%), that crushed a
+  // genuine 0.4-0.9% swing into ~5% of the chart's vertical range,
+  // reading as a flat/static line even when the underlying data was
+  // moving. Scale to the ACTUAL observed min/max instead (with headroom
+  // so a flat real series still shows as a visible band, not a
+  // degenerate zero-height line).
+  const rawValues = valid.map(p => p.drought_affected_pct);
+  const dataMin = Math.min(...rawValues);
+  const dataMax = Math.max(...rawValues);
+  const spread = Math.max(dataMax - dataMin, 0.4);
+  const yMin = Math.max(0, dataMin - spread * 0.25);
+  const yMax = dataMax + spread * 0.25;
   const xStep = (w - pad * 2) / (points.length - 1);
-  const toY = (v) => h - pad - (v / maxVal) * (h - pad - topPad);
+  const toY = (v) => h - pad - ((v - yMin) / (yMax - yMin)) * (h - pad - topPad);
 
   let path = '';
   let areaPath = '';
@@ -176,6 +188,56 @@ function TrendChart({ points }) {
         <span style={{ color: deltaColor, fontWeight: 600 }}>
           ({delta > 0 ? '+' : ''}{delta.toFixed(1)}pt vs {points[0]?.date})
         </span>
+      </div>
+    </div>
+  );
+}
+
+// ── Composition donut: each indicator's share of total risk contribution ──
+function CompositionDonut({ subScores }) {
+  const rows = [
+    { key: 'drought', label: 'Drought', color: '#3aa0ff' },
+    { key: 'vegetation_loss', label: 'Vegetation', color: '#2ecc71' },
+    { key: 'moisture_deficit', label: 'Moisture', color: '#f0b429' },
+  ].map(r => ({ ...r, val: subScores?.[r.key] ?? 0 }));
+  const total = rows.reduce((s, r) => s + r.val, 0);
+
+  if (total <= 0) {
+    return (
+      <div style={{ fontSize: 12, color: S.text3, padding: '16px 0', textAlign: 'center' }}>
+        No contributing signal to break down yet.
+      </div>
+    );
+  }
+
+  const cx = 46, cy = 46, r = 34, strokeW = 16;
+  const circumference = 2 * Math.PI * r;
+  let cumulative = 0;
+  const segments = rows.filter(row => row.val > 0).map(row => {
+    const frac = row.val / total;
+    const dash = frac * circumference;
+    const seg = { ...row, frac, dashArray: `${dash} ${circumference - dash}`, dashOffset: -cumulative };
+    cumulative += dash;
+    return seg;
+  });
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+      <svg width={92} height={92} viewBox="0 0 92 92" style={{ flexShrink: 0, transform: 'rotate(-90deg)' }}>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={S.surface2} strokeWidth={strokeW} />
+        {segments.map(seg => (
+          <circle key={seg.key} cx={cx} cy={cy} r={r} fill="none" stroke={seg.color} strokeWidth={strokeW}
+            strokeDasharray={seg.dashArray} strokeDashoffset={seg.dashOffset} strokeLinecap="butt" />
+        ))}
+      </svg>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 7, flex: 1 }}>
+        {rows.map(row => (
+          <div key={row.key} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: S.text2 }}>
+            <span style={{ width: 9, height: 9, borderRadius: 2, background: row.color, display: 'inline-block', flexShrink: 0 }} />
+            <span style={{ flex: 1 }}>{row.label}</span>
+            <span style={{ fontFamily: S.mono, fontWeight: 700, color: S.text }}>{total > 0 ? Math.round((row.val / total) * 100) : 0}%</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -291,27 +353,30 @@ export default function DroughtDashboard({ drawnAOI, apiUrl, searchedRegionName,
 
         {current && (
           <>
-            {/* Hero: glowing gauge + band + confidence, band-tinted card */}
+            {/* Hero: glowing gauge + band + confidence, band-tinted card.
+                Stacked vertically (not side-by-side) — a 290px sidebar
+                minus gauge width left so little room for the reason
+                paragraph that it was wrapping one word per line; a
+                narrow panel needs a vertical card layout here, not a
+                horizontal one. */}
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 16,
-              background: `linear-gradient(135deg, ${glow} 0%, ${S.surface} 60%)`,
-              border: `1px solid ${bandColor(current.band)}55`, borderRadius: 8, padding: '16px',
+              background: `linear-gradient(160deg, ${glow} 0%, ${S.surface} 65%)`,
+              border: `1px solid ${bandColor(current.band)}55`, borderRadius: 8, padding: '20px 18px',
               boxShadow: `0 0 24px ${glow}`,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center',
             }}>
               <ScoreGauge score={current.risk_score} band={current.band} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                  fontSize: 15, fontFamily: S.mono, letterSpacing: 1.5, textTransform: 'uppercase',
-                  color: bandColor(current.band), fontWeight: 800,
-                }}>
-                  {BAND_LABEL[current.band] || current.band}
-                </div>
-                <div style={{ fontSize: 11, color: S.text3, marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: current.confidence >= 70 ? '#2ecc71' : current.confidence >= 40 ? '#f0b429' : '#ff7a45', display: 'inline-block' }} />
-                  Confidence: {current.confidence}%
-                </div>
-                <div style={{ fontSize: 12.5, color: S.text2, marginTop: 9, lineHeight: 1.6 }}>{current.reason}</div>
+              <div style={{
+                fontSize: 16, fontFamily: S.mono, letterSpacing: 1.5, textTransform: 'uppercase',
+                color: bandColor(current.band), fontWeight: 800, marginTop: 6,
+              }}>
+                {BAND_LABEL[current.band] || current.band}
               </div>
+              <div style={{ fontSize: 11, color: S.text3, marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: current.confidence >= 70 ? '#2ecc71' : current.confidence >= 40 ? '#f0b429' : '#ff7a45', display: 'inline-block' }} />
+                Confidence: {current.confidence}%
+              </div>
+              <div style={{ fontSize: 12.5, color: S.text2, marginTop: 12, lineHeight: 1.6, textAlign: 'left', width: '100%', borderTop: `1px solid ${S.border}`, paddingTop: 12 }}>{current.reason}</div>
             </div>
 
             {/* Trend chart */}
@@ -326,7 +391,9 @@ export default function DroughtDashboard({ drawnAOI, apiUrl, searchedRegionName,
             {/* Component breakdown */}
             <div>
               <SectionHeader>Contributing Indicators</SectionHeader>
-              <div style={{ background: S.surface2, borderRadius: 6, padding: '14px 14px 6px' }}>
+              <div style={{ background: S.surface2, borderRadius: 6, padding: '16px 14px' }}>
+                <CompositionDonut subScores={current.sub_scores} />
+                <div style={{ height: 1, background: S.border, margin: '16px 0 14px' }} />
                 <SubScoreBars subScores={current.sub_scores} inputsFailed={current.inputs_failed} />
               </div>
             </div>

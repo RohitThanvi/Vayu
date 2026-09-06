@@ -1771,6 +1771,16 @@ export default function App() {
         setAqiLoading(false);
         if (!mapRef.current) return;
         const stations = data.stations || [];
+        // An empty stations list used to fail completely silently — the
+        // toggle would flip "on" with zero markers and no indication
+        // why. Almost always means AQI_API_KEY isn't configured on the
+        // backend (data.gov.in requires a free key) or the upstream
+        // CPCB feed is briefly down — data.last_error carries exactly
+        // that reason, so surface it instead of pretending it worked.
+        if (stations.length === 0) {
+          setError(data.last_error ? `Air Quality: ${data.last_error}` : 'Air Quality: no station data available right now.');
+          return;
+        }
         const group = L.layerGroup();
         stations.forEach(st => {
           if (typeof st.lat !== 'number' || typeof st.lon !== 'number') return;
