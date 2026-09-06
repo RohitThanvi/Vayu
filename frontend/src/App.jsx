@@ -3,6 +3,7 @@ import { Analytics } from '@vercel/analytics/react';
 import IntelPanel from './components/IntelPanel';
 import CommodityTicker from './components/CommodityTicker';
 import SupplyChainStatus from './components/SupplyChainStatus';
+import SubscribeWidget from './components/SubscribeWidget';
 import ErrorBoundary from './components/ErrorBoundary';
 import AgriPanel from './components/AgriPanel';
 import DroughtDashboard from './components/DroughtDashboard';
@@ -1388,8 +1389,9 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
           </div>
         )}
       </div>
-      <div style={{ flexShrink:0, padding:'7px 14px', borderTop:`1px solid ${S.border}` }}>
-        <div style={{ fontSize:14, fontFamily:S.mono, color:S.text3, letterSpacing:1 }}>
+      <div style={{ flexShrink:0, padding:'10px 14px', borderTop:`1px solid ${S.border}` }}>
+        <SubscribeWidget apiUrl={apiUrl} />
+        <div style={{ fontSize:14, fontFamily:S.mono, color:S.text3, letterSpacing:1, marginTop:8 }}>
           VAYU v2.0.0
         </div>
       </div>

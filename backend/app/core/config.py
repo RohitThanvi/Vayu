@@ -14,6 +14,17 @@ class Settings(BaseSettings):
         "http://localhost:3000,https://vayu-geop.vercel.app"
     )
 
+    # Executive summary emails (services/reporting/) — RESEND_API_KEY: free
+    # signup at resend.com, no card; sending to arbitrary recipients needs
+    # a verified sending domain there (not just an API key) or every send
+    # will fail outside Resend's own sandbox test address.
+    RESEND_API_KEY: str = ""
+    REPORT_FROM_EMAIL: str = "reports@vayu.dev"   # must match a domain verified in Resend
+    FRONTEND_URL: str = "https://vayu-geop.vercel.app"
+    # "HH:MM" 24h, interpreted in REPORT_TIMEZONE — see reporting/scheduler.py
+    DAILY_REPORT_TIME: str = "12:00"
+    REPORT_TIMEZONE: str = "Asia/Kolkata"
+
     # Rate limiting
     RATE_LIMIT_PER_MINUTE: int = 20
 
