@@ -19,7 +19,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"  # Agmarknet current daily prices
+RESOURCE_ID = "35985678-0d79-46b4-9ed6-6f13308a1d24"  # Agmarknet current daily prices
 BASE_URL = f"https://api.data.gov.in/resource/{RESOURCE_ID}"  # data.gov.in public demo key, low rate limit
 
 
