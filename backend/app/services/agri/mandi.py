@@ -20,13 +20,12 @@ import httpx
 logger = logging.getLogger(__name__)
 
 RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"  # Agmarknet current daily prices
-BASE_URL = f"https://api.data.gov.in/resource/{RESOURCE_ID}"
-DEMO_KEY = "579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571"  # data.gov.in public demo key, low rate limit
+BASE_URL = f"https://api.data.gov.in/resource/{RESOURCE_ID}"  # data.gov.in public demo key, low rate limit
 
 
 async def get_mandi_prices(commodity: Optional[str] = None, state: Optional[str] = None,
                             district: Optional[str] = None, limit: int = 20) -> Dict[str, Any]:
-    api_key = os.environ.get("DATA_GOV_IN_API_KEY", DEMO_KEY)
+    api_key = os.environ.get("AQI_API_KEY")
     params = {
         "api-key": api_key,
         "format": "json",
