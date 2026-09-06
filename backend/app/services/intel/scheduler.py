@@ -32,6 +32,7 @@ from . import satellite_tle
 from . import commodity_prices
 from . import air_quality
 from . import timeseries_store
+from ..reporting.report_job import run_daily_report
 from ..weather.wind_field import wind_field_store
 
 import httpx
@@ -114,6 +115,7 @@ class IntelScheduler:
             asyncio.create_task(self._poll_commodities(), name="poll-commodities"),
             asyncio.create_task(self._poll_aqi(), name="poll-aqi"),
             asyncio.create_task(self._poll_chokepoint_snapshots(), name="poll-chokepoint-snapshots"),
+            asyncio.create_task(self._daily_report_loop(), name="daily-report-loop"),
             asyncio.create_task(self._purge_loop(),  name="purge-loop"),
         ]
         logger.info(f"Intel scheduler: {len(self._tasks)} polling tasks started")
@@ -311,6 +313,38 @@ class IntelScheduler:
             except Exception as e:
                 logger.error(f"Chokepoint snapshot error: {type(e).__name__}: {e}")
             await asyncio.sleep(INTERVAL_CHOKEPOINT_SNAPSHOT)
+
+    async def _daily_report_loop(self):
+        """Fires run_daily_report() once at settings.DAILY_REPORT_TIME
+        every day, in settings.REPORT_TIMEZONE (default 12:00 Asia/
+        Kolkata). Computes the exact sleep duration to the next
+        occurrence rather than polling on a short interval and checking
+        the clock — simpler to reason about and doesn't drift."""
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        from ...core.config import settings
+
+        while self._running:
+            try:
+                tz = ZoneInfo(settings.REPORT_TIMEZONE)
+                hour, minute = map(int, settings.DAILY_REPORT_TIME.split(":"))
+                now = datetime.now(tz)
+                target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if target <= now:
+                    target += timedelta(days=1)
+                sleep_seconds = (target - now).total_seconds()
+                logger.info(f"Daily report loop: next send at {target.isoformat()} (sleeping {sleep_seconds/3600:.1f}h)")
+                await asyncio.sleep(sleep_seconds)
+                if not self._running:
+                    break
+                result = await run_daily_report()
+                logger.info(f"Daily report loop: send complete — {result}")
+            except Exception as e:
+                logger.error(f"Daily report loop error: {type(e).__name__}: {e}")
+                # Don't spin on a repeated config error (e.g. a bad
+                # DAILY_REPORT_TIME format) — back off an hour and retry
+                # rather than looping instantly forever.
+                await asyncio.sleep(60 * 60)
 
     async def _purge_loop(self):
         while self._running:
