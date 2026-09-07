@@ -96,15 +96,34 @@ async def refresh(api_key: str, force: bool = False, limit: int = 3000) -> int:
         "format": "json",
         "limit": limit,
     }
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(AQI_API_URL, params=params, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as e:
+    # 30s wasn't enough — this is a ReadTimeout (the connection succeeds,
+    # data.gov.in just doesn't finish responding in time), not the
+    # Render-outbound-IP-blocked ConnectTimeout class of problem this
+    # project hit with AISStream/OpenSky/CelesTrak (that needed routing
+    # through the Ohio bridge; this doesn't — the connection itself is
+    # fine). A `limit=3000` request against ~800+ stations x up to 6
+    # pollutants each is a genuinely large response to generate and
+    # transfer, so this both raises the timeout AND falls back to a
+    # smaller, faster request if the full one still times out — partial
+    # real data beats none.
+    attempts = [(limit, 60), (min(limit, 1000), 45)]
+    last_exc = None
+    for attempt_limit, attempt_timeout in attempts:
+        params["limit"] = attempt_limit
+        t0 = time.time()
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(AQI_API_URL, params=params, timeout=attempt_timeout)
+                resp.raise_for_status()
+                data = resp.json()
+            logger.info(f"Air quality: fetched limit={attempt_limit} in {time.time()-t0:.1f}s")
+            break
+        except Exception as e:
+            last_exc = e
+            logger.warning(f"Air quality fetch attempt (limit={attempt_limit}, timeout={attempt_timeout}s) failed after {time.time()-t0:.1f}s: {type(e).__name__}: {e}")
+    else:
         with _lock:
-            _cache["last_error"] = f"{type(e).__name__}: {e}"
-        logger.warning(f"Air quality fetch failed: {type(e).__name__}: {e}")
+            _cache["last_error"] = f"{type(last_exc).__name__}: {last_exc}"
         return len(_cache["stations"])
 
     records = data.get("records", [])
