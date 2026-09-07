@@ -29,6 +29,12 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
   const [rollup, setRollup] = useState(null);
   const [rollupRole, setRollupRole] = useState('officer');
 
+  const [mandiRecords, setMandiRecords] = useState(null);
+  const [mandiLoading, setMandiLoading] = useState(false);
+  const [mandiError, setMandiError] = useState(null);
+  const [mandiCommodity, setMandiCommodity] = useState('');
+  const [mandiState, setMandiState] = useState('');
+
   const runRiskScore = useCallback(async () => {
     if (!drawnAOI) return;
     setScoreLoading(true); setScoreError(null); setScoreResult(null);
@@ -83,8 +89,26 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
     } catch (e) { /* non-fatal */ }
   }, [apiUrl]);
 
+  const loadMandi = useCallback(async () => {
+    setMandiLoading(true); setMandiError(null);
+    try {
+      const params = new URLSearchParams();
+      if (mandiCommodity.trim()) params.set('commodity', mandiCommodity.trim());
+      if (mandiState.trim()) params.set('state', mandiState.trim());
+      const resp = await fetch(`${apiUrl}/api/v1/agri/mandi-price?${params}`);
+      const data = await resp.json();
+      if (data.error) { setMandiError(data.error); setMandiRecords([]); }
+      else setMandiRecords(data.records || []);
+    } catch (e) {
+      setMandiError(e.message);
+    } finally {
+      setMandiLoading(false);
+    }
+  }, [apiUrl, mandiCommodity, mandiState]);
+
   useEffect(() => { if (view === 'watchlist') loadRegions(); }, [view, loadRegions]);
   useEffect(() => { if (view === 'rollup') loadRollup(rollupRole); }, [view, rollupRole, loadRollup]);
+  useEffect(() => { if (view === 'mandi' && mandiRecords === null) loadMandi(); }, [view, mandiRecords, loadMandi]);
   // Pre-fill the watchlist name field from a searched place, so the user
   // doesn't have to retype "Jodhpur, Rajasthan" after already searching it
   // — only when they haven't started typing their own name for this AOI.
@@ -118,7 +142,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', gap: 6 }}>
-        {['score', 'watchlist', 'rollup'].map(v => (
+        {[['score','Score'], ['watchlist','Watchlist'], ['rollup','Overview'], ['mandi','Mandi']].map(([v,label]) => (
           <button key={v} onClick={() => setView(v)}
             style={{
               flex: 1, padding: '6px 4px', fontSize: 12, fontFamily: S.mono, letterSpacing: 1,
@@ -127,7 +151,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
               border: `1px solid ${view === v ? S.accent : S.border}`,
               color: view === v ? S.accent : S.text3,
             }}>
-            {v}
+            {label}
           </button>
         ))}
       </div>
@@ -241,47 +265,109 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
       {view === 'rollup' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', gap: 6 }}>
-            {['officer', 'district'].map(r => (
+            {[['officer','My Regions'], ['district','District View']].map(([r,label]) => (
               <button key={r} onClick={() => setRollupRole(r)}
                 style={{
                   flex: 1, padding: '5px', fontSize: 11, fontFamily: S.mono, letterSpacing: 1, textTransform: 'uppercase',
                   cursor: 'pointer', background: rollupRole === r ? 'rgba(126,184,212,0.1)' : S.surface2,
                   border: `1px solid ${rollupRole === r ? S.accent : S.border}`, color: rollupRole === r ? S.accent : S.text3,
                 }}>
-                {r} view
+                {label}
               </button>
             ))}
           </div>
           {!rollup && <div style={{ fontSize: 13, color: S.text3, textAlign: 'center', padding: '20px 0' }}>Loading…</div>}
           {rollup && rollup.role === 'officer' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {rollup.regions?.length === 0 && <div style={{ fontSize: 13, color: S.text3 }}>No watched regions yet.</div>}
-              {rollup.regions?.map(({ region, latest_alert }) => (
-                <div key={region.id} style={{ padding: '8px 10px', background: S.surface2, border: `1px solid ${S.border}` }}>
-                  <div style={{ fontSize: 13, color: S.text, fontFamily: S.mono }}>{region.name}</div>
-                  <div style={{ fontSize: 12, color: latest_alert ? bandColor(latest_alert.risk_score >= 75 ? 'severe' : latest_alert.risk_score >= 55 ? 'high' : latest_alert.risk_score >= 30 ? 'moderate' : 'low') : S.text3 }}>
-                    {latest_alert ? `Risk ${latest_alert.risk_score}/100` : 'No alert yet'}
+              {rollup.regions?.length === 0 && <div style={{ fontSize: 13, color: S.text3 }}>No watched regions yet — add one from the Watchlist tab.</div>}
+              {rollup.regions?.map(({ region, latest_alert }) => {
+                const score = latest_alert?.risk_score;
+                const band = score == null ? null : score >= 75 ? 'severe' : score >= 55 ? 'high' : score >= 30 ? 'moderate' : 'low';
+                const color = bandColor(band);
+                return (
+                  <div key={region.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 11px', background: S.surface2, borderLeft: `3px solid ${color}`, borderRadius: 3 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: S.text, fontFamily: S.mono }}>{region.name}</div>
+                      <div style={{ fontSize: 11, color: S.text3, marginTop: 2 }}>{score == null ? 'Not scored yet' : band.charAt(0).toUpperCase()+band.slice(1)+' risk'}</div>
+                    </div>
+                    <div style={{ fontSize: 20, fontWeight: 800, fontFamily: S.mono, color }}>{score != null ? Math.round(score) : '—'}</div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
           {rollup && rollup.role === 'district' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ fontSize: 12, color: S.text3, fontFamily: S.mono }}>
-                {rollup.total_regions} regions · {rollup.regions_with_data} scored
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'flex', gap: 16, padding: '10px 12px', background: S.surface2, borderRadius: 3 }}>
+                <div>
+                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: S.mono, color: S.text }}>{rollup.total_regions}</div>
+                  <div style={{ fontSize: 10, color: S.text3, letterSpacing: 1, textTransform: 'uppercase' }}>Regions</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: S.mono, color: S.accent }}>{rollup.regions_with_data}</div>
+                  <div style={{ fontSize: 10, color: S.text3, letterSpacing: 1, textTransform: 'uppercase' }}>Scored</div>
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {Object.entries(rollup.band_counts || {}).map(([band, count]) => (
-                  <div key={band} style={{ padding: '4px 8px', fontSize: 12, fontFamily: S.mono, border: `1px solid ${bandColor(band)}`, color: bandColor(band) }}>
-                    {band}: {count}
+              <div>
+                <div style={{ fontSize: 11, color: S.text3, fontFamily: S.mono, letterSpacing: 1.5, marginBottom: 8, textTransform: 'uppercase' }}>By Risk Band</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {Object.entries(rollup.band_counts || {}).map(([band, count]) => (
+                    <div key={band} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', fontSize: 12, fontFamily: S.mono, background: S.surface2, borderRadius: 3 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: bandColor(band), display: 'inline-block' }} />
+                      <span style={{ color: S.text2 }}>{count}</span>
+                      <span style={{ color: S.text3, textTransform: 'capitalize' }}>{band}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: S.text3, fontFamily: S.mono, letterSpacing: 1.5, marginBottom: 8, textTransform: 'uppercase' }}>Highest Risk</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {(rollup.top_risk_regions || []).map((r, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, padding: '6px 2px', borderBottom: i < rollup.top_risk_regions.length-1 ? `1px solid ${S.border}` : 'none' }}>
+                      <span style={{ color: S.text2 }}>{r.name}</span>
+                      <span style={{ fontFamily: S.mono, fontWeight: 700, color: bandColor(r.risk_score >= 75 ? 'severe' : r.risk_score >= 55 ? 'high' : r.risk_score >= 30 ? 'moderate' : 'low') }}>{r.risk_score}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {view === 'mandi' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input placeholder="Commodity (e.g. Wheat)" value={mandiCommodity}
+              onChange={e => setMandiCommodity(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && loadMandi()}
+              style={{ flex: 1, minWidth: 0, background: S.bg, border: `1px solid ${S.border}`, color: S.text2, fontFamily: S.mono, fontSize: 12, padding: '7px 9px' }} />
+            <input placeholder="State (optional)" value={mandiState}
+              onChange={e => setMandiState(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && loadMandi()}
+              style={{ flex: 1, minWidth: 0, background: S.bg, border: `1px solid ${S.border}`, color: S.text2, fontFamily: S.mono, fontSize: 12, padding: '7px 9px' }} />
+            <button onClick={loadMandi} disabled={mandiLoading}
+              style={{ background: 'rgba(126,184,212,0.1)', border: `1px solid ${S.accent}`, color: S.accent, fontFamily: S.mono, fontSize: 11, letterSpacing: 1, padding: '0 12px', cursor: mandiLoading ? 'wait' : 'pointer', flexShrink: 0 }}>
+              {mandiLoading ? '...' : 'GO'}
+            </button>
+          </div>
+          {mandiError && <div style={{ fontSize: 12, color: '#c96a3a' }}>{mandiError}</div>}
+          {mandiLoading && <div style={{ fontSize: 13, color: S.text3, textAlign: 'center', padding: '16px 0' }}>Loading…</div>}
+          {mandiRecords && !mandiLoading && mandiRecords.length === 0 && !mandiError && (
+            <div style={{ fontSize: 13, color: S.text3 }}>No mandi prices found — try a different commodity or state.</div>
+          )}
+          {mandiRecords && mandiRecords.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {mandiRecords.map((r, i) => (
+                <div key={i} style={{ padding: '9px 11px', background: S.surface2, borderRadius: 3 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span style={{ fontSize: 13, color: S.text, fontFamily: S.mono }}>{r.commodity}{r.variety ? ` (${r.variety})` : ''}</span>
+                    <span style={{ fontSize: 16, fontWeight: 800, fontFamily: S.mono, color: S.accent }}>₹{r.modal_price}</span>
                   </div>
-                ))}
-              </div>
-              <div style={{ fontSize: 12, color: S.text3, fontFamily: S.mono, letterSpacing: 1 }}>TOP RISK REGIONS</div>
-              {(rollup.top_risk_regions || []).map((r, i) => (
-                <div key={i} style={{ fontSize: 13, color: S.text2, display: 'flex', justifyContent: 'space-between' }}>
-                  <span>{r.name}</span><span>{r.risk_score}</span>
+                  <div style={{ fontSize: 11, color: S.text3, marginTop: 3 }}>
+                    {r.market}{r.district ? `, ${r.district}` : ''}{r.state ? `, ${r.state}` : ''} · Range ₹{r.min_price}–₹{r.max_price} · {r.arrival_date}
+                  </div>
                 </div>
               ))}
             </div>
