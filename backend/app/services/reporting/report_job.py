@@ -8,8 +8,8 @@ without waiting for the clock.
 
 import asyncio
 import logging
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ...core.config import settings
 from . import subscribers as sub_store
@@ -19,6 +19,41 @@ from .email_render import render_report_html
 from .email_sender import send_email
 
 logger = logging.getLogger(__name__)
+
+# A handful of fixed, no-DST offsets as a fallback for when the IANA tz
+# database isn't available at all (zoneinfo's stdlib lookup needs either
+# an OS-level tzdata install or the `tzdata` pip package — this hit a
+# real ZoneInfoNotFoundError on a local Windows dev machine that hadn't
+# picked up the `tzdata` requirement yet). Only a few zones are listed
+# here deliberately — this is a safety net for the common case, not a
+# full tz database reimplementation; anything not listed falls back to
+# UTC with a warning rather than silently guessing.
+_FIXED_OFFSET_FALLBACKS = {
+    "Asia/Kolkata": timedelta(hours=5, minutes=30),
+    "UTC": timedelta(0),
+}
+
+
+def get_report_timezone() -> timezone:
+    """ZoneInfo(settings.REPORT_TIMEZONE), with a graceful fallback if
+    the IANA tz database isn't installed in this environment at all
+    (rather than crashing the whole report job over a timezone lookup)."""
+    try:
+        return ZoneInfo(settings.REPORT_TIMEZONE)
+    except ZoneInfoNotFoundError:
+        offset = _FIXED_OFFSET_FALLBACKS.get(settings.REPORT_TIMEZONE)
+        if offset is not None:
+            logger.warning(
+                f"get_report_timezone: tzdata for '{settings.REPORT_TIMEZONE}' not found "
+                f"(install the 'tzdata' pip package, or run on a system with the OS IANA "
+                f"tz database) — using a fixed {offset} offset instead. DST-observing "
+                f"zones would need a real install; {settings.REPORT_TIMEZONE} has none, "
+                f"so this fallback is exact, not approximate."
+            )
+            return timezone(offset)
+        logger.error(f"get_report_timezone: no tzdata AND no fixed-offset fallback for '{settings.REPORT_TIMEZONE}' — using UTC.")
+        return timezone.utc
+
 
 
 async def run_daily_report() -> dict:
@@ -32,7 +67,7 @@ async def run_daily_report() -> dict:
     snapshot = gather_snapshot()
     summary = generate_summary(snapshot)
 
-    tz = ZoneInfo(settings.REPORT_TIMEZONE)
+    tz = get_report_timezone()
     report_date = datetime.now(tz).strftime("%B %d, %Y")
     subject = f"VAYU Daily Briefing — {summary.get('headline', 'Executive Summary')}"[:150]
 
