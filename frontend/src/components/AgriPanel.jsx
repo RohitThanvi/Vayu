@@ -29,6 +29,11 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
   const [rollup, setRollup] = useState(null);
   const [rollupRole, setRollupRole] = useState('officer');
 
+  const [whatsappInfo, setWhatsappInfo] = useState(null);
+  useEffect(() => {
+    fetch(`${apiUrl}/api/v1/agri/whatsapp/info`).then(r => r.json()).then(setWhatsappInfo).catch(() => {});
+  }, [apiUrl]);
+
   const [mandiRecords, setMandiRecords] = useState(null);
   const [mandiLoading, setMandiLoading] = useState(false);
   const [mandiError, setMandiError] = useState(null);
@@ -372,6 +377,13 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {whatsappInfo?.configured && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: S.surface2, border: `1px solid ${S.border}`, fontSize: 12, color: S.text3, fontFamily: S.mono }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4a7c59', flexShrink: 0 }} />
+          WhatsApp a place name to <span style={{ color: S.text2 }}>{whatsappInfo.number}</span> for its risk score
         </div>
       )}
     </div>

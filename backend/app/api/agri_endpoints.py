@@ -187,6 +187,22 @@ async def groundwater_trend(req: BaselineRequest):
 
 # ── WhatsApp bot (last-mile delivery) ────────────────────────────────────────
 
+@router.get("/whatsapp/info", summary="WhatsApp bot number, if configured")
+async def whatsapp_info():
+    """The bot's inbound Q&A (text a place name, get its risk score) only
+    needs the webhook wired in Twilio's console — it works even without
+    outbound send credentials (see whatsapp.py's docstring). This just
+    tells the frontend what number to show, read from config rather than
+    hardcoded in the UI, so it can never go stale if the number changes.
+    A Twilio WhatsApp Sandbox number (the free tier) requires each user
+    to first send a one-time join code to it before it'll reply — that
+    code lives in the Twilio console, not here, since it's sandbox-only
+    and disappears once a real WhatsApp Business number is provisioned."""
+    from ..services.agri.whatsapp import TWILIO_WHATSAPP_FROM
+    number = TWILIO_WHATSAPP_FROM.replace("whatsapp:", "") if TWILIO_WHATSAPP_FROM else None
+    return {"configured": bool(number), "number": number}
+
+
 @router.post("/whatsapp/webhook", summary="Twilio WhatsApp inbound webhook", include_in_schema=False)
 async def whatsapp_webhook(request: Request):
     form = await request.form()

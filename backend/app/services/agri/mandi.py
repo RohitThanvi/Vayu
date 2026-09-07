@@ -18,7 +18,7 @@ from ...core.config import settings
 
 logger = logging.getLogger(__name__)
 
-RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"  # Agmarknet current daily prices
+RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"  # "Current Daily Price of Various Commodities from Various Markets (Mandi)"
 BASE_URL = f"https://api.data.gov.in/resource/{RESOURCE_ID}"
 
 
