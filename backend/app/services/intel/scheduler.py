@@ -321,12 +321,12 @@ class IntelScheduler:
         occurrence rather than polling on a short interval and checking
         the clock — simpler to reason about and doesn't drift."""
         from datetime import datetime, timedelta
-        from zoneinfo import ZoneInfo
         from ...core.config import settings
+        from ..reporting.report_job import get_report_timezone
 
         while self._running:
             try:
-                tz = ZoneInfo(settings.REPORT_TIMEZONE)
+                tz = get_report_timezone()
                 hour, minute = map(int, settings.DAILY_REPORT_TIME.split(":"))
                 now = datetime.now(tz)
                 target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
