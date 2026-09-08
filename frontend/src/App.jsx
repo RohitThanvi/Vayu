@@ -1171,6 +1171,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
   isLoading,error,result,jobStatus, onSubmit, vesselStats, onClose, isMobile,
   weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey, mapZoom,
   aqiOn, aqiLoading, onToggleAqi,
+  userEmail, onLogout,
   orbitalShowSatellites, setOrbitalShowSatellites, orbitalShowAircraft, setOrbitalShowAircraft,
   orbitalSatellites, orbitalSatLoaded, orbitalSatDebug, orbitalAircraftStats, orbitalAircraftValid,
   orbitalSearch, setOrbitalSearch, orbitalFilteredList, orbitalSelected, setOrbitalSelected }) {
@@ -1391,8 +1392,16 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
       </div>
       <div style={{ flexShrink:0, padding:'10px 14px', borderTop:`1px solid ${S.border}` }}>
         <SubscribeWidget apiUrl={apiUrl} />
-        <div style={{ fontSize:14, fontFamily:S.mono, color:S.text3, letterSpacing:1, marginTop:8 }}>
-          VAYU v2.0.0
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:8 }}>
+          <div style={{ fontSize:14, fontFamily:S.mono, color:S.text3, letterSpacing:1 }}>
+            VAYU v2.0.0
+          </div>
+          {userEmail && (
+            <button onClick={onLogout} title={userEmail}
+              style={{ background:'none', border:'none', color:S.text3, fontFamily:S.mono, fontSize:11, letterSpacing:1, cursor:'pointer', padding:0, textTransform:'uppercase' }}>
+              Log out
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1439,7 +1448,7 @@ function MapOverlay({ result, isLoading, drawnAOI, isMobile }) {
 }
 
 // ── Root App ──────────────────────────────────────────────────────────────────
-export default function App() {
+export default function App({ userEmail, onLogout }) {
   const isMobile = useIsMobile();
   const [mobilePanel, setMobilePanel] = useState('map'); // 'map' | 'analyze' | 'intel'
   const [tab, setTab]             = useState('Analyze');
@@ -2130,6 +2139,7 @@ export default function App() {
       vesselStats={vesselStats}
       weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
       aqiOn={aqiOn} aqiLoading={aqiLoading} onToggleAqi={handleToggleAqi}
+      userEmail={userEmail} onLogout={onLogout}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
       satelliteLoadingKey={satelliteLoadingKey} mapZoom={mapZoom}
       orbitalShowSatellites={orbitalShowSatellites} setOrbitalShowSatellites={setOrbitalShowSatellites}
