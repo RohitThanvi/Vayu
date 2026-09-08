@@ -20,6 +20,17 @@ class Settings(BaseSettings):
     # will fail outside Resend's own sandbox test address.
     RESEND_API_KEY: str = ""
     REPORT_FROM_EMAIL: str = "reports@vayu.dev"   # must match a domain verified in Resend
+    # SMTP fallback — for when you don't own a domain to verify with Resend
+    # (Resend, and every domain-based transactional API, requires DNS
+    # records on a domain you control; without one, Resend can only send
+    # to your own signup address). Gmail's own SMTP relay needs no
+    # domain at all — an app password on any Gmail account works. See
+    # reporting/email_sender.py for setup. Empty by default; only used
+    # when RESEND_API_KEY isn't set.
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""       # e.g. yourname@gmail.com
+    SMTP_PASSWORD: str = ""   # a 16-char Gmail APP PASSWORD, not your normal login password
     FRONTEND_URL: str = "https://vayu-geop.vercel.app"
     # "HH:MM" 24h, interpreted in REPORT_TIMEZONE — see reporting/scheduler.py
     DAILY_REPORT_TIME: str = "12:00"
