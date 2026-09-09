@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     SMTP_USER: str = ""       # e.g. yourname@gmail.com
     SMTP_PASSWORD: str = ""   # a 16-char Gmail APP PASSWORD, not your normal login password
+    # Where the landing page's Contact form is delivered. Falls back to
+    # SMTP_USER (mailing yourself) if unset, since there's no other safe
+    # default destination without a real domain/support inbox yet.
+    ADMIN_EMAIL: str = ""
     FRONTEND_URL: str = "https://vayu-geop.vercel.app"
     # "HH:MM" 24h, interpreted in REPORT_TIMEZONE — see reporting/scheduler.py
     DAILY_REPORT_TIME: str = "12:00"
