@@ -61,6 +61,13 @@ def init_db():
                 created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS password_resets (
+                token TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used INTEGER NOT NULL DEFAULT 0
+            );
             CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
             """
         )
@@ -147,6 +154,51 @@ def delete_session(token: str):
     with _lock, _connect() as conn:
         conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
         conn.commit()
+
+
+PASSWORD_RESET_TTL_MINUTES = 30
+
+
+def get_user_by_email(email: str) -> Optional[dict]:
+    email = email.strip().lower()
+    with _lock, _connect() as conn:
+        row = conn.execute("SELECT id, email FROM users WHERE email = ?", (email,)).fetchone()
+    return dict(row) if row else None
+
+
+def create_password_reset(user_id: str) -> str:
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES)
+    with _lock, _connect() as conn:
+        conn.execute(
+            "INSERT INTO password_resets (token, user_id, created_at, expires_at, used) VALUES (?, ?, ?, ?, 0)",
+            (token, user_id, now.isoformat(), expires.isoformat()),
+        )
+        conn.commit()
+    return token
+
+
+def consume_password_reset(token: str, new_password: str) -> bool:
+    """Validates the token (unused, unexpired), sets the new password,
+    marks the token used, and invalidates every existing session for
+    that user — a password reset is a strong signal something may have
+    been compromised, so any session started before the reset (e.g. on
+    a device that isn't the one requesting the reset) shouldn't survive
+    it."""
+    with _lock, _connect() as conn:
+        row = conn.execute(
+            "SELECT user_id, expires_at, used FROM password_resets WHERE token = ?", (token,)
+        ).fetchone()
+        if not row or row["used"] or datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
+            return False
+
+        new_hash = hash_password(new_password)
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, row["user_id"]))
+        conn.execute("UPDATE password_resets SET used = 1 WHERE token = ?", (token,))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["user_id"],))
+        conn.commit()
+    return True
 
 
 init_db()
