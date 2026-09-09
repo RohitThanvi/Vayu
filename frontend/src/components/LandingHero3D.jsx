@@ -24,8 +24,8 @@ export default function LandingHero3D() {
     if (!container) return;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 4000);
-    camera.position.set(0, 2.4, 12);
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 4000);
+    camera.position.set(2, 1.2, 13);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -35,8 +35,7 @@ export default function LandingHero3D() {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.06;
-    controls.minDistance = 6;
-    controls.maxDistance = 22;
+    controls.enableZoom = false;   // scene fills the whole hero viewport now — wheel-zoom would hijack page scroll and trap the user in this section
     controls.autoRotate = true;
     controls.autoRotateSpeed = 0.4;
     controls.enablePan = false;
@@ -60,18 +59,21 @@ export default function LandingHero3D() {
     scene.add(makeStarfield(1600, 700));
 
     // Earth — real NASA imagery (same free, keyless texture already used
-    // elsewhere in this app's Orbital tab and 404 page)
-    const EARTH_RADIUS = 4.2;
+    // elsewhere in this app's Orbital tab and 404 page). Positioned
+    // toward the right/lower half of frame — this scene now fills the
+    // full-bleed hero backdrop with headline text overlaid on the left,
+    // so the composition needs to leave that side clear.
+    const EARTH_RADIUS = 5.6;
     const loader = new THREE.TextureLoader();
     const earthGeo = new THREE.SphereGeometry(EARTH_RADIUS, 64, 64);
     const earthMat = new THREE.MeshPhongMaterial({ shininess: 6 });
-    loader.load('https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg', (tex) => {
+    loader.load('https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_atmos_2048.jpg', (tex) => {
       tex.colorSpace = THREE.SRGBColorSpace;
       earthMat.map = tex;
       earthMat.needsUpdate = true;
     });
     const earth = new THREE.Mesh(earthGeo, earthMat);
-    earth.position.set(1.5, -1, 0);
+    earth.position.set(4.5, -1.8, -2);
     scene.add(earth);
 
     const atmoGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.02, 64, 64);
@@ -136,8 +138,8 @@ export default function LandingHero3D() {
     satellite.add(buildWing(-1));
     satellite.add(buildWing(1));
 
-    satellite.scale.setScalar(1.1);
-    satellite.position.set(-2.2, 2.4, 1.5);
+    satellite.scale.setScalar(1.6);
+    satellite.position.set(1.5, 3.2, 3);
     scene.add(satellite);
 
     let raf;

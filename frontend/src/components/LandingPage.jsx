@@ -263,6 +263,7 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
   const [activeSection, setActiveSection] = useState('home');
   const [parallaxY, setParallaxY] = useState(0);
   const sectionRefs = useRef({});
+  const scrollContainerRef = useRef(null);
 
   // Reset-password mode: a link from the reset email lands here with
   // ?reset_token=... in the URL.
@@ -274,14 +275,18 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
 
   useEffect(() => {
     // Active nav-link highlighting on scroll — vanilla IntersectionObserver,
-    // no scroll-animation library.
+    // no scroll-animation library. `root` must be the actual scrolling
+    // container (see below — this page manages its own scroll, since
+    // body itself is position:fixed for the main app and can't scroll
+    // at all), not the default viewport, or intersection detection
+    // would silently never fire.
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach(entry => {
           if (entry.isIntersecting) setActiveSection(entry.target.dataset.section);
         });
       },
-      { threshold: 0.4 }
+      { root: scrollContainerRef.current, threshold: 0.4 }
     );
     Object.values(sectionRefs.current).forEach(el => el && observer.observe(el));
     return () => observer.disconnect();
@@ -290,18 +295,21 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
   useEffect(() => {
     // Lightweight parallax: hero background scene drifts slower than
     // the page scroll — a plain scroll listener throttled via rAF, not
-    // a library.
+    // a library. Listens on the scroll container itself (see above),
+    // not window — window/body never scrolls here.
+    const container = scrollContainerRef.current;
+    if (!container) return;
     let ticking = false;
     const onScroll = () => {
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(() => {
-        setParallaxY(window.scrollY * 0.25);
+        setParallaxY(container.scrollTop * 0.25);
         ticking = false;
       });
     };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => container.removeEventListener('scroll', onScroll);
   }, []);
 
   if (resetToken) {
@@ -316,7 +324,7 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
   }
 
   return (
-    <div style={{ background: S.bg, color: S.text, minHeight: '100vh', scrollBehavior: 'smooth' }}>
+    <div ref={scrollContainerRef} style={{ position: 'fixed', inset: 0, overflowY: 'auto', overflowX: 'hidden', background: S.bg, color: S.text, scrollBehavior: 'smooth' }}>
       {/* Navbar */}
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, background: 'rgba(5,7,12,0.85)', backdropFilter: 'blur(8px)', borderBottom: `1px solid ${S.border}` }}>
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -336,35 +344,55 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
         </div>
       </div>
 
-      {/* Home / Hero */}
-      <div ref={el => sectionRefs.current.home = el} data-section="home" style={{ position: 'relative', minHeight: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
-        <div style={{ position: 'absolute', inset: 0, transform: `translateY(${parallaxY}px)` }}>
-          <Starfield />
+      {/* Home / Hero — full-bleed 3D scene as a cinematic backdrop, text
+          overlaid on top with a gradient for legibility, rather than a
+          small 3D box squeezed beside the copy. */}
+      <div ref={el => sectionRefs.current.home = el} data-section="home" style={{ position: 'relative', height: '100vh', overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', inset: 0, transform: `scale(1.1) translateY(${parallaxY * 0.4}px)` }}>
+          <Suspense fallback={<div style={{ width: '100%', height: '100%', background: S.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ width: 30, height: 30, border: `3px solid ${S.border}`, borderTopColor: S.gold, borderRadius: '50%', animation: 'vayu-landing-spin 0.8s linear infinite' }} /></div>}>
+            <LandingHero3D />
+          </Suspense>
         </div>
-        <div style={{ position: 'relative', zIndex: 1, maxWidth: 1200, margin: '0 auto', padding: '100px 28px 40px', display: 'flex', alignItems: 'center', gap: 40, width: '100%', flexWrap: 'wrap' }}>
-          <div style={{ flex: '1 1 420px', minWidth: 320 }}>
-            <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.text3, textTransform: 'uppercase', marginBottom: 14 }}>
+        {/* Legibility gradient — darkest at bottom-left where the copy
+            sits, fading out toward the upper-right where the scene
+            should read clearly */}
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          background: 'linear-gradient(115deg, rgba(5,7,12,0.95) 0%, rgba(5,7,12,0.75) 30%, rgba(5,7,12,0.15) 60%, rgba(5,7,12,0.05) 100%)',
+        }} />
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(0deg, rgba(5,7,12,1) 0%, rgba(5,7,12,0) 18%)' }} />
+
+        <div style={{ position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1200, margin: '0 auto', padding: '0 28px' }}>
+          <div style={{ maxWidth: 560 }}>
+            <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.text3, textTransform: 'uppercase', marginBottom: 16 }}>
               Geospatial &amp; Business Intelligence
             </div>
-            <div style={{ fontFamily: 'Georgia, serif', fontSize: 42, lineHeight: 1.2, color: S.text, marginBottom: 20 }}>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: 50, lineHeight: 1.15, color: S.text, marginBottom: 22, textShadow: '0 2px 24px rgba(0,0,0,0.6)' }}>
               One terminal for <span style={{ color: S.gold }}>everything above and around you.</span>
             </div>
-            <div style={{ fontFamily: S.mono, fontSize: 13, color: S.text2, lineHeight: 1.8, marginBottom: 30, maxWidth: 480 }}>
+            <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.8, marginBottom: 34, maxWidth: 480 }}>
               Live satellite analysis, maritime &amp; aviation tracking, commodity
               markets, drought &amp; agricultural risk scoring, and global hazard
               intel — unified, live, and actionable.
             </div>
-            <button onClick={() => scrollTo('account')}
-              style={{ padding: '13px 30px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#05070c', fontWeight: 700, cursor: 'pointer' }}>
-              Enter Terminal
-            </button>
-          </div>
-          <div style={{ flex: '1 1 420px', minWidth: 320, height: 440 }}>
-            <Suspense fallback={<div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ width: 26, height: 26, border: `3px solid ${S.border}`, borderTopColor: S.gold, borderRadius: '50%', animation: 'vayu-landing-spin 0.8s linear infinite' }} /></div>}>
-              <LandingHero3D />
-            </Suspense>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+              <button onClick={() => scrollTo('account')}
+                style={{ padding: '14px 32px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#05070c', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 24px rgba(201,168,106,0.3)' }}>
+                Enter Terminal
+              </button>
+              <button onClick={() => scrollTo('about')}
+                style={{ padding: '14px 28px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: 'transparent', border: `1px solid ${S.border}`, borderRadius: 4, color: S.text2, cursor: 'pointer' }}>
+                See What It Does
+              </button>
+            </div>
           </div>
         </div>
+
+        <div style={{ position: 'absolute', bottom: 26, left: '50%', transform: 'translateX(-50%)', zIndex: 1, fontFamily: S.mono, fontSize: 10, letterSpacing: 2, color: S.text3, textTransform: 'uppercase', textAlign: 'center' }}>
+          <div>Scroll — drag the scene to look around</div>
+          <div style={{ marginTop: 6, fontSize: 14 }}>&#8595;</div>
+        </div>
+
         <style>{'@keyframes vayu-landing-spin { to { transform: rotate(360deg); } }'}</style>
       </div>
 
