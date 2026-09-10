@@ -27,13 +27,31 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 const S = {
-  bg: '#05070c', surface: 'rgba(13,17,23,0.88)', surface2: '#0d1117', border: '#2a3040',
-  text: '#ffffff', text2: 'rgba(255,255,255,0.75)', text3: 'rgba(255,255,255,0.5)',
-  gold: '#c9a86a', goldBright: '#f5d98a', accent: '#7eb8d4',
+  bg: '#05070c', surface: 'rgba(13,17,23,0.88)', surface2: '#0d1117', surface3: '#111826', border: '#2a3040', borderLight: '#3a4257',
+  // Bumped from 0.5/0.75 — the old text3 sat around ~5:1 contrast on this
+  // background, which reads as "washed out" for small mono body copy even
+  // though it technically cleared AA. text2/text3 raised so descriptive
+  // copy stays legible without going full white (keeps the muted terminal
+  // mood); text4 is for genuinely decorative/tertiary labels only.
+  text: '#ffffff', text2: 'rgba(255,255,255,0.86)', text3: 'rgba(255,255,255,0.68)', text4: 'rgba(255,255,255,0.5)',
+  gold: '#c9a86a', goldBright: '#f5d98a', goldDim: 'rgba(201,168,106,0.55)', accent: '#7eb8d4',
   mono: "'JetBrains Mono','Courier New',monospace",
 };
 
 const SECTIONS = [['home', 'Home'], ['about', 'About'], ['contact', 'Contact']];
+
+const STATS = [
+  { n: '9+', label: 'Fixed satellite analysis metrics', icon: 'M4 17l5-5 3 3 6-8M4 17V7M4 17h16' },
+  { n: '10+', label: 'Live data sources fused into one feed', icon: 'M4 6a8 3 0 0016 0 8 3 0 00-16 0zM4 6v6a8 3 0 0016 0V6M4 12v6a8 3 0 0016 0v-6' },
+  { n: '24/7', label: 'Automated monitoring & daily reports', icon: 'M12 7v5l3 3M12 21a9 9 0 100-18 9 9 0 000 18z' },
+  { n: '1', label: 'Terminal for every domain — sea, sky, soil, markets', icon: 'M3 12h4l2-7 4 14 2-7h6' },
+];
+
+const FLOW = [
+  { title: 'Live Sources', desc: 'Satellite imagery, AIS/ADS-B feeds, weather & AQI stations, commodity markets, gov. agri data', icon: 'M12 2l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z' },
+  { title: 'Fusion & Scoring', desc: 'Composite risk scores, trend detection, correlation & anomaly flags, LLM narrative summaries', icon: 'M12 2a10 10 0 100 20 10 10 0 000-20zM12 6v6l4 2' },
+  { title: 'One Terminal', desc: 'Unified map, dashboards, alerts and scheduled email reports — no context switching', icon: 'M3 5h18v13a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM3 9h18' },
+];
 
 const FEATURES = [
   { title: 'Satellite Analysis', desc: 'Vegetation, drought, flood, fire, deforestation & more — 9 fixed metrics plus open-ended AI research on any AOI.', img: '/screenshots/analyze-maritime.jpg' },
@@ -53,16 +71,11 @@ const GlobalStyle = () => (
       50%  { transform: scale(1.16) translate(-1.2%, -1%); }
       100% { transform: scale(1.06) translate(0%, 0%); }
     }
-    @keyframes vayu-twinkle {
-      0%, 100% { opacity: 0.15; }
-      50% { opacity: 1; }
-    }
     @keyframes vayu-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
     @keyframes vayu-modal-pop-in { from { opacity: 0; transform: scale(0.94) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
     .vayu-hero-bg { animation: vayu-kenburns 34s ease-in-out infinite; }
-    .vayu-star { animation: vayu-twinkle 4s ease-in-out infinite; }
-    .vayu-feature-card { transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease; }
-    .vayu-feature-card:hover { transform: translateY(-6px); border-color: #c9a86a66; box-shadow: 0 16px 40px rgba(0,0,0,0.5); }
+    .vayu-feature-card { transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease; transform-style: preserve-3d; }
+    .vayu-feature-card:hover { border-color: #c9a86a66; box-shadow: 0 22px 50px rgba(0,0,0,0.55), 0 4px 16px rgba(201,168,106,0.12); }
     .vayu-feature-card:hover .vayu-feature-img { transform: scale(1.06); }
     .vayu-feature-img { transition: transform 0.4s ease; }
     .vayu-nav-btn { transition: color 0.2s ease; }
@@ -70,20 +83,47 @@ const GlobalStyle = () => (
     .vayu-cta-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(201,168,106,0.45); }
     .vayu-cta-secondary { transition: border-color 0.2s ease, color 0.2s ease; }
     .vayu-cta-secondary:hover { border-color: #c9a86a; color: #f5d98a; }
+    .vayu-stat-card { transition: border-color 0.25s ease, transform 0.25s ease; }
+    .vayu-stat-card:hover { border-color: #c9a86a55; transform: translateY(-3px); }
+    .vayu-flow-node { transition: opacity 0.4s ease; }
+    input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.4); }
   `}</style>
 );
 
-function Starfield() {
-  const stars = Array.from({ length: 110 }, (_, i) => {
-    const seed = i * 137.5;
-    return { x: (seed * 3.7) % 100, y: (seed * 5.3) % 100, size: 1 + (i % 3), delay: (i % 12) * 0.35, dur: 3 + (i % 5) * 0.6 };
-  });
+// Subtle mouse-tracked 3D tilt, shared by feature cards and the auth
+// card. Kept small (max ~5-6deg) and spring-eased back to flat on
+// leave — enough to read as "real" depth on hover, not a gimmick.
+function useTilt(maxDeg = 5) {
+  const ref = useRef(null);
+  const [tilt, setTilt] = useState({ x: 0, y: 0 });
+  const onMouseMove = useCallback((e) => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - 0.5;
+    const py = (e.clientY - r.top) / r.height - 0.5;
+    setTilt({ x: py * -maxDeg, y: px * maxDeg });
+  }, [maxDeg]);
+  const onMouseLeave = useCallback(() => setTilt({ x: 0, y: 0 }), []);
+  return { ref, tilt, onMouseMove, onMouseLeave };
+}
+
+function TiltCard({ children, style, className }) {
+  const { ref, tilt, onMouseMove, onMouseLeave } = useTilt(5);
   return (
-    <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-      {stars.map((s, i) => (
-        <circle key={i} className="vayu-star" cx={`${s.x}%`} cy={`${s.y}%`} r={s.size / 2} fill="#ffffff"
-          style={{ animationDelay: `${s.delay}s`, animationDuration: `${s.dur}s` }} />
-      ))}
+    <div style={{ perspective: 900 }}>
+      <div ref={ref} onMouseMove={onMouseMove} onMouseLeave={onMouseLeave} className={className}
+        style={{ ...style, transform: `rotateX(${tilt.x}deg) rotateY(${tilt.y}deg) translateZ(0)` }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Icon({ path, size = 20, color = S.gold }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d={path} />
     </svg>
   );
 }
@@ -242,24 +282,41 @@ function AuthCard({ apiUrl, onAuthenticated }) {
   );
 }
 
-// Shared "space themed" card shell — gold-glow border, contained
-// starfield, used by both the auth modal and the reset-password view.
+// Shared card shell for the auth modal / reset-password view — real
+// satellite imagery (reusing the hero photo) instead of the starfield,
+// with a subtle mouse-tracked 3D tilt for some depth without being
+// gimmicky. `onClose` button is explicitly stacked ABOVE the content
+// wrapper (zIndex 2 vs 1) — previously they were both zIndex:1, so the
+// content div (later in DOM, same z-index) silently ate every click on
+// the × since equal z-index falls back to DOM order.
 function SpaceCard({ children, onClose }) {
+  const { ref: cardRef, tilt, onMouseMove, onMouseLeave } = useTilt(4);
+
   return (
-    <div style={{
-      position: 'relative', width: 360, maxWidth: '100%', borderRadius: 10, overflow: 'hidden',
-      background: `linear-gradient(160deg, rgba(201,168,106,0.08) 0%, ${S.surface} 40%)`,
-      border: `1px solid ${S.gold}55`, boxShadow: '0 0 60px rgba(201,168,106,0.15), 0 24px 60px rgba(0,0,0,0.6)',
-    }}>
-      <div style={{ position: 'absolute', inset: 0 }}><Starfield /></div>
-      {onClose && (
-        <button onClick={onClose} aria-label="Close"
-          style={{ position: 'absolute', top: 10, right: 12, background: 'none', border: 'none', color: S.text3, fontSize: 22, lineHeight: 1, cursor: 'pointer', zIndex: 1 }}>
-          &times;
-        </button>
-      )}
-      <div style={{ position: 'relative', zIndex: 1, padding: '32px 28px' }}>
-        {children}
+    <div style={{ perspective: 1200 }}>
+      <div ref={cardRef} onMouseMove={onMouseMove} onMouseLeave={onMouseLeave} style={{
+        position: 'relative', width: 380, maxWidth: '100%', borderRadius: 10, overflow: 'hidden',
+        border: `1px solid ${S.gold}55`, boxShadow: '0 0 60px rgba(201,168,106,0.15), 0 30px 70px rgba(0,0,0,0.65)',
+        transform: `rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`, transformStyle: 'preserve-3d',
+        transition: 'transform 0.3s ease',
+      }}>
+        <div style={{
+          position: 'absolute', inset: 0, backgroundImage: 'url(/hero-satellite.jpg)', backgroundSize: 'cover',
+          backgroundPosition: 'center', transform: 'translateZ(-1px) scale(1.05)',
+        }} />
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: `linear-gradient(160deg, rgba(5,7,12,0.94) 0%, rgba(5,7,12,0.9) 45%, rgba(13,17,23,0.93) 100%)`,
+        }} />
+        {onClose && (
+          <button onClick={onClose} aria-label="Close" type="button"
+            style={{ position: 'absolute', top: 10, right: 12, background: 'rgba(5,7,12,0.4)', border: 'none', borderRadius: '50%', width: 30, height: 30, color: S.text2, fontSize: 20, lineHeight: 1, cursor: 'pointer', zIndex: 2 }}>
+            &times;
+          </button>
+        )}
+        <div style={{ position: 'relative', zIndex: 1, padding: '32px 28px' }}>
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -443,7 +500,10 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
       {/* Navbar */}
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, background: 'rgba(5,7,12,0.85)', backdropFilter: 'blur(8px)', borderBottom: `1px solid ${S.border}` }}>
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ fontFamily: S.mono, fontSize: 14, letterSpacing: 3, color: S.gold, fontWeight: 700 }}>VAYU</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <img src="/logo.png" alt="Vayu" width="20" height="20" style={{ display: 'block', filter: 'drop-shadow(0 0 4px rgba(201,168,106,0.4))' }} />
+            <div style={{ fontFamily: S.mono, fontSize: 14, letterSpacing: 3, color: S.gold, fontWeight: 700 }}>VAYU</div>
+          </div>
           <div style={{ display: 'flex', gap: 28, alignItems: 'center' }}>
             {SECTIONS.map(([id, label]) => (
               <button key={id} className="vayu-nav-btn" onClick={() => scrollTo(id)}
@@ -477,6 +537,10 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
           background: 'linear-gradient(115deg, rgba(5,7,12,0.92) 0%, rgba(5,7,12,0.72) 32%, rgba(5,7,12,0.2) 62%, rgba(5,7,12,0.05) 100%)',
         }} />
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(0deg, rgba(5,7,12,1) 0%, rgba(5,7,12,0) 18%)' }} />
+        <img src="/logo.png" alt="" aria-hidden style={{
+          position: 'absolute', right: '6%', bottom: '10%', width: 220, opacity: 0.07,
+          filter: 'grayscale(0.4)', pointerEvents: 'none',
+        }} />
 
         <div style={{
           position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1200, margin: '0 auto', padding: '0 28px',
@@ -522,20 +586,64 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>About</div>
-            <div style={{ fontFamily: 'Georgia, serif', fontSize: 30, color: S.text, marginBottom: 40 }}>What Vayu actually does</div>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: 30, color: S.text, marginBottom: 18 }}>What Vayu actually does</div>
+            <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.85, maxWidth: 760, marginBottom: 56 }}>
+              Vayu pulls together satellite imagery, maritime &amp; flight traffic, weather and
+              air quality, commodity prices, and government agricultural data into one
+              continuously-updating picture — instead of a dozen dashboards, tabs, and stale
+              PDFs. Point it at any area on Earth and it runs the analysis, scores the risk,
+              and explains what changed in plain language, then keeps watching so you don't
+              have to check back manually.
+            </div>
           </Reveal>
+
+          {/* Stat strip — quiet infographic, same palette as the rest of
+              the page (gold hairline icons on dark cards) so it reads as
+              part of the design rather than a bolted-on dashboard widget. */}
+          <Reveal root={scrollContainerRef.current}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 64 }}>
+              {STATS.map((s) => (
+                <div key={s.label} className="vayu-stat-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, padding: '20px 20px' }}>
+                  <div style={{ marginBottom: 14 }}><Icon path={s.icon} /></div>
+                  <div style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: S.goldBright, marginBottom: 6 }}>{s.n}</div>
+                  <div style={{ fontFamily: S.mono, fontSize: 11.5, color: S.text3, lineHeight: 1.5 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+          </Reveal>
+
+          {/* How it works — a simple three-step flow, connected with a
+              single hairline instead of arrows/animation, to stay calm
+              rather than "dashboard-y". */}
+          <Reveal root={scrollContainerRef.current}>
+            <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 2.5, color: S.text3, textTransform: 'uppercase', marginBottom: 24 }}>How it works</div>
+            <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 28, marginBottom: 64 }}>
+              {FLOW.map((f, i) => (
+                <div key={f.title} className="vayu-flow-node" style={{ position: 'relative' }}>
+                  <div style={{ width: 38, height: 38, borderRadius: '50%', background: S.surface2, border: `1px solid ${S.goldDim}`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+                    <Icon path={f.icon} size={18} />
+                  </div>
+                  <div style={{ fontFamily: S.mono, fontSize: 13, color: S.text, marginBottom: 8, letterSpacing: 0.5 }}>
+                    <span style={{ color: S.text4, marginRight: 8 }}>{String(i + 1).padStart(2, '0')}</span>{f.title}
+                  </div>
+                  <div style={{ fontFamily: S.mono, fontSize: 12, color: S.text3, lineHeight: 1.6, maxWidth: 320 }}>{f.desc}</div>
+                </div>
+              ))}
+            </div>
+          </Reveal>
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 28 }}>
             {FEATURES.map((f, i) => (
               <Reveal key={f.title} delay={i * 0.1} root={scrollContainerRef.current}>
-                <div className="vayu-feature-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, overflow: 'hidden', height: '100%' }}>
+                <TiltCard className="vayu-feature-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, overflow: 'hidden', height: '100%' }}>
                   <div style={{ overflow: 'hidden' }}>
                     <img className="vayu-feature-img" src={f.img} alt={f.title} style={{ width: '100%', height: 160, objectFit: 'cover', display: 'block', borderBottom: `1px solid ${S.border}` }} />
                   </div>
                   <div style={{ padding: '16px 18px' }}>
                     <div style={{ fontFamily: S.mono, fontSize: 13, color: S.gold, marginBottom: 8, letterSpacing: 0.5 }}>{f.title}</div>
-                    <div style={{ fontFamily: S.mono, fontSize: 12, color: S.text3, lineHeight: 1.6 }}>{f.desc}</div>
+                    <div style={{ fontFamily: S.mono, fontSize: 12, color: S.text2, lineHeight: 1.6 }}>{f.desc}</div>
                   </div>
-                </div>
+                </TiltCard>
               </Reveal>
             ))}
           </div>
