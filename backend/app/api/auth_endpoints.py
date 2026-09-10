@@ -161,6 +161,12 @@ def _require_admin(x_admin_key: str = Header(default="")):
         raise HTTPException(status_code=404)  # 404, not 401 — don't reveal the endpoint exists
 
 
+@router.get("/admin/users", summary="[admin] List registered users (email + signup date only)")
+async def list_users(x_admin_key: str = Header(default="")):
+    _require_admin(x_admin_key)
+    return {"users": auth_db.list_users()}
+
+
 @router.get("/contact/messages", summary="[admin] List contact-form submissions")
 async def list_contact_messages(x_admin_key: str = Header(default=""), unresponded_only: bool = False):
     _require_admin(x_admin_key)
