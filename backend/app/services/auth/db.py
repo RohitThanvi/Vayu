@@ -179,6 +179,16 @@ def get_user_by_email(email: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def list_users(limit: int = 500) -> list[dict]:
+    """Email + created_at only — never the password hash, even for the
+    admin view."""
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT email, created_at FROM users ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def create_password_reset(user_id: str) -> str:
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
