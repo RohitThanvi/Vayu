@@ -1,20 +1,33 @@
 /**
  * LandingPage.jsx
- * Single-page landing/login experience shown by AppGate.jsx before the
- * main app. Sections (Home/About/Contact/Account) live on one page and
- * are navigated by smooth-scrolling to anchors — no router library.
- * Nav-link highlighting on scroll uses IntersectionObserver (vanilla,
- * no scroll-animation library). The hero background is a real
- * satellite/Earth photo with a classic vanilla parallax (drifts+scales
- * slower than scroll, headline fades as you scroll past it) — no
- * Three.js here at all, so this page loads instantly with zero WebGL
- * weight.
+ * Single-page landing experience shown by AppGate.jsx before the main
+ * app. Home/About/Contact sections live on one page, navigated by
+ * smooth-scrolling to anchors (no router library). Sign In/Sign Up is
+ * a modal overlay (glass-blur backdrop) triggered by the navbar/hero
+ * buttons — not a permanent section — closed by clicking outside,
+ * Escape, or the close button.
+ *
+ * Animation/interactivity, all vanilla (no animation library):
+ * - IntersectionObserver-driven nav-link highlighting AND scroll-reveal
+ *   (fade+rise) on About/Contact content as it enters view
+ * - A scroll-position parallax on the hero background (plain scroll
+ *   listener + rAF throttling) layered with an independent, always-
+ *   running CSS Ken Burns zoom/pan for a "living" backdrop even before
+ *   the user scrolls
+ * - CSS-only star twinkle, card hover lift/glow, button hover states
+ *
+ * `root` for every IntersectionObserver here must be the actual
+ * scrolling container (see scrollContainerRef below), not the default
+ * viewport — this page runs its own internal scroll because the main
+ * app's body is position:fixed (a fixed-viewport map tool) and can't
+ * scroll at all. Getting this wrong previously made scroll-linked
+ * features silently never fire.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 const S = {
-  bg: '#05070c', surface: 'rgba(13,17,23,0.82)', surface2: '#0d1117', border: '#2a3040',
+  bg: '#05070c', surface: 'rgba(13,17,23,0.88)', surface2: '#0d1117', border: '#2a3040',
   text: '#ffffff', text2: 'rgba(255,255,255,0.75)', text3: 'rgba(255,255,255,0.5)',
   gold: '#c9a86a', goldBright: '#f5d98a', accent: '#7eb8d4',
   mono: "'JetBrains Mono','Courier New',monospace",
@@ -29,15 +42,80 @@ const FEATURES = [
   { title: 'Orbital Tracking', desc: 'Live aircraft and satellite positions rendered on an interactive 3D globe.', img: '/screenshots/orbital-view.jpg' },
 ];
 
+// One shared stylesheet for everything that needs a real CSS animation
+// or :hover state — inline style objects can't express either, so
+// this is the one place this file breaks from inline styles.
+const GlobalStyle = () => (
+  <style>{`
+    @keyframes vayu-spin { to { transform: rotate(360deg); } }
+    @keyframes vayu-kenburns {
+      0%   { transform: scale(1.06) translate(0%, 0%); }
+      50%  { transform: scale(1.16) translate(-1.2%, -1%); }
+      100% { transform: scale(1.06) translate(0%, 0%); }
+    }
+    @keyframes vayu-twinkle {
+      0%, 100% { opacity: 0.15; }
+      50% { opacity: 1; }
+    }
+    @keyframes vayu-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes vayu-modal-pop-in { from { opacity: 0; transform: scale(0.94) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+    .vayu-hero-bg { animation: vayu-kenburns 34s ease-in-out infinite; }
+    .vayu-star { animation: vayu-twinkle 4s ease-in-out infinite; }
+    .vayu-feature-card { transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease; }
+    .vayu-feature-card:hover { transform: translateY(-6px); border-color: #c9a86a66; box-shadow: 0 16px 40px rgba(0,0,0,0.5); }
+    .vayu-feature-card:hover .vayu-feature-img { transform: scale(1.06); }
+    .vayu-feature-img { transition: transform 0.4s ease; }
+    .vayu-nav-btn { transition: color 0.2s ease; }
+    .vayu-cta-primary { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+    .vayu-cta-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(201,168,106,0.45); }
+    .vayu-cta-secondary { transition: border-color 0.2s ease, color 0.2s ease; }
+    .vayu-cta-secondary:hover { border-color: #c9a86a; color: #f5d98a; }
+  `}</style>
+);
+
 function Starfield() {
   const stars = Array.from({ length: 110 }, (_, i) => {
     const seed = i * 137.5;
-    return { x: (seed * 3.7) % 100, y: (seed * 5.3) % 100, size: 1 + (i % 3), opacity: 0.25 + ((i * 0.61) % 0.55) };
+    return { x: (seed * 3.7) % 100, y: (seed * 5.3) % 100, size: 1 + (i % 3), delay: (i % 12) * 0.35, dur: 3 + (i % 5) * 0.6 };
   });
   return (
     <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-      {stars.map((s, i) => <circle key={i} cx={`${s.x}%`} cy={`${s.y}%`} r={s.size / 2} fill="#ffffff" opacity={s.opacity} />)}
+      {stars.map((s, i) => (
+        <circle key={i} className="vayu-star" cx={`${s.x}%`} cy={`${s.y}%`} r={s.size / 2} fill="#ffffff"
+          style={{ animationDelay: `${s.delay}s`, animationDuration: `${s.dur}s` }} />
+      ))}
     </svg>
+  );
+}
+
+// Scroll-reveal wrapper: fades + rises into place the first time it
+// enters the viewport, then stays (disconnects its own observer —
+// this is a one-time entrance, not a repeat-on-every-scroll effect).
+function Reveal({ children, delay = 0, root }) {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) { setVisible(true); observer.disconnect(); }
+      },
+      { root, threshold: 0.15 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [root]);
+
+  return (
+    <div ref={ref} style={{
+      opacity: visible ? 1 : 0,
+      transform: visible ? 'translateY(0)' : 'translateY(28px)',
+      transition: `opacity 0.7s ease ${delay}s, transform 0.7s ease ${delay}s`,
+    }}>
+      {children}
+    </div>
   );
 }
 
@@ -102,10 +180,7 @@ function AuthCard({ apiUrl, onAuthenticated }) {
   };
 
   return (
-    <div style={{
-      flex: '0 0 340px', background: S.surface, border: `1px solid ${S.border}`,
-      borderRadius: 8, padding: '30px 28px', backdropFilter: 'blur(6px)',
-    }}>
+    <div>
       {mode !== 'forgot' && (
         <div style={{ display: 'flex', gap: 6, marginBottom: 22 }}>
           {['login', 'signup'].map(m => (
@@ -167,6 +242,51 @@ function AuthCard({ apiUrl, onAuthenticated }) {
   );
 }
 
+// Shared "space themed" card shell — gold-glow border, contained
+// starfield, used by both the auth modal and the reset-password view.
+function SpaceCard({ children, onClose }) {
+  return (
+    <div style={{
+      position: 'relative', width: 360, maxWidth: '100%', borderRadius: 10, overflow: 'hidden',
+      background: `linear-gradient(160deg, rgba(201,168,106,0.08) 0%, ${S.surface} 40%)`,
+      border: `1px solid ${S.gold}55`, boxShadow: '0 0 60px rgba(201,168,106,0.15), 0 24px 60px rgba(0,0,0,0.6)',
+    }}>
+      <div style={{ position: 'absolute', inset: 0 }}><Starfield /></div>
+      {onClose && (
+        <button onClick={onClose} aria-label="Close"
+          style={{ position: 'absolute', top: 10, right: 12, background: 'none', border: 'none', color: S.text3, fontSize: 22, lineHeight: 1, cursor: 'pointer', zIndex: 1 }}>
+          &times;
+        </button>
+      )}
+      <div style={{ position: 'relative', zIndex: 1, padding: '32px 28px' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function AuthModal({ apiUrl, onAuthenticated, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      background: 'rgba(5,7,12,0.55)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+      animation: 'vayu-modal-fade-in 0.2s ease',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{ animation: 'vayu-modal-pop-in 0.25s ease' }}>
+        <SpaceCard onClose={onClose}>
+          <AuthCard apiUrl={apiUrl} onAuthenticated={onAuthenticated} />
+        </SpaceCard>
+      </div>
+    </div>
+  );
+}
+
 function ResetPasswordCard({ apiUrl, token }) {
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState('idle');
@@ -193,7 +313,7 @@ function ResetPasswordCard({ apiUrl, token }) {
   };
 
   return (
-    <div style={{ flex: '0 0 340px', background: S.surface, border: `1px solid ${S.border}`, borderRadius: 8, padding: '30px 28px', backdropFilter: 'blur(6px)' }}>
+    <SpaceCard>
       <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 1, color: S.gold, marginBottom: 18, textTransform: 'uppercase' }}>Set New Password</div>
       {!ok ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -213,7 +333,7 @@ function ResetPasswordCard({ apiUrl, token }) {
           </button>
         </div>
       )}
-    </div>
+    </SpaceCard>
   );
 }
 
@@ -262,6 +382,7 @@ function ContactForm({ apiUrl }) {
 export default function LandingPage({ apiUrl, onAuthenticated }) {
   const [activeSection, setActiveSection] = useState('home');
   const [parallaxY, setParallaxY] = useState(0);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const sectionRefs = useRef({});
   const scrollContainerRef = useRef(null);
 
@@ -274,12 +395,6 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
   }, []);
 
   useEffect(() => {
-    // Active nav-link highlighting on scroll — vanilla IntersectionObserver,
-    // no scroll-animation library. `root` must be the actual scrolling
-    // container (see below — this page manages its own scroll, since
-    // body itself is position:fixed for the main app and can't scroll
-    // at all), not the default viewport, or intersection detection
-    // would silently never fire.
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach(entry => {
@@ -293,10 +408,6 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
   }, []);
 
   useEffect(() => {
-    // Lightweight parallax: hero background scene drifts slower than
-    // the page scroll — a plain scroll listener throttled via rAF, not
-    // a library. Listens on the scroll container itself (see above),
-    // not window — window/body never scrolls here.
     const container = scrollContainerRef.current;
     if (!container) return;
     let ticking = false;
@@ -315,28 +426,32 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
   if (resetToken) {
     return (
       <div style={{ position: 'fixed', inset: 0, background: S.bg, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Starfield />
-        <div style={{ position: 'relative', zIndex: 1 }}>
-          <ResetPasswordCard apiUrl={apiUrl} token={resetToken} />
-        </div>
+        <GlobalStyle />
+        <ResetPasswordCard apiUrl={apiUrl} token={resetToken} />
       </div>
     );
   }
 
   return (
     <div ref={scrollContainerRef} style={{ position: 'fixed', inset: 0, overflowY: 'auto', overflowX: 'hidden', background: S.bg, color: S.text, scrollBehavior: 'smooth' }}>
+      <GlobalStyle />
+
+      {authModalOpen && (
+        <AuthModal apiUrl={apiUrl} onAuthenticated={onAuthenticated} onClose={() => setAuthModalOpen(false)} />
+      )}
+
       {/* Navbar */}
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, background: 'rgba(5,7,12,0.85)', backdropFilter: 'blur(8px)', borderBottom: `1px solid ${S.border}` }}>
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ fontFamily: S.mono, fontSize: 14, letterSpacing: 3, color: S.gold, fontWeight: 700 }}>VAYU</div>
           <div style={{ display: 'flex', gap: 28, alignItems: 'center' }}>
             {SECTIONS.map(([id, label]) => (
-              <button key={id} onClick={() => scrollTo(id)}
+              <button key={id} className="vayu-nav-btn" onClick={() => scrollTo(id)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: S.mono, fontSize: 12, letterSpacing: 1.5, textTransform: 'uppercase', color: activeSection === id ? S.gold : S.text3, padding: 0 }}>
                 {label}
               </button>
             ))}
-            <button onClick={() => scrollTo('account')}
+            <button onClick={() => setAuthModalOpen(true)}
               style={{ padding: '8px 18px', fontFamily: S.mono, fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase', background: 'rgba(201,168,106,0.12)', border: `1px solid ${S.gold}`, borderRadius: 4, color: S.gold, cursor: 'pointer' }}>
               Sign In / Sign Up
             </button>
@@ -344,19 +459,19 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
         </div>
       </div>
 
-      {/* Home / Hero — real satellite/Earth photography as a full-bleed
-          cinematic backdrop, with a classic vanilla parallax (background
-          drifts+scales slower than scroll, headline fades as you scroll
-          past it) and a legibility gradient behind the overlaid copy. */}
+      {/* Home / Hero */}
       <div ref={el => sectionRefs.current.home = el} data-section="home" style={{ position: 'relative', height: '100vh', overflow: 'hidden' }}>
-        <div style={{
-          position: 'absolute', inset: 0,
-          backgroundImage: 'url(/hero-satellite.jpg)', backgroundSize: 'cover', backgroundPosition: 'center',
-          transform: `scale(${1.08 + parallaxY * 0.0003}) translateY(${parallaxY * 0.3}px)`,
-        }} />
-        {/* Legibility gradient — darkest at bottom-left where the copy
-            sits, fading out toward the upper-right where the image
-            should read clearly */}
+        {/* Scroll-driven layer (translateY only) wraps an independently
+            always-animating Ken Burns layer (CSS keyframes) — two
+            separate transform sources on two separate elements, so
+            they don't fight over the same inline style. */}
+        <div style={{ position: 'absolute', inset: 0, transform: `translateY(${parallaxY * 0.3}px)` }}>
+          <div className="vayu-hero-bg" style={{
+            position: 'absolute', inset: -24,
+            backgroundImage: 'url(/hero-satellite.jpg)', backgroundSize: 'cover', backgroundPosition: 'center',
+          }} />
+        </div>
+
         <div style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
           background: 'linear-gradient(115deg, rgba(5,7,12,0.92) 0%, rgba(5,7,12,0.72) 32%, rgba(5,7,12,0.2) 62%, rgba(5,7,12,0.05) 100%)',
@@ -380,11 +495,11 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
               intel — unified, live, and actionable.
             </div>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-              <button onClick={() => scrollTo('account')}
+              <button className="vayu-cta-primary" onClick={() => setAuthModalOpen(true)}
                 style={{ padding: '14px 32px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#05070c', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 24px rgba(201,168,106,0.3)' }}>
                 Enter Terminal
               </button>
-              <button onClick={() => scrollTo('about')}
+              <button className="vayu-cta-secondary" onClick={() => scrollTo('about')}
                 style={{ padding: '14px 28px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: 'transparent', border: `1px solid ${S.border}`, borderRadius: 4, color: S.text2, cursor: 'pointer' }}>
                 See What It Does
               </button>
@@ -400,24 +515,28 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
           <div>Scroll to explore</div>
           <div style={{ marginTop: 6, fontSize: 14 }}>&#8595;</div>
         </div>
-
-        <style>{'@keyframes vayu-landing-spin { to { transform: rotate(360deg); } }'}</style>
       </div>
 
       {/* About */}
       <div ref={el => sectionRefs.current.about = el} data-section="about" style={{ position: 'relative', padding: '100px 28px', borderTop: `1px solid ${S.border}` }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-          <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>About</div>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: 30, color: S.text, marginBottom: 40 }}>What Vayu actually does</div>
+          <Reveal root={scrollContainerRef.current}>
+            <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>About</div>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: 30, color: S.text, marginBottom: 40 }}>What Vayu actually does</div>
+          </Reveal>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 28 }}>
-            {FEATURES.map(f => (
-              <div key={f.title} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, overflow: 'hidden' }}>
-                <img src={f.img} alt={f.title} style={{ width: '100%', height: 160, objectFit: 'cover', display: 'block', borderBottom: `1px solid ${S.border}` }} />
-                <div style={{ padding: '16px 18px' }}>
-                  <div style={{ fontFamily: S.mono, fontSize: 13, color: S.gold, marginBottom: 8, letterSpacing: 0.5 }}>{f.title}</div>
-                  <div style={{ fontFamily: S.mono, fontSize: 12, color: S.text3, lineHeight: 1.6 }}>{f.desc}</div>
+            {FEATURES.map((f, i) => (
+              <Reveal key={f.title} delay={i * 0.1} root={scrollContainerRef.current}>
+                <div className="vayu-feature-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, overflow: 'hidden', height: '100%' }}>
+                  <div style={{ overflow: 'hidden' }}>
+                    <img className="vayu-feature-img" src={f.img} alt={f.title} style={{ width: '100%', height: 160, objectFit: 'cover', display: 'block', borderBottom: `1px solid ${S.border}` }} />
+                  </div>
+                  <div style={{ padding: '16px 18px' }}>
+                    <div style={{ fontFamily: S.mono, fontSize: 13, color: S.gold, marginBottom: 8, letterSpacing: 0.5 }}>{f.title}</div>
+                    <div style={{ fontFamily: S.mono, fontSize: 12, color: S.text3, lineHeight: 1.6 }}>{f.desc}</div>
+                  </div>
                 </div>
-              </div>
+              </Reveal>
             ))}
           </div>
         </div>
@@ -426,17 +545,11 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
       {/* Contact */}
       <div ref={el => sectionRefs.current.contact = el} data-section="contact" style={{ padding: '100px 28px', borderTop: `1px solid ${S.border}` }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-          <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Contact</div>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: 30, color: S.text, marginBottom: 30 }}>Get in touch</div>
-          <ContactForm apiUrl={apiUrl} />
-        </div>
-      </div>
-
-      {/* Account / Auth */}
-      <div ref={el => sectionRefs.current.account = el} data-section="account" style={{ position: 'relative', minHeight: '80vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '100px 28px', borderTop: `1px solid ${S.border}`, overflow: 'hidden' }}>
-        <Starfield />
-        <div style={{ position: 'relative', zIndex: 1 }}>
-          <AuthCard apiUrl={apiUrl} onAuthenticated={onAuthenticated} />
+          <Reveal root={scrollContainerRef.current}>
+            <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Contact</div>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: 30, color: S.text, marginBottom: 30 }}>Get in touch</div>
+            <ContactForm apiUrl={apiUrl} />
+          </Reveal>
         </div>
       </div>
     </div>
