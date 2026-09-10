@@ -4,14 +4,14 @@
  * main app. Sections (Home/About/Contact/Account) live on one page and
  * are navigated by smooth-scrolling to anchors — no router library.
  * Nav-link highlighting on scroll uses IntersectionObserver (vanilla,
- * no scroll-animation library). The hero's 3D scene is lazy-loaded
- * (see LandingHero3D.jsx) so Three.js doesn't block first paint of the
- * page shell.
+ * no scroll-animation library). The hero background is a real
+ * satellite/Earth photo with a classic vanilla parallax (drifts+scales
+ * slower than scroll, headline fades as you scroll past it) — no
+ * Three.js here at all, so this page loads instantly with zero WebGL
+ * weight.
  */
 
-import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
-
-const LandingHero3D = lazy(() => import('./LandingHero3D.jsx'));
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 const S = {
   bg: '#05070c', surface: 'rgba(13,17,23,0.82)', surface2: '#0d1117', border: '#2a3040',
@@ -344,25 +344,29 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
         </div>
       </div>
 
-      {/* Home / Hero — full-bleed 3D scene as a cinematic backdrop, text
-          overlaid on top with a gradient for legibility, rather than a
-          small 3D box squeezed beside the copy. */}
+      {/* Home / Hero — real satellite/Earth photography as a full-bleed
+          cinematic backdrop, with a classic vanilla parallax (background
+          drifts+scales slower than scroll, headline fades as you scroll
+          past it) and a legibility gradient behind the overlaid copy. */}
       <div ref={el => sectionRefs.current.home = el} data-section="home" style={{ position: 'relative', height: '100vh', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', inset: 0, transform: `scale(1.1) translateY(${parallaxY * 0.4}px)` }}>
-          <Suspense fallback={<div style={{ width: '100%', height: '100%', background: S.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ width: 30, height: 30, border: `3px solid ${S.border}`, borderTopColor: S.gold, borderRadius: '50%', animation: 'vayu-landing-spin 0.8s linear infinite' }} /></div>}>
-            <LandingHero3D />
-          </Suspense>
-        </div>
+        <div style={{
+          position: 'absolute', inset: 0,
+          backgroundImage: 'url(/hero-satellite.jpg)', backgroundSize: 'cover', backgroundPosition: 'center',
+          transform: `scale(${1.08 + parallaxY * 0.0003}) translateY(${parallaxY * 0.3}px)`,
+        }} />
         {/* Legibility gradient — darkest at bottom-left where the copy
-            sits, fading out toward the upper-right where the scene
+            sits, fading out toward the upper-right where the image
             should read clearly */}
         <div style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
-          background: 'linear-gradient(115deg, rgba(5,7,12,0.95) 0%, rgba(5,7,12,0.75) 30%, rgba(5,7,12,0.15) 60%, rgba(5,7,12,0.05) 100%)',
+          background: 'linear-gradient(115deg, rgba(5,7,12,0.92) 0%, rgba(5,7,12,0.72) 32%, rgba(5,7,12,0.2) 62%, rgba(5,7,12,0.05) 100%)',
         }} />
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(0deg, rgba(5,7,12,1) 0%, rgba(5,7,12,0) 18%)' }} />
 
-        <div style={{ position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1200, margin: '0 auto', padding: '0 28px' }}>
+        <div style={{
+          position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1200, margin: '0 auto', padding: '0 28px',
+          opacity: Math.max(0, 1 - parallaxY / 260), transform: `translateY(${parallaxY * 0.15}px)`,
+        }}>
           <div style={{ maxWidth: 560 }}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.text3, textTransform: 'uppercase', marginBottom: 16 }}>
               Geospatial &amp; Business Intelligence
@@ -388,8 +392,12 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
           </div>
         </div>
 
-        <div style={{ position: 'absolute', bottom: 26, left: '50%', transform: 'translateX(-50%)', zIndex: 1, fontFamily: S.mono, fontSize: 10, letterSpacing: 2, color: S.text3, textTransform: 'uppercase', textAlign: 'center' }}>
-          <div>Scroll — drag the scene to look around</div>
+        <div style={{
+          position: 'absolute', bottom: 26, left: '50%', transform: 'translateX(-50%)', zIndex: 1,
+          fontFamily: S.mono, fontSize: 10, letterSpacing: 2, color: S.text3, textTransform: 'uppercase', textAlign: 'center',
+          opacity: Math.max(0, 1 - parallaxY / 120),
+        }}>
+          <div>Scroll to explore</div>
           <div style={{ marginTop: 6, fontSize: 14 }}>&#8595;</div>
         </div>
 
