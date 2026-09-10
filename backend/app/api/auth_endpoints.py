@@ -3,6 +3,7 @@ auth_endpoints.py — signup/login/session-check/logout for the landing-
 page gate. See services/auth/db.py for the storage/crypto details.
 """
 
+import hmac
 import logging
 
 from fastapi import APIRouter, HTTPException, Header, Request
@@ -128,12 +129,14 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
 @limiter.limit("5/minute")
 async def contact(req: ContactRequest, request: Request):
     from ..core.config import settings
+    from ..services.messages import db as messages_db
     from ..services.reporting.email_sender import send_email
 
-    destination = settings.ADMIN_EMAIL or settings.SMTP_USER
-    if not destination:
-        raise HTTPException(status_code=503, detail="Contact form isn't configured yet.")
-
+    # Save first, unconditionally — previously this only ever emailed the
+    # message and threw it away entirely if send_email failed (which it
+    # currently does: no working email provider is configured yet). Now
+    # the message survives regardless of whether the notification email
+    # goes out, and can be read back via GET /contact/messages.
     import html as _html
     html_body = f"""
     <div style="background:#0a0c0f;padding:32px;font-family:'Courier New',monospace;color:#fff;">
@@ -144,7 +147,31 @@ async def contact(req: ContactRequest, request: Request):
       </div>
     </div>
     """
-    ok = await send_email(destination, f"VAYU contact form — {req.name}", html_body)
-    if not ok:
-        raise HTTPException(status_code=502, detail="Message could not be sent right now — please try again shortly.")
-    return {"sent": True}
+    destination = settings.ADMIN_EMAIL or settings.SMTP_USER
+    emailed = False
+    if destination:
+        emailed = await send_email(destination, f"VAYU contact form — {req.name}", html_body)
+    messages_db.save_message(req.name, req.email, req.message, emailed)
+    return {"sent": True, "emailed": emailed}
+
+
+def _require_admin(x_admin_key: str = Header(default="")):
+    from ..core.config import settings
+    if not settings.ADMIN_API_KEY or not hmac.compare_digest(x_admin_key or "", settings.ADMIN_API_KEY):
+        raise HTTPException(status_code=404)  # 404, not 401 — don't reveal the endpoint exists
+
+
+@router.get("/contact/messages", summary="[admin] List contact-form submissions")
+async def list_contact_messages(x_admin_key: str = Header(default=""), unresponded_only: bool = False):
+    _require_admin(x_admin_key)
+    from ..services.messages import db as messages_db
+    return {"messages": messages_db.list_messages(include_responded=not unresponded_only)}
+
+
+@router.post("/contact/messages/{message_id}/responded", summary="[admin] Mark a contact message as responded")
+async def mark_contact_message_responded(message_id: str, x_admin_key: str = Header(default="")):
+    _require_admin(x_admin_key)
+    from ..services.messages import db as messages_db
+    if not messages_db.mark_responded(message_id, True):
+        raise HTTPException(status_code=404, detail="No message with that id.")
+    return {"ok": True}

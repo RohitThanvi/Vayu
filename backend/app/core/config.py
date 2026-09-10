@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # SMTP_USER (mailing yourself) if unset, since there's no other safe
     # default destination without a real domain/support inbox yet.
     ADMIN_EMAIL: str = ""
+    # Shared secret for the "view contact messages" admin endpoints
+    # (X-Admin-Key header) — separate from ADMIN_EMAIL since that's just
+    # a mailbox, not a credential. Unset by default, which disables the
+    # endpoints entirely (see auth_endpoints.py) rather than leaving them
+    # open with a blank/guessable key.
+    ADMIN_API_KEY: str = ""
     FRONTEND_URL: str = "https://vayu-geop.vercel.app"
     # "HH:MM" 24h, interpreted in REPORT_TIMEZONE — see reporting/scheduler.py
     DAILY_REPORT_TIME: str = "12:00"
