@@ -21,6 +21,7 @@ Deliberately no new dependency for either password hashing or sessions:
 import hashlib
 import hmac
 import logging
+import os
 import re
 import secrets
 import sqlite3
@@ -31,7 +32,19 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).parent.parent.parent.parent / "auth.sqlite3"
+# DB_PATH_OVERRIDE / AUTH_DB_PATH lets this be pointed at a mounted
+# persistent disk (e.g. Render Disk) instead of the container's
+# ephemeral filesystem. On Render's free tier specifically, a web
+# service has NO persistent disk unless one is explicitly attached
+# (paid feature) — without it, this file (and every signup in it) is
+# wiped on every redeploy AND on every spin-down/spin-up after 15
+# minutes of inactivity, which reads exactly like "signup works, but
+# logging in with those same creds later says incorrect email or
+# password" (a fresh, empty DB — not a hashing bug). If that's what's
+# happening, the keep-alive workflow reduces how often it spins down,
+# but attaching a real persistent disk (or moving auth to a hosted DB)
+# is the actual fix.
+DB_PATH = Path(os.environ.get("AUTH_DB_PATH", str(Path(__file__).parent.parent.parent.parent / "auth.sqlite3")))
 _lock = threading.Lock()
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")

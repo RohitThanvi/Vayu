@@ -78,7 +78,14 @@ const GlobalStyle = () => (
     .vayu-feature-card:hover { border-color: #c9a86a66; box-shadow: 0 22px 50px rgba(0,0,0,0.55), 0 4px 16px rgba(201,168,106,0.12); }
     .vayu-feature-card:hover .vayu-feature-img { transform: scale(1.06); }
     .vayu-feature-img { transition: transform 0.4s ease; }
-    .vayu-nav-btn { transition: color 0.2s ease; }
+    .vayu-nav-btn { transition: color 0.2s ease; position: relative; }
+    .vayu-nav-btn::after {
+      content: ''; position: absolute; left: 0; right: 0; bottom: -6px; height: 2px;
+      background: #c9a86a; transform: scaleX(0); transform-origin: center;
+      transition: transform 0.25s ease;
+    }
+    .vayu-nav-btn:hover { color: #f5d98a !important; }
+    .vayu-nav-btn:hover::after { transform: scaleX(1); }
     .vayu-cta-primary { transition: transform 0.2s ease, box-shadow 0.2s ease; }
     .vayu-cta-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(201,168,106,0.45); }
     .vayu-cta-secondary { transition: border-color 0.2s ease, color 0.2s ease; }
@@ -504,10 +511,10 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
             <img src="/logo.png" alt="Vayu" width="20" height="20" style={{ display: 'block', filter: 'drop-shadow(0 0 4px rgba(201,168,106,0.4))' }} />
             <div style={{ fontFamily: S.mono, fontSize: 14, letterSpacing: 3, color: S.gold, fontWeight: 700 }}>VAYU</div>
           </div>
-          <div style={{ display: 'flex', gap: 28, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 32, alignItems: 'center' }}>
             {SECTIONS.map(([id, label]) => (
               <button key={id} className="vayu-nav-btn" onClick={() => scrollTo(id)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: S.mono, fontSize: 12, letterSpacing: 1.5, textTransform: 'uppercase', color: activeSection === id ? S.gold : S.text3, padding: 0 }}>
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: S.mono, fontSize: 13.5, letterSpacing: 1.5, textTransform: 'uppercase', color: activeSection === id ? S.gold : S.text3, padding: '4px 2px' }}>
                 {label}
               </button>
             ))}
@@ -564,7 +571,7 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
                 Enter Terminal
               </button>
               <button className="vayu-cta-secondary" onClick={() => scrollTo('about')}
-                style={{ padding: '14px 28px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: 'transparent', border: `1px solid ${S.border}`, borderRadius: 4, color: S.text2, cursor: 'pointer' }}>
+                style={{ padding: '14px 28px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: 'rgba(13,17,23,0.7)', backdropFilter: 'blur(4px)', border: `1px solid ${S.borderLight}`, borderRadius: 4, color: S.text, cursor: 'pointer' }}>
                 See What It Does
               </button>
             </div>
@@ -658,6 +665,19 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
             <div style={{ fontFamily: 'Georgia, serif', fontSize: 30, color: S.text, marginBottom: 30 }}>Get in touch</div>
             <ContactForm apiUrl={apiUrl} />
           </Reveal>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div style={{ borderTop: `1px solid ${S.border}`, padding: '28px 28px' }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <img src="/logo.png" alt="" width="15" height="15" style={{ display: 'block', opacity: 0.7 }} />
+            <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 1, color: S.text3 }}>
+              &copy; {new Date().getFullYear()} Rosoft. All rights reserved.
+            </div>
+          </div>
+          <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 1, color: S.text4 }}>VAYU — Geospatial &amp; Business Intelligence</div>
         </div>
       </div>
     </div>
