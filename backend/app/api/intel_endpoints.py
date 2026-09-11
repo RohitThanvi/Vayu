@@ -56,6 +56,7 @@ from ..services.intel import geo_tone as geo_tone_mod
 from ..services.intel import seismic_disruption
 from ..services.intel import macro as macro_mod
 from ..services.intel import business_risk
+from ..services.intel import strategic_sites
 from ..services.weather.wind_field import wind_field_store
 
 logger = logging.getLogger(__name__)
@@ -439,6 +440,20 @@ async def get_business_risk():
         ))
     scores.sort(key=lambda s: s["score"], reverse=True)
     return {"chokepoints": scores}
+
+
+@router.get("/strategic-sites", summary="Major ports/refineries/mines with live nearby-signal updates (earthquakes, dark vessels, news tone)")
+async def get_strategic_sites(site_type: Optional[str] = None):
+    """site_type: 'port' | 'refinery' | 'mine' | omit for all. Curated
+    list — see services/intel/strategic_sites.py. Each site's 'signals'
+    array only includes things actually happening near it right now,
+    not a global dump."""
+    if site_type and site_type not in ("port", "refinery", "mine"):
+        raise HTTPException(status_code=422, detail="site_type must be one of: port, refinery, mine")
+    usgs_events = intel_store.query(sources=["USGS"], limit=500)
+    gdelt_events = intel_store.query(sources=["GDELT"], limit=1000)
+    dark_flags = dark_vessels.list_flags()
+    return {"sites": strategic_sites.list_sites_with_signals(usgs_events, gdelt_events, dark_flags, site_type)}
 
 
 @router.get("/wind-field", summary="Animated wind vector grid (U/V components)")
