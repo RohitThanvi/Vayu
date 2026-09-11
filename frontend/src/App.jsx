@@ -1167,17 +1167,27 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
+// Which tabs each service tier can see. 'full' intentionally includes
+// everything — Analyze/Weather/Guide are common ground across tiers
+// since they're either the core flagship feature or general-purpose.
+// Adjust freely; this is a first pass, not a fixed business decision.
+const TIER_TABS = {
+  business: ['Analyze', 'Maritime', 'Weather', 'Orbital', 'Guide'],
+  agri:     ['Analyze', 'Weather', 'Agri', 'Guide'],
+  full:     ['Analyze', 'Maritime', 'Weather', 'Agri', 'Orbital', 'Guide'],
+};
+
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI, aoiRegionName,
   isLoading,error,result,jobStatus, onSubmit, vesselStats, onClose, isMobile,
   weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey, mapZoom,
   aqiOn, aqiLoading, onToggleAqi,
-  userEmail, onLogout,
+  tier, onChangeTier,
   orbitalShowSatellites, setOrbitalShowSatellites, orbitalShowAircraft, setOrbitalShowAircraft,
   orbitalSatellites, orbitalSatLoaded, orbitalSatDebug, orbitalAircraftStats, orbitalAircraftValid,
   orbitalSearch, setOrbitalSearch, orbitalFilteredList, orbitalSelected, setOrbitalSelected }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
-  const TABS = [
+  const ALL_TABS = [
     { id:'Analyze',  icon:'target' },
     { id:'Maritime', icon:'anchor' },
     { id:'Weather',  icon:'thermo' },
@@ -1185,6 +1195,8 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
     { id:'Orbital',  icon:'satellite-dish' },
     { id:'Guide',    icon:'book' },
   ];
+  const allowed = TIER_TABS[tier] || TIER_TABS.full;
+  const TABS = ALL_TABS.filter(t => allowed.includes(t.id));
   return (
     <div style={{ background:S.surface, borderRight:`1px solid ${S.border}`, display:'flex', flexDirection:'column', height:'100%', width:'100%' }}>
       <div style={{ padding:'12px 14px', borderBottom:`1px solid ${S.border}`, flexShrink:0 }}>
@@ -1396,10 +1408,10 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
           <div style={{ fontSize:14, fontFamily:S.mono, color:S.text3, letterSpacing:1 }}>
             VAYU v2.0.0
           </div>
-          {userEmail && (
-            <button onClick={onLogout} title={userEmail}
+          {tier && (
+            <button onClick={onChangeTier} title="Switch service"
               style={{ background:'none', border:'none', color:S.text3, fontFamily:S.mono, fontSize:11, letterSpacing:1, cursor:'pointer', padding:0, textTransform:'uppercase' }}>
-              Log out
+              {tier} — change
             </button>
           )}
         </div>
@@ -1448,10 +1460,13 @@ function MapOverlay({ result, isLoading, drawnAOI, isMobile }) {
 }
 
 // ── Root App ──────────────────────────────────────────────────────────────────
-export default function App({ userEmail, onLogout }) {
+export default function App({ tier = 'full', onChangeTier }) {
   const isMobile = useIsMobile();
   const [mobilePanel, setMobilePanel] = useState('map'); // 'map' | 'analyze' | 'intel'
-  const [tab, setTab]             = useState('Analyze');
+  // If the current tab isn't visible for this tier (e.g. switched from
+  // Full to Agri while on Maritime), fall back to Analyze — it's in
+  // every tier's allowed list, so it's always a safe default.
+  const [tab, setTab] = useState(() => (TIER_TABS[tier] || TIER_TABS.full).includes('Analyze') ? 'Analyze' : (TIER_TABS[tier] || TIER_TABS.full)[0]);
   const [queryText, setQueryText] = useState('');
   const [selMetric, setSelMetric] = useState(null);
   const [drawnAOI, setDrawnAOI]   = useState(null);
@@ -2139,7 +2154,7 @@ export default function App({ userEmail, onLogout }) {
       vesselStats={vesselStats}
       weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
       aqiOn={aqiOn} aqiLoading={aqiLoading} onToggleAqi={handleToggleAqi}
-      userEmail={userEmail} onLogout={onLogout}
+      tier={tier} onChangeTier={onChangeTier}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
       satelliteLoadingKey={satelliteLoadingKey} mapZoom={mapZoom}
       orbitalShowSatellites={orbitalShowSatellites} setOrbitalShowSatellites={setOrbitalShowSatellites}

@@ -1,14 +1,16 @@
 /**
  * AppGate.jsx
- * Sits in front of the main App: on load, checks localStorage for a
- * session token and verifies it against GET /auth/me. Shows
- * LandingPage until a valid session exists, then mounts the real App
- * — App.jsx itself is completely untouched by this, so none of its
- * existing hooks/effects run (and no wasted requests fire) until the
- * user is actually authenticated.
+ *
+ * MVP PIVOT: was "check a login session, show LandingPage until
+ * authenticated". Now: no accounts — LandingPage's 'Enter Terminal'
+ * opens a three-option picker (Business / Agri / Full), the choice is
+ * stored in localStorage, and App.jsx renders the panels for that tier.
+ * The original session-check flow is commented out below, not deleted
+ * — see the matching banner comments in LandingPage.jsx and
+ * auth_endpoints.py for how to restore all three together.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import App from '../App.jsx';
 import LandingPage from './LandingPage.jsx';
 
@@ -16,6 +18,35 @@ const API_URL = import.meta.env.VITE_API_URL !== undefined
   ? import.meta.env.VITE_API_URL
   : 'http://127.0.0.1:8000';
 
+const TIER_KEY = 'vayu_service_tier';
+
+export default function AppGate() {
+  const [tier, setTier] = useState(() => localStorage.getItem(TIER_KEY));
+
+  const handleSelectTier = (selected) => {
+    localStorage.setItem(TIER_KEY, selected);
+    setTier(selected);
+  };
+
+  const handleChangeTier = () => {
+    localStorage.removeItem(TIER_KEY);
+    setTier(null);
+  };
+
+  if (!tier) {
+    return <LandingPage apiUrl={API_URL} onSelectTier={handleSelectTier} />;
+  }
+
+  return <App tier={tier} onChangeTier={handleChangeTier} />;
+}
+
+// ============================================================================
+// ORIGINAL SESSION-BASED AUTH FLOW — DISABLED (commented out, not deleted).
+// To restore: swap the AppGate body above for this one, revert
+// LandingPage's onSelectTier prop back to onAuthenticated, and uncomment
+// the account endpoints in backend/app/api/auth_endpoints.py.
+// ============================================================================
+/*
 const TOKEN_KEY = 'vayu_auth_token';
 // Render's free tier cold-sleeps the backend after inactivity and can
 // take 30-50s to wake on the next request (same behavior this project
@@ -28,7 +59,7 @@ const TOKEN_KEY = 'vayu_auth_token';
 const SESSION_CHECK_TIMEOUT_MS = 45000;
 const SLOW_HINT_DELAY_MS = 4000;
 
-export default function AppGate() {
+function LegacyAppGate() {
   const [status, setStatus] = useState('checking');   // 'checking' | 'authed' | 'unauthed' | 'unreachable'
   const [userEmail, setUserEmail] = useState(null);
   const [showSlowHint, setShowSlowHint] = useState(false);
@@ -122,3 +153,4 @@ export default function AppGate() {
 
   return <App userEmail={userEmail} onLogout={handleLogout} />;
 }
+*/

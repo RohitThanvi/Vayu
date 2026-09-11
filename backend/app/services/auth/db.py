@@ -1,91 +1,126 @@
 """
 auth/db.py — user accounts + session tokens for the landing-page login
-gate. SQLite, matching this project's established pattern (agri/db.py,
-reporting/subscribers.py, intel/timeseries_store.py) — consistent, and
-genuinely sufficient for this write volume (signups/logins, not a
-high-frequency data feed).
+gate. Previously SQLite (backend/auth.sqlite3); migrated to Postgres
+(Supabase) because Render's free web service has no persistent disk —
+every restart wiped that file, which is why signup would work and a
+later login would fail with "incorrect email or password" (a real,
+freshly-empty table, not a hashing bug — the hashing/verification logic
+here is unchanged from the SQLite version, byte for byte).
 
-Deliberately no new dependency for either password hashing or sessions:
-- Passwords: PBKDF2-HMAC-SHA256 via hashlib (stdlib), 200k iterations —
-  this is what Django's own default password hasher uses under the
-  hood, not a home-rolled scheme; bcrypt/argon2 are marginally
-  stronger but pulling in a compiled dependency for that margin isn't
-  worth it at this project's scale.
-- Sessions: opaque random tokens (secrets.token_urlsafe) stored in a
-  sessions table with an expiry, checked against the DB per request —
-  not JWT. This avoids needing a signing secret to manage/rotate at
-  all, at the cost of one indexed DB lookup per authenticated request,
-  which is a non-issue at this project's traffic.
+Connects via DATABASE_URL (see core/config.py). Deliberately fails soft:
+if the DB is unreachable at startup, the pool is left as None and
+is_available() returns False — the REST OF THE APP still boots and
+serves satellite/maritime/agri/etc. normally; only the auth/contact-admin
+endpoints return a 503 instead of crashing the whole process on import.
+See auth_endpoints.py for how that 503 is surfaced.
+
+Passwords: still PBKDF2-HMAC-SHA256 via hashlib (stdlib), 200k
+iterations — same scheme as before, not something that needed changing.
+Sessions: still opaque random tokens (secrets.token_urlsafe), now in a
+Postgres table instead of a SQLite one — same design, no JWT.
+
+New in this version: `name`, `service_tier` (free/agri/business/full)
+and optional `organization`/`use_case` on signup, laying the groundwork
+for the paid-tier plan — see tier_gate.py for the (currently unattached)
+enforcement dependency other routers can opt into later.
 """
 
 import hashlib
 import hmac
 import logging
-import os
 import re
 import secrets
-import sqlite3
-import threading
-from pathlib import Path
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# DB_PATH_OVERRIDE / AUTH_DB_PATH lets this be pointed at a mounted
-# persistent disk (e.g. Render Disk) instead of the container's
-# ephemeral filesystem. On Render's free tier specifically, a web
-# service has NO persistent disk unless one is explicitly attached
-# (paid feature) — without it, this file (and every signup in it) is
-# wiped on every redeploy AND on every spin-down/spin-up after 15
-# minutes of inactivity, which reads exactly like "signup works, but
-# logging in with those same creds later says incorrect email or
-# password" (a fresh, empty DB — not a hashing bug). If that's what's
-# happening, the keep-alive workflow reduces how often it spins down,
-# but attaching a real persistent disk (or moving auth to a hosted DB)
-# is the actual fix.
-DB_PATH = Path(os.environ.get("AUTH_DB_PATH", str(Path(__file__).parent.parent.parent.parent / "auth.sqlite3")))
-_lock = threading.Lock()
-
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 SESSION_TTL_DAYS = 30
 PBKDF2_ITERATIONS = 200_000
+PASSWORD_RESET_TTL_MINUTES = 30
+
+SERVICE_TIERS = ("free", "agri", "business", "full")
+DEFAULT_TIER = "free"
+
+_pool = None
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+class AuthDBUnavailable(Exception):
+    """Raised when the Postgres pool couldn't be created (bad/missing
+    DATABASE_URL, host unreachable, etc.) — endpoints catch this and
+    return a 503 rather than letting it become an unhandled 500."""
+
+
+def _init_pool():
+    global _pool
+    from ...core.config import settings
+    if not settings.DATABASE_URL:
+        logger.warning("auth db: DATABASE_URL not set — auth endpoints will return 503 until it is.")
+        return
+    try:
+        import psycopg2.pool
+        _pool = psycopg2.pool.ThreadedConnectionPool(1, 10, dsn=settings.DATABASE_URL)
+        logger.info("auth db: connected (Postgres)")
+    except Exception as e:
+        logger.error(f"auth db: could not connect to Postgres — {type(e).__name__}: {e}")
+        _pool = None
+
+
+def is_available() -> bool:
+    return _pool is not None
+
+
+@contextmanager
+def _conn():
+    if _pool is None:
+        raise AuthDBUnavailable("Auth database is not connected.")
+    conn = _pool.getconn()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        _pool.putconn(conn)
 
 
 def init_db():
-    with _lock, _connect() as conn:
-        conn.executescript(
+    _init_pool()
+    if not is_available():
+        return
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
                 email TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                service_tier TEXT NOT NULL DEFAULT 'free',
+                organization TEXT,
+                use_case TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
             CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                expires_at TIMESTAMPTZ NOT NULL
             );
             CREATE TABLE IF NOT EXISTS password_resets (
                 token TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                used INTEGER NOT NULL DEFAULT 0
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                expires_at TIMESTAMPTZ NOT NULL,
+                used BOOLEAN NOT NULL DEFAULT false
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
             """
         )
-        conn.commit()
-    logger.info(f"auth db initialized at {DB_PATH}")
+    logger.info("auth db: schema ready")
 
 
 def is_valid_email(email: str) -> bool:
@@ -108,119 +143,117 @@ def verify_password(password: str, stored_hash: str) -> bool:
         return False
 
 
-def create_user(email: str, password: str) -> Optional[dict]:
+def create_user(name: str, email: str, password: str, service_tier: str = DEFAULT_TIER,
+                 organization: Optional[str] = None, use_case: Optional[str] = None) -> Optional[dict]:
     """Returns the new user dict, or None if the email is already taken."""
     email = email.strip().lower()
+    service_tier = service_tier if service_tier in SERVICE_TIERS else DEFAULT_TIER
     user_id = secrets.token_hex(16)
     password_hash = hash_password(password)
-    with _lock, _connect() as conn:
-        existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
-        if existing:
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+        if cur.fetchone():
             return None
-        conn.execute(
-            "INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
-            (user_id, email, password_hash, datetime.now(timezone.utc).isoformat()),
+        cur.execute(
+            "INSERT INTO users (id, name, email, password_hash, service_tier, organization, use_case, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (user_id, name.strip(), email, password_hash, service_tier,
+             (organization or "").strip() or None, (use_case or "").strip() or None,
+             datetime.now(timezone.utc)),
         )
-        conn.commit()
-    return {"id": user_id, "email": email}
+    return {"id": user_id, "name": name.strip(), "email": email, "service_tier": service_tier}
 
 
 def authenticate(email: str, password: str) -> Optional[dict]:
     email = email.strip().lower()
-    with _lock, _connect() as conn:
-        row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    if not row or not verify_password(password, row["password_hash"]):
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, name, email, password_hash, service_tier FROM users WHERE email = %s", (email,))
+        row = cur.fetchone()
+    if not row or not verify_password(password, row[3]):
         return None
-    return {"id": row["id"], "email": row["email"]}
+    return {"id": row[0], "name": row[1], "email": row[2], "service_tier": row[4]}
 
 
 def create_session(user_id: str) -> str:
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     expires = now + timedelta(days=SESSION_TTL_DAYS)
-    with _lock, _connect() as conn:
-        conn.execute(
-            "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (token, user_id, now.isoformat(), expires.isoformat()),
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (%s, %s, %s, %s)",
+            (token, user_id, now, expires),
         )
-        conn.commit()
     return token
 
 
 def get_user_for_token(token: str) -> Optional[dict]:
-    with _lock, _connect() as conn:
-        row = conn.execute(
-            "SELECT u.id, u.email, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT u.id, u.name, u.email, u.service_tier, s.expires_at "
+            "FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = %s",
             (token,),
-        ).fetchone()
-    if not row:
-        return None
-    if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
-        with _lock, _connect() as conn:
-            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
-            conn.commit()
-        return None
-    return {"id": row["id"], "email": row["email"]}
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        if row[4] < datetime.now(timezone.utc):
+            cur.execute("DELETE FROM sessions WHERE token = %s", (token,))
+            return None
+    return {"id": row[0], "name": row[1], "email": row[2], "service_tier": row[3]}
 
 
 def delete_session(token: str):
-    with _lock, _connect() as conn:
-        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
-        conn.commit()
-
-
-PASSWORD_RESET_TTL_MINUTES = 30
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM sessions WHERE token = %s", (token,))
 
 
 def get_user_by_email(email: str) -> Optional[dict]:
     email = email.strip().lower()
-    with _lock, _connect() as conn:
-        row = conn.execute("SELECT id, email FROM users WHERE email = ?", (email,)).fetchone()
-    return dict(row) if row else None
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, name, email, service_tier FROM users WHERE email = %s", (email,))
+        row = cur.fetchone()
+    return {"id": row[0], "name": row[1], "email": row[2], "service_tier": row[3]} if row else None
 
 
 def list_users(limit: int = 500) -> list[dict]:
-    """Email + created_at only — never the password hash, even for the
-    admin view."""
-    with _lock, _connect() as conn:
-        rows = conn.execute(
-            "SELECT email, created_at FROM users ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
-    return [dict(r) for r in rows]
+    """Never the password hash, even for the admin view."""
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT name, email, service_tier, organization, use_case, created_at "
+            "FROM users ORDER BY created_at DESC LIMIT %s",
+            (limit,),
+        )
+        cols = ["name", "email", "service_tier", "organization", "use_case", "created_at"]
+        rows = cur.fetchall()
+    return [dict(zip(cols, r)) for r in rows]
 
 
 def create_password_reset(user_id: str) -> str:
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     expires = now + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES)
-    with _lock, _connect() as conn:
-        conn.execute(
-            "INSERT INTO password_resets (token, user_id, created_at, expires_at, used) VALUES (?, ?, ?, ?, 0)",
-            (token, user_id, now.isoformat(), expires.isoformat()),
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO password_resets (token, user_id, created_at, expires_at, used) VALUES (%s, %s, %s, %s, false)",
+            (token, user_id, now, expires),
         )
-        conn.commit()
     return token
 
 
 def consume_password_reset(token: str, new_password: str) -> bool:
     """Validates the token (unused, unexpired), sets the new password,
     marks the token used, and invalidates every existing session for
-    that user — a password reset is a strong signal something may have
-    been compromised, so any session started before the reset (e.g. on
-    a device that isn't the one requesting the reset) shouldn't survive
-    it."""
-    with _lock, _connect() as conn:
-        row = conn.execute(
-            "SELECT user_id, expires_at, used FROM password_resets WHERE token = ?", (token,)
-        ).fetchone()
-        if not row or row["used"] or datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
+    that user."""
+    with _conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT user_id, expires_at, used FROM password_resets WHERE token = %s", (token,))
+        row = cur.fetchone()
+        if not row or row[2] or row[1] < datetime.now(timezone.utc):
             return False
-
+        user_id = row[0]
         new_hash = hash_password(new_password)
-        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_hash, row["user_id"]))
-        conn.execute("UPDATE password_resets SET used = 1 WHERE token = ?", (token,))
-        conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["user_id"],))
-        conn.commit()
+        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_hash, user_id))
+        cur.execute("UPDATE password_resets SET used = true WHERE token = %s", (token,))
+        cur.execute("DELETE FROM sessions WHERE user_id = %s", (user_id,))
     return True
 
 

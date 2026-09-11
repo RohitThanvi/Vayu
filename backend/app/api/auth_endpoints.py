@@ -16,20 +16,45 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+class ContactRequest(BaseModel):
+    name: str = Field(..., max_length=200)
+    email: str = Field(..., max_length=254)
+    message: str = Field(..., max_length=5000)
+
+
+def _require_admin(x_admin_key: str = Header(default="")):
+    from ..core.config import settings
+    if not settings.ADMIN_API_KEY or not hmac.compare_digest(x_admin_key or "", settings.ADMIN_API_KEY):
+        raise HTTPException(status_code=404)  # 404, not 401 — don't reveal the endpoint exists
+
+
+# ============================================================================
+# AUTH FRAMEWORK — DISABLED (commented out, not deleted) for the MVP pivot to
+# the three-service picker (Business / Agri / Full) instead of accounts/login.
+# Fully built and tested this session (Postgres/Supabase migration, tier field
+# on signup, session tokens) — to re-enable: uncomment this block, restore the
+# corresponding block in frontend/src/components/LandingPage.jsx and
+# AppGate.jsx, and point the frontend's 'Enter Terminal' flow back at signup/
+# login instead of the tier picker.
+#
+# NOTE: /contact and /admin/* below are UNCHANGED and still live — the contact
+# form and its SQLite storage are a separate feature from user accounts and
+# aren't affected by disabling this block. ContactRequest and _require_admin
+# were pulled above this block since /contact still needs them.
+# ============================================================================
+'''
 class SignupRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
     email: str = Field(..., max_length=254)
     password: str = Field(..., min_length=8, max_length=200)
+    service_tier: str = Field(default="free")
+    organization: str = Field(default="", max_length=200)
+    use_case: str = Field(default="", max_length=1000)
 
 
 class LoginRequest(BaseModel):
     email: str = Field(..., max_length=254)
     password: str = Field(..., max_length=200)
-
-
-class ContactRequest(BaseModel):
-    name: str = Field(..., max_length=200)
-    email: str = Field(..., max_length=254)
-    message: str = Field(..., max_length=5000)
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -43,15 +68,29 @@ class ResetPasswordRequest(BaseModel):
 
 def _auth_response(user: dict) -> dict:
     token = auth_db.create_session(user["id"])
-    return {"token": token, "email": user["email"]}
+    return {"token": token, "email": user["email"], "name": user["name"], "service_tier": user["service_tier"]}
+
+
+def _require_auth_db():
+    """Every handler below that touches auth_db goes through this try/
+    except shape — AuthDBUnavailable (DATABASE_URL unset, or Postgres
+    unreachable) becomes a clean 503 instead of an unhandled 500, and
+    the rest of the app (satellite/maritime/agri/etc.) is completely
+    unaffected either way, since this is the only place that touches
+    the auth connection."""
+    if not auth_db.is_available():
+        raise HTTPException(status_code=503, detail="Auth service is temporarily unavailable — please try again shortly.")
 
 
 @router.post("/signup", summary="Create an account")
 @limiter.limit("5/minute")
 async def signup(req: SignupRequest, request: Request):
+    _require_auth_db()
     if not auth_db.is_valid_email(req.email):
         raise HTTPException(status_code=422, detail="That doesn't look like a valid email address.")
-    user = auth_db.create_user(req.email, req.password)
+    if req.service_tier not in auth_db.SERVICE_TIERS:
+        raise HTTPException(status_code=422, detail=f"service_tier must be one of: {', '.join(auth_db.SERVICE_TIERS)}.")
+    user = auth_db.create_user(req.name, req.email, req.password, req.service_tier, req.organization, req.use_case)
     if not user:
         raise HTTPException(status_code=409, detail="An account with this email already exists.")
     return _auth_response(user)
@@ -60,6 +99,7 @@ async def signup(req: SignupRequest, request: Request):
 @router.post("/login", summary="Log in")
 @limiter.limit("10/minute")
 async def login(req: LoginRequest, request: Request):
+    _require_auth_db()
     user = auth_db.authenticate(req.email, req.password)
     if not user:
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
@@ -68,17 +108,20 @@ async def login(req: LoginRequest, request: Request):
 
 @router.get("/me", summary="Check the current session")
 async def me(authorization: str = Header(default="")):
+    _require_auth_db()
     token = authorization.replace("Bearer ", "").strip()
     if not token:
         raise HTTPException(status_code=401, detail="Not logged in.")
     user = auth_db.get_user_for_token(token)
     if not user:
         raise HTTPException(status_code=401, detail="Session expired or invalid.")
-    return {"email": user["email"]}
+    return {"email": user["email"], "name": user["name"], "service_tier": user["service_tier"]}
 
 
 @router.post("/logout", summary="Log out")
 async def logout(authorization: str = Header(default="")):
+    if not auth_db.is_available():
+        return {"logged_out": True}  # nothing to delete server-side; frontend clears its token regardless
     token = authorization.replace("Bearer ", "").strip()
     if token:
         auth_db.delete_session(token)
@@ -88,6 +131,7 @@ async def logout(authorization: str = Header(default="")):
 @router.post("/forgot-password", summary="Request a password reset email")
 @limiter.limit("3/minute")
 async def forgot_password(req: ForgotPasswordRequest, request: Request):
+    _require_auth_db()
     from ..core.config import settings
     from ..services.reporting.email_sender import send_email
 
@@ -125,6 +169,9 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
     return {"reset": True}
 
 
+'''
+
+
 @router.post("/contact", summary="Landing page contact form")
 @limiter.limit("5/minute")
 async def contact(req: ContactRequest, request: Request):
@@ -155,16 +202,11 @@ async def contact(req: ContactRequest, request: Request):
     return {"sent": True, "emailed": emailed}
 
 
-def _require_admin(x_admin_key: str = Header(default="")):
-    from ..core.config import settings
-    if not settings.ADMIN_API_KEY or not hmac.compare_digest(x_admin_key or "", settings.ADMIN_API_KEY):
-        raise HTTPException(status_code=404)  # 404, not 401 — don't reveal the endpoint exists
-
-
-@router.get("/admin/users", summary="[admin] List registered users (email + signup date only)")
+@router.get("/admin/users", summary="[admin] DISABLED — depends on the commented-out account system above")
 async def list_users(x_admin_key: str = Header(default="")):
-    _require_admin(x_admin_key)
-    return {"users": auth_db.list_users()}
+    raise HTTPException(status_code=404)
+    # _require_admin(x_admin_key)          # restore this body when the
+    # return {"users": auth_db.list_users()}  # auth block above is re-enabled
 
 
 @router.get("/contact/messages", summary="[admin] List contact-form submissions")
