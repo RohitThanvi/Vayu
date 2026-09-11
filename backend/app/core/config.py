@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     # startup — safe to remove from Render whenever convenient.
     ALPHAVANTAGE_API_KEY: str = ""
 
+    # services/intel/macro.py — free, registered at
+    # https://fredaccount.stlouisfed.org/apikeys. Optional: macro.py
+    # degrades to World-Bank-only data if this is unset, it doesn't error.
+    FRED_API_KEY: str = ""
+
     # Job TTL
     JOB_TTL_SECONDS: int = 3600
 

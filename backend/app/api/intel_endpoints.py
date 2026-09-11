@@ -43,12 +43,19 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, HTTPExcept
 
 from ..services.intel.store import intel_store
 from ..services.intel.scheduler import get_scheduler
-from ..services.intel.vessel_store import vessel_store, CATEGORY_LABELS
+from ..services.intel.vessel_store import vessel_store, CATEGORY_LABELS, CHOKEPOINTS
 from ..services.intel.aircraft_store import aircraft_store
 from ..services.intel import satellite_tle
 from ..services.intel import commodity_prices
 from ..services.intel import air_quality
 from ..services.intel import supply_chain
+from ..services.intel import dark_vessels
+from ..services.intel import edgar_exposure
+from ..services.intel import sanctions
+from ..services.intel import geo_tone as geo_tone_mod
+from ..services.intel import seismic_disruption
+from ..services.intel import macro as macro_mod
+from ..services.intel import business_risk
 from ..services.weather.wind_field import wind_field_store
 
 logger = logging.getLogger(__name__)
@@ -370,6 +377,68 @@ async def get_supply_chain_correlation():
     'insufficient_history' is expected for the first ~2 days after this
     feature ships — baselines need real history to accumulate."""
     return supply_chain.get_supply_chain_correlation()
+
+
+# ── New business-intelligence features (all free/open data sources) ────────
+
+@router.get("/edgar-exposure/{chokepoint}", summary="Recent SEC filings mentioning a chokepoint (SEC EDGAR full-text search)")
+async def get_edgar_exposure(chokepoint: str, days_back: int = 14):
+    """Which public companies have recently disclosed exposure (in an
+    8-K/10-K/10-Q) to a given monitored chokepoint — e.g. 'strait_of_hormuz'.
+    Free, no API key; see services/intel/edgar_exposure.py."""
+    if chokepoint not in CHOKEPOINTS:
+        raise HTTPException(status_code=404, detail=f"Unknown chokepoint. Valid: {list(CHOKEPOINTS)}")
+    return await edgar_exposure.exposure_for_chokepoint(chokepoint, days_back=days_back)
+
+
+@router.get("/dark-vessels", summary="Vessels that went dark (AIS gap) near a chokepoint and reappeared elsewhere")
+async def get_dark_vessels():
+    """Pure logic on the AIS stream already tracked — no new data
+    source. See services/intel/dark_vessels.py for the detection
+    method and its false-positive guard."""
+    return {"flags": dark_vessels.list_flags(), "stats": dark_vessels.get_stats()}
+
+
+@router.get("/sanctions-screen", summary="Currently tracked vessels matched against the OFAC SDN list")
+async def get_sanctions_screen():
+    """Name-match only (see services/intel/sanctions.py for why, and
+    why that's a real limitation to read match_confidence against)."""
+    all_vessels = vessel_store.query(limit=5000)
+    hits = await sanctions.screen_vessels(all_vessels)
+    return {"hits": hits, "list_status": sanctions.get_list_status()}
+
+
+@router.get("/geo-tone", summary="GDELT regional sentiment, aggregated from already-tracked events into grid cells")
+async def get_geo_tone():
+    gdelt_events = intel_store.query(sources=["GDELT"], limit=1000)
+    return {"regions": geo_tone_mod.compute_tone_regions(gdelt_events)}
+
+
+@router.get("/seismic-disruption", summary="Recent earthquakes near a monitored chokepoint")
+async def get_seismic_disruption(min_magnitude: float = 5.0):
+    usgs_events = intel_store.query(sources=["USGS"], limit=500)
+    return {"disruptions": seismic_disruption.find_disruptions(usgs_events, min_magnitude=min_magnitude)}
+
+
+@router.get("/macro", summary="Free macro-economic context (FRED + World Bank)")
+async def get_macro():
+    return await macro_mod.get_macro_snapshot()
+
+
+@router.get("/business-risk", summary="Unified 0-100 risk score per chokepoint, blending traffic/tone/seismic/sanctions")
+async def get_business_risk():
+    """See services/intel/business_risk.py for the exact weights —
+    deliberately simple/auditable rather than an opaque model."""
+    gdelt_events = intel_store.query(sources=["GDELT"], limit=1000)
+    usgs_events = intel_store.query(sources=["USGS"], limit=500)
+    scores = []
+    for cp_id, ((min_lat, min_lon), (max_lat, max_lon)) in CHOKEPOINTS.items():
+        vessels_in_area = vessel_store.query(bbox=(min_lat, min_lon, max_lat, max_lon))
+        scores.append(await business_risk.score_chokepoint(
+            cp_id, len(vessels_in_area), gdelt_events, usgs_events, vessels_in_area,
+        ))
+    scores.sort(key=lambda s: s["score"], reverse=True)
+    return {"chokepoints": scores}
 
 
 @router.get("/wind-field", summary="Animated wind vector grid (U/V components)")
