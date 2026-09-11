@@ -207,7 +207,7 @@ async def ask(question: str, region_context: Optional[str] = None) -> Dict[str, 
     answer, then fall back to search -> ground an LLM answer in the
     results -> return a structured answer (one or more candidate places)
     for the frontend to geocode and draw."""
-    live_answer = data_router.try_answer_from_live_data(question)
+    live_answer = await data_router.try_answer_from_live_data(question)
     if live_answer is not None:
         live_answer["search_results_used"] = 0
         return live_answer
