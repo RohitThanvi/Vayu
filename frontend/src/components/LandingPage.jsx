@@ -26,6 +26,11 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+// Account system (signup/login/password-reset) is disabled for the MVP
+// tier-picker pivot — see banner comments below and in AppGate.jsx /
+// auth_endpoints.py. Flip this to restore the reset-password link flow.
+const RESET_PASSWORD_ENABLED = false;
+
 const S = {
   bg: '#05070c', surface: 'rgba(13,17,23,0.88)', surface2: '#0d1117', surface3: '#111826', border: '#2a3040', borderLight: '#3a4257',
   // Bumped from 0.5/0.75 — the old text3 sat around ~5:1 contrast on this
@@ -92,6 +97,8 @@ const GlobalStyle = () => (
     .vayu-cta-secondary:hover { border-color: #c9a86a; color: #f5d98a; }
     .vayu-stat-card { transition: border-color 0.25s ease, transform 0.25s ease; }
     .vayu-stat-card:hover { border-color: #c9a86a55; transform: translateY(-3px); }
+    .vayu-tier-option { transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease; }
+    .vayu-tier-option:hover { border-color: #c9a86a99; background: rgba(201,168,106,0.08); transform: translateY(-3px); }
     .vayu-flow-node { transition: opacity 0.4s ease; }
     input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.4); }
   `}</style>
@@ -166,6 +173,12 @@ function Reveal({ children, delay = 0, root }) {
   );
 }
 
+// ============================================================================
+// PasswordField + AuthCard — DISABLED (commented out, not deleted) for the MVP
+// pivot to the three-service picker. See TierPickerModal below for the
+// replacement flow, and the matching backend banner in auth_endpoints.py.
+// ============================================================================
+/*
 function PasswordField({ label, value, onChange, onEnter }) {
   const [visible, setVisible] = useState(false);
   return (
@@ -296,6 +309,8 @@ function AuthCard({ apiUrl, onAuthenticated }) {
 // wrapper (zIndex 2 vs 1) — previously they were both zIndex:1, so the
 // content div (later in DOM, same z-index) silently ate every click on
 // the × since equal z-index falls back to DOM order.
+*/
+
 function SpaceCard({ children, onClose }) {
   const { ref: cardRef, tilt, onMouseMove, onMouseLeave } = useTilt(4);
 
@@ -329,6 +344,74 @@ function SpaceCard({ children, onClose }) {
   );
 }
 
+const SERVICE_OPTIONS = [
+  {
+    id: 'business', label: 'Vayu Business', tagline: 'Markets & global movement',
+    desc: 'Maritime & aviation tracking, commodity prices, orbital view, satellite analysis.',
+    icon: 'M3 3v18h18M7 15l4-6 4 4 5-9',
+  },
+  {
+    id: 'agri', label: 'Vayu Agri', tagline: 'Land, water & yield risk',
+    desc: 'Drought dashboard, mandi prices, air quality, agri watchlist, satellite analysis.',
+    icon: 'M12 22s8-6.5 8-13a8 8 0 10-16 0c0 6.5 8 13 8 13z',
+  },
+  {
+    id: 'full', label: 'Full Terminal', tagline: 'Everything, unified',
+    desc: 'Every panel — Business and Agri combined, nothing hidden.',
+    icon: 'M4 4h16v16H4zM4 12h16M12 4v16',
+  },
+];
+
+// Replaces AuthModal for the MVP: no login, just pick which slice of
+// the terminal to enter. Reuses SpaceCard for the same satellite-photo/
+// blur/3D-tilt shell the auth modal had, so the visual language stays
+// consistent even though there's no form anymore.
+function TierPickerModal({ onSelect, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      background: 'rgba(5,7,12,0.55)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+      animation: 'vayu-modal-fade-in 0.2s ease',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{ animation: 'vayu-modal-pop-in 0.25s ease', width: 640, maxWidth: '100%' }}>
+        <SpaceCard onClose={onClose}>
+          <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 6, textAlign: 'center' }}>
+            Choose your terminal
+          </div>
+          <div style={{ fontFamily: 'Georgia, serif', fontSize: 20, color: S.text, marginBottom: 22, textAlign: 'center' }}>
+            Which slice of Vayu do you need?
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
+            {SERVICE_OPTIONS.map((opt) => (
+              <button key={opt.id} onClick={() => onSelect(opt.id)} className="vayu-tier-option" style={{
+                textAlign: 'left', cursor: 'pointer', background: 'rgba(13,17,23,0.7)', border: `1px solid ${S.border}`,
+                borderRadius: 8, padding: '16px 14px', color: S.text, fontFamily: S.mono,
+              }}>
+                <Icon path={opt.icon} size={20} />
+                <div style={{ fontSize: 13.5, color: S.goldBright, marginTop: 10, marginBottom: 4, letterSpacing: 0.3 }}>{opt.label}</div>
+                <div style={{ fontSize: 10.5, color: S.text3, letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 8 }}>{opt.tagline}</div>
+                <div style={{ fontSize: 11.5, color: S.text2, lineHeight: 1.55 }}>{opt.desc}</div>
+              </button>
+            ))}
+          </div>
+        </SpaceCard>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// AuthModal + ResetPasswordCard — DISABLED (commented out, not deleted), same
+// reason as PasswordField/AuthCard above. SpaceCard (just above this block) is
+// kept active — it's reused as the shell for TierPickerModal.
+// ============================================================================
+/*
 function AuthModal({ apiUrl, onAuthenticated, onClose }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -401,6 +484,8 @@ function ResetPasswordCard({ apiUrl, token }) {
   );
 }
 
+*/
+
 function ContactForm({ apiUrl }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -443,16 +528,18 @@ function ContactForm({ apiUrl }) {
   );
 }
 
-export default function LandingPage({ apiUrl, onAuthenticated }) {
+export default function LandingPage({ apiUrl, onSelectTier }) {
   const [activeSection, setActiveSection] = useState('home');
   const [parallaxY, setParallaxY] = useState(0);
-  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [tierModalOpen, setTierModalOpen] = useState(false);
   const sectionRefs = useRef({});
   const scrollContainerRef = useRef(null);
 
-  // Reset-password mode: a link from the reset email lands here with
-  // ?reset_token=... in the URL.
-  const resetToken = new URLSearchParams(window.location.search).get('reset_token');
+  // Reset-password mode disabled along with the rest of the account
+  // system — see the AuthModal/ResetPasswordCard block above. Flip
+  // RESET_PASSWORD_ENABLED to restore (kept as a named flag rather than
+  // an inline literal so the disable/enable is a one-line, obvious diff).
+  const resetToken = RESET_PASSWORD_ENABLED && new URLSearchParams(window.location.search).get('reset_token');
 
   const scrollTo = useCallback((id) => {
     sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -500,8 +587,8 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
     <div ref={scrollContainerRef} style={{ position: 'fixed', inset: 0, overflowY: 'auto', overflowX: 'hidden', background: S.bg, color: S.text, scrollBehavior: 'smooth' }}>
       <GlobalStyle />
 
-      {authModalOpen && (
-        <AuthModal apiUrl={apiUrl} onAuthenticated={onAuthenticated} onClose={() => setAuthModalOpen(false)} />
+      {tierModalOpen && (
+        <TierPickerModal onSelect={(tier) => { setTierModalOpen(false); onSelectTier(tier); }} onClose={() => setTierModalOpen(false)} />
       )}
 
       {/* Navbar */}
@@ -518,9 +605,11 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
                 {label}
               </button>
             ))}
-            <button onClick={() => setAuthModalOpen(true)}
+            {/* Sign In / Sign Up nav button disabled along with the rest
+                of the account system — see banner comments above. */}
+            <button onClick={() => setTierModalOpen(true)}
               style={{ padding: '8px 18px', fontFamily: S.mono, fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase', background: 'rgba(201,168,106,0.12)', border: `1px solid ${S.gold}`, borderRadius: 4, color: S.gold, cursor: 'pointer' }}>
-              Sign In / Sign Up
+              Enter Terminal
             </button>
           </div>
         </div>
@@ -566,7 +655,7 @@ export default function LandingPage({ apiUrl, onAuthenticated }) {
               intel — unified, live, and actionable.
             </div>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-              <button className="vayu-cta-primary" onClick={() => setAuthModalOpen(true)}
+              <button className="vayu-cta-primary" onClick={() => setTierModalOpen(true)}
                 style={{ padding: '14px 32px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#05070c', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 24px rgba(201,168,106,0.3)' }}>
                 Enter Terminal
               </button>

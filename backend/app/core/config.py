@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     # endpoints entirely (see auth_endpoints.py) rather than leaving them
     # open with a blank/guessable key.
     ADMIN_API_KEY: str = ""
+    # Postgres connection string (Supabase) for the auth (and, going
+    # forward, other) tables — see services/auth/db.py. The contact-form
+    # messages table deliberately stays on local SQLite (messages.sqlite3),
+    # per explicit decision — it's lower-stakes, append-only data, no
+    # need to add it to the migration.
+    DATABASE_URL: str = ""
     FRONTEND_URL: str = "https://vayu-geop.vercel.app"
     # "HH:MM" 24h, interpreted in REPORT_TIMEZONE — see reporting/scheduler.py
     DAILY_REPORT_TIME: str = "12:00"
