@@ -160,7 +160,13 @@ class VesselStore:
                 )
 
             self._consecutive_shrinks = 0
+            old_vessels = self._vessels
             self._vessels = {v["mmsi"]: v for v in vessels if "mmsi" in v}
+            try:
+                from . import dark_vessels
+                dark_vessels.process_snapshot(old_vessels, self._vessels)
+            except Exception as e:
+                logger.error(f"dark_vessels hook failed (non-fatal): {type(e).__name__}: {e}")
 
     def query(
         self,
