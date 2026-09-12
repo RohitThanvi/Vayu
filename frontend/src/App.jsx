@@ -3,6 +3,7 @@ import { Analytics } from '@vercel/analytics/react';
 import IntelPanel from './components/IntelPanel';
 import CommodityTicker from './components/CommodityTicker';
 import SupplyChainStatus from './components/SupplyChainStatus';
+import BusinessIntelPanel from './components/BusinessIntelPanel';
 import SubscribeWidget from './components/SubscribeWidget';
 import ErrorBoundary from './components/ErrorBoundary';
 import AgriPanel from './components/AgriPanel';
@@ -13,6 +14,7 @@ import DroughtDashboard from './components/DroughtDashboard';
 // the first time someone actually opens that tab.
 const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
 import { useVesselTracker } from './hooks/useVesselTracker';
+import { useStrategicSites } from './hooks/useStrategicSites';
 import { useSatelliteTracker } from './hooks/useSatelliteTracker';
 import { useAircraftTracker } from './hooks/useAircraftTracker';
 
@@ -459,6 +461,52 @@ function createVesselMarker(vessel) {
   return L.marker([vessel.lat, vessel.lon], { icon, zIndexOffset: 50 });
 }
 
+// ── Strategic site marker — port/refinery/mine, small diamond glyph, ───────
+// color + letter distinguish type; a filled dot appended if it has live
+// signals right now (earthquake/dark-vessel/tone) so a glance at the map
+// already shows which sites have something going on, not just where they are.
+const SITE_STYLE = {
+  port:     { color: '#7eb8d4', label: 'P' },
+  refinery: { color: '#e08a3c', label: 'R' },
+  mine:     { color: '#a97fd4', label: 'M' },
+};
+function createSiteMarker(site) {
+  const s = SITE_STYLE[site.type] || SITE_STYLE.port;
+  const hasSignals = (site.signals || []).length > 0;
+  const worst = hasSignals ? site.signals.some(sig => sig.severity === 'critical') : false;
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="position:relative; width:16px; height:16px;">
+      <div style="
+        width:14px; height:14px; transform:rotate(45deg);
+        background:${s.color}33; border:1.5px solid ${s.color};
+        display:flex; align-items:center; justify-content:center;
+      "></div>
+      <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+        font-family:'JetBrains Mono',monospace; font-size:8px; font-weight:700; color:${s.color};">${s.label}</div>
+      ${hasSignals ? `<div style="position:absolute; top:-3px; right:-3px; width:7px; height:7px; border-radius:50%;
+        background:${worst ? '#e05c5c' : '#e0c23c'}; border:1px solid #05070c;"></div>` : ''}
+    </div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
+  const signalsHtml = (site.signals || []).length
+    ? `<div style="margin-top:6px; padding-top:6px; border-top:1px solid #2a3040;">` +
+      site.signals.map(sig => `<div style="font-size:11px; color:${sig.severity === 'critical' ? '#e05c5c' : '#e0c23c'}; margin-bottom:2px;">${sig.note}</div>`).join('') +
+      `</div>`
+    : '';
+  const marker = L.marker([site.lat, site.lon], { icon, zIndexOffset: 40 });
+  marker.bindPopup(`
+    <div style="font-family:'JetBrains Mono',monospace; min-width:180px;">
+      <div style="font-size:12px; font-weight:700; color:#f5f0e8; margin-bottom:2px;">${site.name}</div>
+      <div style="font-size:10px; text-transform:uppercase; letter-spacing:1px; color:${s.color}; margin-bottom:6px;">${site.type}</div>
+      <div style="font-size:11px; color:#c7d0da; line-height:1.4;">${site.note}</div>
+      ${signalsHtml}
+    </div>
+  `);
+  return marker;
+}
+
 // ── Weather overlay toggles — click a button, that layer switches on/off ────
 function WeatherLayerToggles({ active, onToggle }) {
   return (
@@ -673,7 +721,7 @@ function OrbitalSidebarPanel({
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────────
-function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, onZoomChange }) {
+function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, sitesLayerRef, onZoomChange }) {
   const divRef = useRef(null);
   useEffect(() => {
     if (mapRef.current) return;
@@ -727,6 +775,12 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     // Vessel markers layer group (maritime/logistics tracking)
     const vg = L.layerGroup().addTo(map);
     vesselLayerRef.current = vg;
+
+    // Strategic sites layer group (ports/refineries/mines) — created
+    // but NOT added to the map by default; the Maritime tab's toggle
+    // adds/removes it, same as the AQI/satellite layer toggles.
+    const sg = L.layerGroup();
+    sitesLayerRef.current = sg;
 
     const dg = new L.FeatureGroup(); map.addLayer(dg); drawGroupRef.current = dg;
     const dc = new L.Control.Draw({
@@ -1181,6 +1235,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
   isLoading,error,result,jobStatus, onSubmit, vesselStats, onClose, isMobile,
   weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey, mapZoom,
   aqiOn, aqiLoading, onToggleAqi,
+  sitesOn, onToggleSites,
   tier, onChangeTier,
   orbitalShowSatellites, setOrbitalShowSatellites, orbitalShowAircraft, setOrbitalShowAircraft,
   orbitalSatellites, orbitalSatLoaded, orbitalSatDebug, orbitalAircraftStats, orbitalAircraftValid,
@@ -1313,10 +1368,32 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             </div>
 
             <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:12 }}>
+              <label style={{ display:'flex', alignItems:'center', gap:9, cursor:'pointer', fontSize:13, color:S.text2 }}>
+                <input type="checkbox" checked={sitesOn} onChange={onToggleSites} style={{ accentColor: S.accent }} />
+                Show strategic sites (ports, refineries, mines)
+              </label>
+              {sitesOn && (
+                <div style={{ display:'flex', gap:12, marginTop:8, fontSize:11, color:S.text3 }}>
+                  <span><span style={{ color:'#7eb8d4' }}>◆</span> Port</span>
+                  <span><span style={{ color:'#e08a3c' }}>◆</span> Refinery</span>
+                  <span><span style={{ color:'#a97fd4' }}>◆</span> Mine</span>
+                  <span><span style={{ color:'#e0c23c' }}>●</span> Active signal</span>
+                </div>
+              )}
+            </div>
+
+            <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:12 }}>
               <div style={{ fontSize:13, fontFamily:S.mono, color:S.accent, letterSpacing:1.5, marginBottom:8, textTransform:'uppercase' }}>
                 Chokepoint status
               </div>
               <SupplyChainStatus apiUrl={apiUrl} />
+            </div>
+
+            <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:12 }}>
+              <div style={{ fontSize:13, fontFamily:S.mono, color:S.accent, letterSpacing:1.5, marginBottom:8, textTransform:'uppercase' }}>
+                Business intelligence
+              </div>
+              <BusinessIntelPanel apiUrl={apiUrl} />
             </div>
 
             {(!vesselStats || vesselStats.active_vessels === 0) && (
@@ -1492,6 +1569,7 @@ export default function App({ tier = 'full', onChangeTier }) {
   const [mapZoom, setMapZoom] = useState(null);
   const [aqiOn, setAqiOn] = useState(false);
   const [aqiLoading, setAqiLoading] = useState(false);
+  const [sitesOn, setSitesOn] = useState(false);
 
   const mapRef          = useRef(null);
   const drawGroupRef    = useRef(null);
@@ -1506,11 +1584,13 @@ export default function App({ tier = 'full', onChangeTier }) {
   const intelOrderRef   = useRef([]);     // ids in insertion order, oldest first — for eviction
   const vesselLayerRef  = useRef(null);   // LayerGroup for vessel markers
   const vesselMarkersRef = useRef({});    // mmsi -> marker
+  const sitesLayerRef   = useRef(null);   // LayerGroup for strategic-site markers (ports/refineries/mines)
   const vesselTrailsRef = useRef({});     // mmsi -> { points:[[lat,lon],...], polyline }
   const vesselPredictedRef = useRef({});  // mmsi -> { polyline, tipMarker } — forecast dead-reckoning track
 
   // Live maritime vessel tracking (AIS via aisstream.io)
   const { vessels, stats: vesselStats } = useVesselTracker(API_URL, true);
+  const { sites: strategicSites } = useStrategicSites(API_URL, sitesOn);
 
   // Aircraft and satellites are NOT on the 2D map at all — they only live
   // in the Orbital tab (3D globe + left sidebar list/detail view), since a
@@ -1771,6 +1851,23 @@ export default function App({ tier = 'full', onChangeTier }) {
       }
     });
   }, [vessels]);
+
+  // ── Strategic sites layer (ports/refineries/mines) — toggled on/off, ───────
+  // simple full-redraw on data change since this is a small, slow-moving
+  // dataset (unlike vessels, no need for the diff/trail/forecast machinery above).
+  useEffect(() => {
+    if (!sitesLayerRef.current || !mapRef.current) return;
+    const layer = sitesLayerRef.current;
+    layer.clearLayers();
+    if (!sitesOn) {
+      if (mapRef.current.hasLayer(layer)) mapRef.current.removeLayer(layer);
+      return;
+    }
+    if (!mapRef.current.hasLayer(layer)) layer.addTo(mapRef.current);
+    strategicSites.forEach(site => {
+      try { layer.addLayer(createSiteMarker(site)); } catch { /* skip malformed site data rather than fail the whole layer */ }
+    });
+  }, [sitesOn, strategicSites]);
 
   // ── Handle click on feed item: fly map + highlight marker ──────────────────
   // ── Toggle a weather overlay on/off — each layer is independent ────────────
@@ -2154,6 +2251,7 @@ export default function App({ tier = 'full', onChangeTier }) {
       vesselStats={vesselStats}
       weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
       aqiOn={aqiOn} aqiLoading={aqiLoading} onToggleAqi={handleToggleAqi}
+      sitesOn={sitesOn} onToggleSites={() => setSitesOn(s => !s)}
       tier={tier} onChangeTier={onChangeTier}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
       satelliteLoadingKey={satelliteLoadingKey} mapZoom={mapZoom}
@@ -2188,7 +2286,7 @@ export default function App({ tier = 'full', onChangeTier }) {
     : intelPanelEl;
 
   const mapEl = (
-    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} onZoomChange={setMapZoom} />
+    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} sitesLayerRef={sitesLayerRef} onZoomChange={setMapZoom} />
   );
 
   // Single tree for both layouts — the map element's position/type never changes
