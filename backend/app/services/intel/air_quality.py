@@ -108,22 +108,49 @@ async def refresh(api_key: str, force: bool = False, limit: int = 3000) -> int:
     # real data beats none.
     attempts = [(limit, 60), (min(limit, 1000), 45)]
     last_exc = None
+    last_error_detail = None
     for attempt_limit, attempt_timeout in attempts:
         params["limit"] = attempt_limit
         t0 = time.time()
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(AQI_API_URL, params=params, timeout=attempt_timeout)
+                # data.gov.in's own quirk (not an httpx thing): an invalid/
+                # not-yet-activated key, or a wrong resource id, very often
+                # comes back as a plain HTTP 200 with a JSON body like
+                # {"message": "Invalid api key..."} and NO "records" key —
+                # raise_for_status() below only checks the HTTP status code,
+                # so this sailed straight through it before, landed on
+                # `records = data.get("records", [])` = [], and got logged
+                # as an uninformative "0 records" with no hint it was
+                # actually an auth/config problem, not a real empty result.
                 resp.raise_for_status()
                 data = resp.json()
+                if "records" not in data:
+                    last_error_detail = data.get("message") or data.get("error") or str(data)[:300]
+                    raise ValueError(f"data.gov.in returned no 'records' key — {last_error_detail}")
             logger.info(f"Air quality: fetched limit={attempt_limit} in {time.time()-t0:.1f}s")
             break
         except Exception as e:
             last_exc = e
-            logger.warning(f"Air quality fetch attempt (limit={attempt_limit}, timeout={attempt_timeout}s) failed after {time.time()-t0:.1f}s: {type(e).__name__}: {e}")
+            # httpx.HTTPStatusError's own message is just the status code/
+            # reason phrase — it does NOT include the response body, which
+            # is exactly where data.gov.in puts the actually-useful reason.
+            # Capture it explicitly here so it isn't silently dropped.
+            body_snippet = ""
+            resp_obj = getattr(e, "response", None)
+            if resp_obj is not None:
+                try:
+                    body_snippet = f" — body: {resp_obj.text[:300]}"
+                except Exception:
+                    pass
+            logger.warning(f"Air quality fetch attempt (limit={attempt_limit}, timeout={attempt_timeout}s) failed after {time.time()-t0:.1f}s: {type(e).__name__}: {e}{body_snippet}")
+            if body_snippet:
+                last_error_detail = body_snippet.lstrip(" —").strip()
     else:
         with _lock:
-            _cache["last_error"] = f"{type(last_exc).__name__}: {last_exc}"
+            extra = f" ({last_error_detail})" if last_error_detail and last_error_detail not in str(last_exc) else ""
+            _cache["last_error"] = f"{type(last_exc).__name__}: {last_exc}{extra}"
         return len(_cache["stations"])
 
     records = data.get("records", [])

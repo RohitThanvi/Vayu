@@ -57,9 +57,25 @@ async def get_mandi_prices(commodity: Optional[str] = None, state: Optional[str]
             resp = await client.get(BASE_URL, params=params)
             resp.raise_for_status()
             data = resp.json()
+            if "records" not in data:
+                # Same data.gov.in quirk as air_quality.py: an invalid/
+                # not-yet-activated key or wrong resource id often comes
+                # back as HTTP 200 with a {"message": "..."} body and no
+                # "records" key, which raise_for_status() can't catch since
+                # it only looks at the status code.
+                detail = data.get("message") or data.get("error") or str(data)[:300]
+                raise ValueError(f"data.gov.in returned no 'records' key — {detail}")
     except Exception as e:
-        logger.warning(f"mandi price fetch failed: {type(e).__name__}: {e}")
-        return {"records": [], "error": f"{type(e).__name__}: {e}" if str(e) else type(e).__name__, "source": "data.gov.in Agmarknet"}
+        body_snippet = ""
+        resp_obj = getattr(e, "response", None)
+        if resp_obj is not None:
+            try:
+                body_snippet = f" — body: {resp_obj.text[:300]}"
+            except Exception:
+                pass
+        logger.warning(f"mandi price fetch failed: {type(e).__name__}: {e}{body_snippet}")
+        detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        return {"records": [], "error": detail + body_snippet, "source": "data.gov.in Agmarknet"}
 
     records = data.get("records", [])
     parsed = [
