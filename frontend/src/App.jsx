@@ -766,7 +766,7 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     vesselLayerRef.current = vg;
 
     // Strategic sites layer group (ports/refineries/mines) — created
-    // but NOT added to the map by default; the Maritime tab's toggle
+    // but NOT added to the map by default; the Business tab's toggle
     // adds/removes it, same as the AQI/satellite layer toggles.
     const sg = L.layerGroup();
     sitesLayerRef.current = sg;
@@ -1215,9 +1215,9 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
 // since they're either the core flagship feature or general-purpose.
 // Adjust freely; this is a first pass, not a fixed business decision.
 const TIER_TABS = {
-  business: ['Analyze', 'Maritime', 'Weather', 'Orbital', 'Guide'],
+  business: ['Analyze', 'Business', 'Weather', 'Orbital', 'Guide'],
   agri:     ['Analyze', 'Weather', 'Agri', 'Guide'],
-  full:     ['Analyze', 'Maritime', 'Weather', 'Agri', 'Orbital', 'Guide'],
+  full:     ['Analyze', 'Business', 'Weather', 'Agri', 'Orbital', 'Guide'],
 };
 
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI, aoiRegionName,
@@ -1233,7 +1233,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const ALL_TABS = [
     { id:'Analyze',  icon:'target' },
-    { id:'Maritime', icon:'anchor' },
+    { id:'Business', icon:'anchor' },
     { id:'Weather',  icon:'thermo' },
     { id:'Agri',     icon:'leaf' },
     { id:'Orbital',  icon:'satellite-dish' },
@@ -1318,7 +1318,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
               : <ResultsPanel result={result} drawnAOI={drawnAOI} apiUrl={apiUrl} />)}
           </>
         )}
-        {tab === 'Maritime' && (
+        {tab === 'Business' && (
           <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
             <div>
               <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, marginBottom:9, textTransform:'uppercase' }}>
@@ -1386,7 +1386,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
 
             {(!vesselStats || vesselStats.active_vessels === 0) && (
               <div style={{ background:'rgba(201,147,58,0.06)', border:'1px solid rgba(201,147,58,0.25)', padding:'10px 12px', fontSize:13, color:S.text2, lineHeight:1.6 }}>
-                No live vessel data. Maritime tracking requires an AISSTREAM_API_KEY
+                No live vessel data. Business tab's vessel tracking requires an AISSTREAM_API_KEY
                 (free at aisstream.io) configured on the backend.
               </div>
             )}
@@ -1529,7 +1529,7 @@ export default function App({ tier = 'full', onChangeTier }) {
   const isMobile = useIsMobile(MOBILE_BREAKPOINT);
   const [mobilePanel, setMobilePanel] = useState('map'); // 'map' | 'analyze' | 'intel'
   // If the current tab isn't visible for this tier (e.g. switched from
-  // Full to Agri while on Maritime), fall back to Analyze — it's in
+  // Full to Agri while on Business), fall back to Analyze — it's in
   // every tier's allowed list, so it's always a safe default.
   const [tab, setTab] = useState(() => (TIER_TABS[tier] || TIER_TABS.full).includes('Analyze') ? 'Analyze' : (TIER_TABS[tier] || TIER_TABS.full)[0]);
   const [queryText, setQueryText] = useState('');
@@ -2318,7 +2318,7 @@ export default function App({ tier = 'full', onChangeTier }) {
         {!isMobile && tab !== 'Orbital' && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{rightPanelEl}</div>}
       </div>
 
-      {!isMobile && tab === 'Maritime' && <BusinessIntelBar apiUrl={API_URL} />}
+      {!isMobile && tab === 'Business' && <BusinessIntelBar apiUrl={API_URL} />}
 
       {isMobile && mobilePanel === 'analyze' && (
         <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:S.surface, overflow:'hidden' }}>

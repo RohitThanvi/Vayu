@@ -55,6 +55,7 @@ from ..services.intel import sanctions
 from ..services.intel import geo_tone as geo_tone_mod
 from ..services.intel import seismic_disruption
 from ..services.intel import macro as macro_mod
+from ..services.intel import timeseries_store
 from ..services.intel import business_risk
 from ..services.intel import strategic_sites
 from ..services.weather.wind_field import wind_field_store
@@ -454,6 +455,30 @@ async def get_strategic_sites(site_type: Optional[str] = None):
     gdelt_events = intel_store.query(sources=["GDELT"], limit=1000)
     dark_flags = dark_vessels.list_flags()
     return {"sites": strategic_sites.list_sites_with_signals(usgs_events, gdelt_events, dark_flags, site_type)}
+
+
+# ── Historical data, for the Analysis tab (charts, not just current values) ──
+
+@router.get("/commodities/history", summary="Historical daily closes for a commodity, for charting")
+async def get_commodity_history_endpoint(symbol: str, range: str = "3mo"):  # noqa: A002 (matches query param name)
+    return await commodity_prices.get_history(symbol, range)
+
+
+@router.get("/macro/history", summary="Historical FRED series (US) for charting")
+async def get_fred_history_endpoint(series: str, months: int = 24):
+    return await macro_mod.get_fred_history(series, months)
+
+
+@router.get("/macro/history/global", summary="Historical World Bank indicator (global) for charting")
+async def get_world_bank_history_endpoint(indicator: str, years: int = 15):
+    return await macro_mod.get_world_bank_history(indicator, years)
+
+
+@router.get("/chokepoint-traffic-history", summary="Historical vessel-count series for a chokepoint, for charting")
+async def get_chokepoint_traffic_history_endpoint(chokepoint: str, days: int = 14):
+    if chokepoint not in CHOKEPOINTS:
+        raise HTTPException(status_code=404, detail=f"Unknown chokepoint. Valid: {list(CHOKEPOINTS)}")
+    return {"chokepoint": chokepoint, "points": timeseries_store.get_chokepoint_history(chokepoint, days)}
 
 
 @router.get("/wind-field", summary="Animated wind vector grid (U/V components)")

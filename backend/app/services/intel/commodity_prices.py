@@ -130,6 +130,40 @@ async def _fetch_one(client: httpx.AsyncClient, symbol: str, label: str, unit: s
     }
 
 
+async def get_history(symbol: str, range_: str = "3mo") -> Dict[str, Any]:
+    """Historical daily closes for a commodity symbol, for charting.
+    Same Yahoo chart endpoint _fetch_one already uses (just with a
+    wider `range` instead of the 5d/current-quote-only call) — no new
+    integration, just asking the existing endpoint for more history.
+    range_: Yahoo's own range tokens — '1mo','3mo','6mo','1y','2y','5y'."""
+    valid_ranges = {"1mo", "3mo", "6mo", "1y", "2y", "5y"}
+    if range_ not in valid_ranges:
+        range_ = "3mo"
+    label_lookup = {sym: (label, unit) for sym, label, unit, _cat in COMMODITIES}
+    if symbol not in label_lookup:
+        return {"symbol": symbol, "points": [], "error": "Unknown symbol"}
+
+    url = YAHOO_CHART_URL.format(symbol=symbol)
+    try:
+        async with httpx.AsyncClient(headers=_HEADERS) as client:
+            resp = await client.get(url, params={"interval": "1d", "range": range_}, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+        result = data["chart"]["result"][0]
+        timestamps = result.get("timestamp", [])
+        closes = result["indicators"]["quote"][0]["close"]
+        points = [
+            {"date": ts, "value": round(float(c), 4)}
+            for ts, c in zip(timestamps, closes) if c is not None
+        ]
+    except Exception as e:
+        logger.warning(f"Commodity history fetch failed for {symbol}: {type(e).__name__}: {e}")
+        return {"symbol": symbol, "points": [], "error": f"{type(e).__name__}: {e}"}
+
+    label, unit = label_lookup[symbol]
+    return {"symbol": symbol, "name": label, "unit": unit, "range": range_, "points": points}
+
+
 async def refresh(force: bool = False) -> int:
     """Fetch all configured commodities and refresh the cache. Returns the
     count that succeeded (a partial failure still caches whatever
