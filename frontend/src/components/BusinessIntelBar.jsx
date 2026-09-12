@@ -122,13 +122,14 @@ const FRED_OPTIONS = [
   ['fed_funds_rate', 'US Fed Funds Rate'], ['cpi_yoy', 'US CPI (index)'], ['treasury_10y', 'US 10Y Treasury Yield'],
 ];
 const WORLD_BANK_OPTIONS = [
-  ['global_gdp_growth', 'Global GDP Growth'], ['global_inflation', 'Global Inflation'],
+  ['gdp_growth', 'GDP Growth'], ['inflation', 'Inflation'],
 ];
 const COMMODITY_RANGES = [['1mo', '1M'], ['3mo', '3M'], ['6mo', '6M'], ['1y', '1Y'], ['2y', '2Y'], ['5y', '5Y']];
 const CHOKEPOINT_DAY_RANGES = [[7, '7D'], [14, '14D'], [28, '28D']];
 
 const ANALYSIS_CATEGORIES = [
-  ['commodity', 'Commodity'], ['fred', 'US Macro'], ['worldbank', 'Global Macro'], ['chokepoint', 'Chokepoint Traffic'],
+  ['commodity', 'Commodity'], ['fred', 'US Macro'], ['global_macro', 'Global Macro'],
+  ['india_macro', 'India Macro'], ['chokepoint', 'Chokepoint Traffic'],
 ];
 
 function fmtUnixOrIso(d) {
@@ -154,7 +155,7 @@ function AnalysisView({ apiUrl }) {
   const optionsForCategory = () => {
     if (category === 'commodity') return COMMODITY_OPTIONS;
     if (category === 'fred') return FRED_OPTIONS;
-    if (category === 'worldbank') return WORLD_BANK_OPTIONS;
+    if (category === 'global_macro' || category === 'india_macro') return WORLD_BANK_OPTIONS;
     return CHOKEPOINTS;
   };
 
@@ -163,7 +164,7 @@ function AnalysisView({ apiUrl }) {
     setResult(null);
     if (id === 'commodity') setSeries(COMMODITY_OPTIONS[0][0]);
     else if (id === 'fred') setSeries(FRED_OPTIONS[0][0]);
-    else if (id === 'worldbank') setSeries(WORLD_BANK_OPTIONS[0][0]);
+    else if (id === 'global_macro' || id === 'india_macro') setSeries(WORLD_BANK_OPTIONS[0][0]);
     else setSeries(CHOKEPOINTS[0][0]);
   };
 
@@ -173,7 +174,8 @@ function AnalysisView({ apiUrl }) {
     let url;
     if (category === 'commodity') url = `${apiUrl}/api/v1/intel/commodities/history?symbol=${encodeURIComponent(series)}&range=${range}`;
     else if (category === 'fred') url = `${apiUrl}/api/v1/intel/macro/history?series=${series}&months=24`;
-    else if (category === 'worldbank') url = `${apiUrl}/api/v1/intel/macro/history/global?indicator=${series}&years=15`;
+    else if (category === 'global_macro') url = `${apiUrl}/api/v1/intel/macro/history/worldbank?indicator=${series}&region=global&years=15`;
+    else if (category === 'india_macro') url = `${apiUrl}/api/v1/intel/macro/history/worldbank?indicator=${series}&region=india&years=15`;
     else url = `${apiUrl}/api/v1/intel/chokepoint-traffic-history?chokepoint=${series}&days=${days}`;
 
     fetch(url)
@@ -190,7 +192,7 @@ function AnalysisView({ apiUrl }) {
   useEffect(() => { load(); }, [category, series]);
 
   const points = result?.points || [];
-  const xFormatter = category === 'worldbank' ? (d) => String(d) : fmtUnixOrIso;
+  const xFormatter = (category === 'global_macro' || category === 'india_macro') ? (d) => String(d) : fmtUnixOrIso;
   const selectStyle = { background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11.5, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 };
 
   return (
@@ -344,15 +346,21 @@ export default function BusinessIntelBar({ apiUrl }) {
             {macro.data && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                 {Object.entries(macro.data.us || {}).map(([k, v]) => (
-                  <div key={k} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 3, padding: '6px 8px' }}>
-                    <div style={{ fontSize: 9, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>{k.replace(/_/g, ' ')}</div>
+                  <div key={`us-${k}`} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 3, padding: '6px 8px' }}>
+                    <div style={{ fontSize: 9, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>US {k.replace(/_/g, ' ')}</div>
                     <div style={{ fontSize: 12.5, fontFamily: S.mono, color: S.gold }}>{v.value}{v.yoy_pct !== undefined ? ` (${v.yoy_pct > 0 ? '+' : ''}${v.yoy_pct}%)` : ''}</div>
                   </div>
                 ))}
                 {Object.entries(macro.data.global || {}).map(([k, v]) => (
-                  <div key={k} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 3, padding: '6px 8px' }}>
-                    <div style={{ fontSize: 9, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>{k.replace(/_/g, ' ')}</div>
+                  <div key={`global-${k}`} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 3, padding: '6px 8px' }}>
+                    <div style={{ fontSize: 9, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Global {k.replace(/_/g, ' ')}</div>
                     <div style={{ fontSize: 12.5, fontFamily: S.mono, color: S.accent }}>{v.value}%</div>
+                  </div>
+                ))}
+                {Object.entries(macro.data.india || {}).map(([k, v]) => (
+                  <div key={`india-${k}`} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 3, padding: '6px 8px' }}>
+                    <div style={{ fontSize: 9, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>India {k.replace(/_/g, ' ')}</div>
+                    <div style={{ fontSize: 12.5, fontFamily: S.mono, color: '#f0a860' }}>{v.value}%</div>
                   </div>
                 ))}
                 {!macro.data.fred_configured && (

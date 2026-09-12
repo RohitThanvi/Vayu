@@ -176,7 +176,7 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
             "confidence": "medium", "source_urls": [], "live_data_source": "GDELT (aggregated)",
         }
 
-    # ── Macro context (FRED + World Bank) ───────────────────────────────────
+    # ── Macro context (FRED + World Bank, including India) ─────────────────
     if any(w in q for w in MACRO_WORDS):
         snap = await macro_mod.get_macro_snapshot()
         bits = []
@@ -184,6 +184,8 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
             bits.append(f"US {label.replace('_', ' ')}: {v['value']} (as of {v['date']})")
         for label, v in snap.get("global", {}).items():
             bits.append(f"Global {label.replace('_', ' ')}: {v['value']} (as of {v.get('date')})")
+        for label, v in snap.get("india", {}).items():
+            bits.append(f"India {label.replace('_', ' ')}: {v['value']} (as of {v.get('date')})")
         reasoning = "; ".join(bits) if bits else "Macro data isn't available right now (FRED_API_KEY may not be configured)."
         return {
             "places": [], "place_name": None, "reasoning": reasoning, "radius_km": None,
