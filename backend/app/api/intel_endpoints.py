@@ -469,9 +469,9 @@ async def get_fred_history_endpoint(series: str, months: int = 24):
     return await macro_mod.get_fred_history(series, months)
 
 
-@router.get("/macro/history/global", summary="Historical World Bank indicator (global) for charting")
-async def get_world_bank_history_endpoint(indicator: str, years: int = 15):
-    return await macro_mod.get_world_bank_history(indicator, years)
+@router.get("/macro/history/worldbank", summary="Historical World Bank indicator (global or a specific country) for charting")
+async def get_world_bank_history_endpoint(indicator: str, region: str = "global", years: int = 15):
+    return await macro_mod.get_world_bank_history(indicator, region, years)
 
 
 @router.get("/chokepoint-traffic-history", summary="Historical vessel-count series for a chokepoint, for charting")

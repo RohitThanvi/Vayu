@@ -8,14 +8,28 @@ Two free sources, no cost either way:
     Free, but DOES require a free API key (FRED_API_KEY env var,
     registered at https://fredaccount.stlouisfed.org/apikeys). Without
     a key set, this degrades to World Bank data only rather than
-    erroring — see get_macro_snapshot().
+    erroring — see get_macro_snapshot(). US-only (FRED is the Federal
+    Reserve's own series catalog).
   - World Bank — https://api.worldbank.org/v2/ — free, genuinely no
-    key required at all.
+    key required at all, and per-country: the SAME indicator query
+    that gives the global aggregate (country=WLD) works identically
+    for any country code, so India (country=IND) is not a new
+    integration — see WORLD_BANK_COUNTRIES / india below.
 
 Series picked are the ones a commodity/macro trader actually glances
 at, not an exhaustive econ dashboard: US Fed funds rate, CPI YoY, and
-10-year Treasury yield from FRED; global GDP growth and inflation from
-World Bank as the slower-moving backdrop.
+10-year Treasury yield from FRED; GDP growth and inflation from World
+Bank for both the global aggregate and India specifically.
+
+Note on India rates specifically: the RBI (India's central bank) has
+NO official free public data API — every "RBI repo rate API" that
+turns up is an unofficial third-party wrapper that scrapes rbi.org.in
+and charges per call. Rather than build on something that isn't
+actually free/official and can break the moment RBI's site layout
+changes (see mandi.py/air_quality.py's data.gov.in troubles for why
+that's worth avoiding), India's repo rate is left out until/unless a
+real official API shows up. GDP growth and inflation via World Bank
+are the reliable, genuinely-free India data available right now.
 """
 
 import logging
@@ -33,9 +47,12 @@ FRED_SERIES = {
 }
 
 WORLD_BANK_INDICATORS = {
-    "global_gdp_growth": "NY.GDP.MKTP.KD.ZG",
-    "global_inflation": "FP.CPI.TOTL.ZG",
+    "gdp_growth": "NY.GDP.MKTP.KD.ZG",
+    "inflation": "FP.CPI.TOTL.ZG",
 }
+# World Bank's own aggregate code for "the whole world" is WLD (not a
+# real ISO country code) — everything else is the actual ISO-3 code.
+WORLD_BANK_COUNTRIES = {"global": "WLD", "india": "IND"}
 
 _cache: dict[str, tuple[float, Any]] = {}
 CACHE_TTL_SECONDS = 6 * 3600  # macro series update daily/monthly at most; no need to poll often
@@ -66,8 +83,8 @@ async def _fred_latest(series_id: str, api_key: str) -> Optional[dict]:
     return result
 
 
-async def _world_bank_latest(indicator: str) -> Optional[dict]:
-    url = f"https://api.worldbank.org/v2/country/WLD/indicator/{indicator}"
+async def _world_bank_latest(indicator: str, country: str = "WLD") -> Optional[dict]:
+    url = f"https://api.worldbank.org/v2/country/{country}/indicator/{indicator}"
     params = {"format": "json", "per_page": 10, "mrnev": 1}  # most recent non-empty value
     try:
         async with httpx.AsyncClient() as client:
@@ -75,7 +92,7 @@ async def _world_bank_latest(indicator: str) -> Optional[dict]:
             resp.raise_for_status()
             payload = resp.json()
     except Exception as e:
-        logger.warning(f"World Bank fetch failed for {indicator}: {type(e).__name__}: {e}")
+        logger.warning(f"World Bank fetch failed for {indicator} ({country}): {type(e).__name__}: {e}")
         return None
     if not isinstance(payload, list) or len(payload) < 2 or not payload[1]:
         return None
@@ -118,8 +135,8 @@ async def get_fred_history(label: str, months: int = 24) -> dict:
     return {"label": label, "series_id": series_id, "points": points}
 
 
-async def _world_bank_history(indicator: str, years: int = 15) -> list[dict]:
-    url = f"https://api.worldbank.org/v2/country/WLD/indicator/{indicator}"
+async def _world_bank_history(indicator: str, country: str = "WLD", years: int = 15) -> list[dict]:
+    url = f"https://api.worldbank.org/v2/country/{country}/indicator/{indicator}"
     from datetime import datetime
     this_year = datetime.utcnow().year
     params = {"format": "json", "per_page": years + 2, "date": f"{this_year - years}:{this_year}"}
@@ -129,7 +146,7 @@ async def _world_bank_history(indicator: str, years: int = 15) -> list[dict]:
             resp.raise_for_status()
             payload = resp.json()
     except Exception as e:
-        logger.warning(f"World Bank history fetch failed for {indicator}: {type(e).__name__}: {e}")
+        logger.warning(f"World Bank history fetch failed for {indicator} ({country}): {type(e).__name__}: {e}")
         return []
     if not isinstance(payload, list) or len(payload) < 2 or not payload[1]:
         return []
@@ -138,13 +155,17 @@ async def _world_bank_history(indicator: str, years: int = 15) -> list[dict]:
     return [{"date": r["date"], "value": round(r["value"], 2)} for r in rows]
 
 
-async def get_world_bank_history(label: str, years: int = 15) -> dict:
-    """label: one of WORLD_BANK_INDICATORS's keys (global_gdp_growth/global_inflation)."""
+async def get_world_bank_history(label: str, region: str = "global", years: int = 15) -> dict:
+    """label: one of WORLD_BANK_INDICATORS's keys (gdp_growth/inflation).
+    region: one of WORLD_BANK_COUNTRIES's keys (global/india)."""
     indicator = WORLD_BANK_INDICATORS.get(label)
+    country = WORLD_BANK_COUNTRIES.get(region)
     if not indicator:
         return {"label": label, "points": [], "error": f"Unknown indicator. Valid: {list(WORLD_BANK_INDICATORS)}"}
-    points = await _world_bank_history(indicator, years)
-    return {"label": label, "indicator": indicator, "points": points}
+    if not country:
+        return {"label": label, "points": [], "error": f"Unknown region. Valid: {list(WORLD_BANK_COUNTRIES)}"}
+    points = await _world_bank_history(indicator, country, years)
+    return {"label": label, "region": region, "indicator": indicator, "points": points}
 
 
 async def get_macro_snapshot() -> dict[str, Any]:
@@ -156,7 +177,7 @@ async def get_macro_snapshot() -> dict[str, Any]:
     from ...core.config import settings
     fred_key = getattr(settings, "FRED_API_KEY", "") or ""
 
-    result: dict[str, Any] = {"fred_configured": bool(fred_key), "us": {}, "global": {}}
+    result: dict[str, Any] = {"fred_configured": bool(fred_key), "us": {}, "global": {}, "india": {}}
 
     if fred_key:
         for label, series_id in FRED_SERIES.items():
@@ -166,10 +187,11 @@ async def get_macro_snapshot() -> dict[str, Any]:
     else:
         logger.info("macro: FRED_API_KEY not set — skipping US series, World Bank data only")
 
-    for label, indicator in WORLD_BANK_INDICATORS.items():
-        val = await _world_bank_latest(indicator)
-        if val:
-            result["global"][label] = val
+    for region_key, country_code in WORLD_BANK_COUNTRIES.items():
+        for label, indicator in WORLD_BANK_INDICATORS.items():
+            val = await _world_bank_latest(indicator, country_code)
+            if val:
+                result[region_key][label] = val
 
     _cache[cache_key] = (now, result)
     return result
