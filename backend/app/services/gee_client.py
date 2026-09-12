@@ -885,10 +885,26 @@ def compute_deforestation(aoi: Dict, start_date: str, end_date: str) -> Dict:
     # Parse year range from dates
     start_year = int(start_date[:4])
     end_year = int(end_date[:4])
-    if start_year < HANSEN_MIN_LOSS_YEAR:
-        start_year = HANSEN_MIN_LOSS_YEAR
-    if end_year > HANSEN_MAX_LOSS_YEAR:
-        end_year = HANSEN_MAX_LOSS_YEAR
+    # BUG FIX: start_year was only ever clamped against the MINIMUM, never
+    # the maximum — so a "recent/current" query (start_date in 2026, since
+    # that's the actual current year) left start_year=2026 uncapped while
+    # end_year correctly clamped down to 2025. That produced
+    # loss_year.gte(26).And(loss_year.lte(25)) — an impossible range for
+    # ANY pixel, on ANY AOI — which is exactly why every site was silently
+    # returning 0 loss (not an error: _calc_area_km2's reduceRegion legitimately
+    # finds zero matching pixels every time, so there's nothing to except on).
+    # Both bounds now clamp both ways, and if the two still cross after
+    # clamping (e.g. an all-2026 request), collapse to the single valid
+    # boundary year (2025) rather than silently producing an empty range again.
+    start_year = max(HANSEN_MIN_LOSS_YEAR, min(start_year, HANSEN_MAX_LOSS_YEAR))
+    end_year = max(HANSEN_MIN_LOSS_YEAR, min(end_year, HANSEN_MAX_LOSS_YEAR))
+    if start_year > end_year:
+        logger.warning(
+            f"GEE deforestation: requested range collapsed after clamping to Hansen's "
+            f"{HANSEN_MIN_LOSS_YEAR}-{HANSEN_MAX_LOSS_YEAR} coverage (raw {start_date}..{end_date}) "
+            f"— using single year {end_year} instead of an empty range."
+        )
+        start_year = end_year
 
     hansen = ee.Image("UMD/hansen/global_forest_change_2025_v1_13")
     loss_year = hansen.select("lossyear")
