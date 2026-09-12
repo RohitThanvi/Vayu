@@ -15,6 +15,7 @@ import DroughtDashboard from './components/DroughtDashboard';
 const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
 import { useVesselTracker } from './hooks/useVesselTracker';
 import { useStrategicSites } from './hooks/useStrategicSites';
+import { useIsMobile } from './hooks/useIsMobile';
 import { useSatelliteTracker } from './hooks/useSatelliteTracker';
 import { useAircraftTracker } from './hooks/useAircraftTracker';
 
@@ -40,18 +41,6 @@ function escapeHtml(str) {
 const MOBILE_BREAKPOINT = 860;
 
 /** Tracks whether the viewport is narrow enough to need the mobile layout. */
-function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(
-    typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT
-  );
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-  return isMobile;
-}
-
 const API_URL = import.meta.env.VITE_API_URL !== undefined
   ? import.meta.env.VITE_API_URL
   : 'http://127.0.0.1:8000';
@@ -1538,7 +1527,7 @@ function MapOverlay({ result, isLoading, drawnAOI, isMobile }) {
 
 // ── Root App ──────────────────────────────────────────────────────────────────
 export default function App({ tier = 'full', onChangeTier }) {
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobile(MOBILE_BREAKPOINT);
   const [mobilePanel, setMobilePanel] = useState('map'); // 'map' | 'analyze' | 'intel'
   // If the current tab isn't visible for this tier (e.g. switched from
   // Full to Agri while on Maritime), fall back to Analyze — it's in

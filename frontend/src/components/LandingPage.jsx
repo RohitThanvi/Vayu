@@ -25,6 +25,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 // Account system (signup/login/password-reset) is disabled for the MVP
 // tier-picker pivot — see banner comments below and in AppGate.jsx /
@@ -311,7 +312,7 @@ function AuthCard({ apiUrl, onAuthenticated }) {
 // the × since equal z-index falls back to DOM order.
 */
 
-function SpaceCard({ children, onClose, width = 380 }) {
+function SpaceCard({ children, onClose, width = 380, padding = '32px 28px' }) {
   const { ref: cardRef, tilt, onMouseMove, onMouseLeave } = useTilt(4);
 
   return (
@@ -336,7 +337,7 @@ function SpaceCard({ children, onClose, width = 380 }) {
             &times;
           </button>
         )}
-        <div style={{ position: 'relative', zIndex: 1, padding: '32px 28px' }}>
+        <div style={{ position: 'relative', zIndex: 1, padding }}>
           {children}
         </div>
       </div>
@@ -366,7 +367,7 @@ const SERVICE_OPTIONS = [
 // the terminal to enter. Reuses SpaceCard for the same satellite-photo/
 // blur/3D-tilt shell the auth modal had, so the visual language stays
 // consistent even though there's no form anymore.
-function TierPickerModal({ onSelect, onClose }) {
+function TierPickerModal({ onSelect, onClose, isMobile }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -375,19 +376,19 @@ function TierPickerModal({ onSelect, onClose }) {
 
   return (
     <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isMobile ? 12 : 20,
       background: 'rgba(5,7,12,0.55)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
       animation: 'vayu-modal-fade-in 0.2s ease',
     }}>
       <div onClick={e => e.stopPropagation()} style={{ animation: 'vayu-modal-pop-in 0.25s ease', width: 640, maxWidth: '100%', display: 'flex', justifyContent: 'center' }}>
-        <SpaceCard onClose={onClose} width={640}>
+        <SpaceCard onClose={onClose} width={640} padding={isMobile ? '24px 18px' : '32px 28px'}>
           <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 6, textAlign: 'center' }}>
             Choose your terminal
           </div>
-          <div style={{ fontFamily: 'Georgia, serif', fontSize: 20, color: S.text, marginBottom: 22, textAlign: 'center' }}>
+          <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 17 : 20, color: S.text, marginBottom: 20, textAlign: 'center' }}>
             Which slice of Vayu do you need?
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
             {SERVICE_OPTIONS.map((opt) => (
               <button key={opt.id} onClick={() => onSelect(opt.id)} className="vayu-tier-option" style={{
                 textAlign: 'left', cursor: 'pointer', background: 'rgba(13,17,23,0.7)', border: `1px solid ${S.border}`,
@@ -532,6 +533,8 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
   const [activeSection, setActiveSection] = useState('home');
   const [parallaxY, setParallaxY] = useState(0);
   const [tierModalOpen, setTierModalOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const isMobile = useIsMobile(760);
   const sectionRefs = useRef({});
   const scrollContainerRef = useRef(null);
 
@@ -543,6 +546,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
 
   const scrollTo = useCallback((id) => {
     sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setMobileMenuOpen(false);
   }, []);
 
   useEffect(() => {
@@ -588,31 +592,69 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
       <GlobalStyle />
 
       {tierModalOpen && (
-        <TierPickerModal onSelect={(tier) => { setTierModalOpen(false); onSelectTier(tier); }} onClose={() => setTierModalOpen(false)} />
+        <TierPickerModal onSelect={(tier) => { setTierModalOpen(false); onSelectTier(tier); }} onClose={() => setTierModalOpen(false)} isMobile={isMobile} />
       )}
 
       {/* Navbar */}
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, background: 'rgba(5,7,12,0.85)', backdropFilter: 'blur(8px)', borderBottom: `1px solid ${S.border}` }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '12px 18px' : '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
             <img src="/logo.png" alt="Vayu" width="20" height="20" style={{ display: 'block', filter: 'drop-shadow(0 0 4px rgba(201,168,106,0.4))' }} />
             <div style={{ fontFamily: S.mono, fontSize: 14, letterSpacing: 3, color: S.gold, fontWeight: 700 }}>VAYU</div>
           </div>
-          <div style={{ display: 'flex', gap: 32, alignItems: 'center' }}>
+
+          {!isMobile && (
+            <div style={{ display: 'flex', gap: 32, alignItems: 'center' }}>
+              {SECTIONS.map(([id, label]) => (
+                <button key={id} className="vayu-nav-btn" onClick={() => scrollTo(id)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: S.mono, fontSize: 13.5, letterSpacing: 1.5, textTransform: 'uppercase', color: activeSection === id ? S.gold : S.text3, padding: '4px 2px' }}>
+                  {label}
+                </button>
+              ))}
+              {/* Sign In / Sign Up nav button disabled along with the rest
+                  of the account system — see banner comments above. */}
+              <button onClick={() => setTierModalOpen(true)}
+                style={{ padding: '8px 18px', fontFamily: S.mono, fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase', background: 'rgba(201,168,106,0.12)', border: `1px solid ${S.gold}`, borderRadius: 4, color: S.gold, cursor: 'pointer' }}>
+                Enter Terminal
+              </button>
+            </div>
+          )}
+
+          {isMobile && (
+            <button aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'} onClick={() => setMobileMenuOpen(o => !o)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={S.text} strokeWidth="1.8" strokeLinecap="round">
+                {mobileMenuOpen ? (
+                  <path d="M5 5l14 14M19 5L5 19" />
+                ) : (
+                  <path d="M4 6h16M4 12h16M4 18h16" />
+                )}
+              </svg>
+            </button>
+          )}
+        </div>
+
+        {/* Mobile dropdown — simple slide/fade, no morph animation on the
+            icon itself (keeps it snappy rather than fussy on a tap target
+            this small). */}
+        {isMobile && mobileMenuOpen && (
+          <div style={{
+            borderTop: `1px solid ${S.border}`, background: 'rgba(5,7,12,0.96)', backdropFilter: 'blur(8px)',
+            padding: '14px 18px 18px', display: 'flex', flexDirection: 'column', gap: 4,
+            animation: 'vayu-modal-fade-in 0.15s ease',
+          }}>
             {SECTIONS.map(([id, label]) => (
-              <button key={id} className="vayu-nav-btn" onClick={() => scrollTo(id)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: S.mono, fontSize: 13.5, letterSpacing: 1.5, textTransform: 'uppercase', color: activeSection === id ? S.gold : S.text3, padding: '4px 2px' }}>
+              <button key={id} onClick={() => scrollTo(id)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '10px 2px', fontFamily: S.mono, fontSize: 15, letterSpacing: 1, textTransform: 'uppercase', color: activeSection === id ? S.gold : S.text2 }}>
                 {label}
               </button>
             ))}
-            {/* Sign In / Sign Up nav button disabled along with the rest
-                of the account system — see banner comments above. */}
-            <button onClick={() => setTierModalOpen(true)}
-              style={{ padding: '8px 18px', fontFamily: S.mono, fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase', background: 'rgba(201,168,106,0.12)', border: `1px solid ${S.gold}`, borderRadius: 4, color: S.gold, cursor: 'pointer' }}>
+            <button onClick={() => { setMobileMenuOpen(false); setTierModalOpen(true); }}
+              style={{ marginTop: 8, padding: '12px 18px', fontFamily: S.mono, fontSize: 12, letterSpacing: 1.5, textTransform: 'uppercase', background: 'rgba(201,168,106,0.12)', border: `1px solid ${S.gold}`, borderRadius: 4, color: S.gold, cursor: 'pointer' }}>
               Enter Terminal
             </button>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Home / Hero */}
@@ -634,33 +676,33 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         }} />
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(0deg, rgba(5,7,12,1) 0%, rgba(5,7,12,0) 18%)' }} />
         <img src="/logo.png" alt="" aria-hidden style={{
-          position: 'absolute', right: '6%', bottom: '10%', width: 220, opacity: 0.07,
+          position: 'absolute', right: '6%', bottom: '10%', width: isMobile ? 120 : 220, opacity: 0.07,
           filter: 'grayscale(0.4)', pointerEvents: 'none',
         }} />
 
         <div style={{
-          position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1200, margin: '0 auto', padding: '0 28px',
+          position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1200, margin: '0 auto', padding: isMobile ? '0 20px' : '0 28px',
           opacity: Math.max(0, 1 - parallaxY / 260), transform: `translateY(${parallaxY * 0.15}px)`,
         }}>
           <div style={{ maxWidth: 560 }}>
-            <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.text3, textTransform: 'uppercase', marginBottom: 16 }}>
+            <div style={{ fontFamily: S.mono, fontSize: isMobile ? 10.5 : 12, letterSpacing: isMobile ? 2 : 3, color: S.text3, textTransform: 'uppercase', marginBottom: isMobile ? 12 : 16 }}>
               Geospatial &amp; Business Intelligence
             </div>
-            <div style={{ fontFamily: 'Georgia, serif', fontSize: 50, lineHeight: 1.15, color: S.text, marginBottom: 22, textShadow: '0 2px 24px rgba(0,0,0,0.6)' }}>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 32 : 50, lineHeight: 1.18, color: S.text, marginBottom: isMobile ? 16 : 22, textShadow: '0 2px 24px rgba(0,0,0,0.6)' }}>
               One terminal for <span style={{ color: S.gold }}>everything above and around you.</span>
             </div>
-            <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.8, marginBottom: 34, maxWidth: 480 }}>
+            <div style={{ fontFamily: S.mono, fontSize: isMobile ? 12.5 : 13.5, color: S.text2, lineHeight: 1.75, marginBottom: isMobile ? 26 : 34, maxWidth: 480 }}>
               Live satellite analysis, maritime &amp; aviation tracking, commodity
               markets, drought &amp; agricultural risk scoring, and global hazard
               intel — unified, live, and actionable.
             </div>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               <button className="vayu-cta-primary" onClick={() => setTierModalOpen(true)}
-                style={{ padding: '14px 32px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#05070c', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 24px rgba(201,168,106,0.3)' }}>
+                style={{ padding: isMobile ? '13px 26px' : '14px 32px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#05070c', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 24px rgba(201,168,106,0.3)' }}>
                 Enter Terminal
               </button>
               <button className="vayu-cta-secondary" onClick={() => scrollTo('about')}
-                style={{ padding: '14px 28px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: 'rgba(13,17,23,0.7)', backdropFilter: 'blur(4px)', border: `1px solid ${S.borderLight}`, borderRadius: 4, color: S.text, cursor: 'pointer' }}>
+                style={{ padding: isMobile ? '13px 22px' : '14px 28px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: 'rgba(13,17,23,0.7)', backdropFilter: 'blur(4px)', border: `1px solid ${S.borderLight}`, borderRadius: 4, color: S.text, cursor: 'pointer' }}>
                 See What It Does
               </button>
             </div>
@@ -668,7 +710,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         </div>
 
         <div style={{
-          position: 'absolute', bottom: 26, left: '50%', transform: 'translateX(-50%)', zIndex: 1,
+          position: 'absolute', bottom: isMobile ? 16 : 26, left: '50%', transform: 'translateX(-50%)', zIndex: 1,
           fontFamily: S.mono, fontSize: 10, letterSpacing: 2, color: S.text3, textTransform: 'uppercase', textAlign: 'center',
           opacity: Math.max(0, 1 - parallaxY / 120),
         }}>
@@ -678,12 +720,12 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
       </div>
 
       {/* About */}
-      <div ref={el => sectionRefs.current.about = el} data-section="about" style={{ position: 'relative', padding: '100px 28px', borderTop: `1px solid ${S.border}` }}>
+      <div ref={el => sectionRefs.current.about = el} data-section="about" style={{ position: 'relative', padding: isMobile ? '60px 20px' : '100px 28px', borderTop: `1px solid ${S.border}` }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>About</div>
-            <div style={{ fontFamily: 'Georgia, serif', fontSize: 30, color: S.text, marginBottom: 18 }}>What Vayu actually does</div>
-            <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.85, maxWidth: 760, marginBottom: 56 }}>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 18 }}>What Vayu actually does</div>
+            <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.85, maxWidth: 760, marginBottom: isMobile ? 40 : 56 }}>
               Vayu pulls together satellite imagery, maritime &amp; flight traffic, weather and
               air quality, commodity prices, and government agricultural data into one
               continuously-updating picture — instead of a dozen dashboards, tabs, and stale
@@ -697,9 +739,9 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
               the page (gold hairline icons on dark cards) so it reads as
               part of the design rather than a bolted-on dashboard widget. */}
           <Reveal root={scrollContainerRef.current}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 64 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(200px, 1fr))', gap: isMobile ? 10 : 16, marginBottom: isMobile ? 44 : 64 }}>
               {STATS.map((s) => (
-                <div key={s.label} className="vayu-stat-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, padding: '20px 20px' }}>
+                <div key={s.label} className="vayu-stat-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, padding: isMobile ? '16px 14px' : '20px 20px' }}>
                   <div style={{ marginBottom: 14 }}><Icon path={s.icon} /></div>
                   <div style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: S.goldBright, marginBottom: 6 }}>{s.n}</div>
                   <div style={{ fontFamily: S.mono, fontSize: 11.5, color: S.text3, lineHeight: 1.5 }}>{s.label}</div>
@@ -713,7 +755,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
               rather than "dashboard-y". */}
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 2.5, color: S.text3, textTransform: 'uppercase', marginBottom: 24 }}>How it works</div>
-            <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 28, marginBottom: 64 }}>
+            <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 28, marginBottom: isMobile ? 44 : 64 }}>
               {FLOW.map((f, i) => (
                 <div key={f.title} className="vayu-flow-node" style={{ position: 'relative' }}>
                   <div style={{ width: 38, height: 38, borderRadius: '50%', background: S.surface2, border: `1px solid ${S.goldDim}`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
@@ -728,7 +770,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
             </div>
           </Reveal>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 28 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(260px, 1fr))', gap: isMobile ? 18 : 28 }}>
             {FEATURES.map((f, i) => (
               <Reveal key={f.title} delay={i * 0.1} root={scrollContainerRef.current}>
                 <TiltCard className="vayu-feature-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, overflow: 'hidden', height: '100%' }}>
@@ -747,19 +789,19 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
       </div>
 
       {/* Contact */}
-      <div ref={el => sectionRefs.current.contact = el} data-section="contact" style={{ padding: '100px 28px', borderTop: `1px solid ${S.border}` }}>
+      <div ref={el => sectionRefs.current.contact = el} data-section="contact" style={{ padding: isMobile ? '60px 20px' : '100px 28px', borderTop: `1px solid ${S.border}` }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Contact</div>
-            <div style={{ fontFamily: 'Georgia, serif', fontSize: 30, color: S.text, marginBottom: 30 }}>Get in touch</div>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 30 }}>Get in touch</div>
             <ContactForm apiUrl={apiUrl} />
           </Reveal>
         </div>
       </div>
 
       {/* Footer */}
-      <div style={{ borderTop: `1px solid ${S.border}`, padding: '28px 28px' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ borderTop: `1px solid ${S.border}`, padding: isMobile ? '22px 20px' : '28px 28px' }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: isMobile ? 'center' : 'space-between', textAlign: isMobile ? 'center' : 'left' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <img src="/logo.png" alt="" width="15" height="15" style={{ display: 'block', opacity: 0.7 }} />
             <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 1, color: S.text3 }}>
