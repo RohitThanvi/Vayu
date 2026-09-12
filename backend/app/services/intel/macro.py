@@ -85,6 +85,68 @@ async def _world_bank_latest(indicator: str) -> Optional[dict]:
     return None
 
 
+async def _fred_history(series_id: str, api_key: str, months: int = 24) -> list[dict]:
+    url = "https://api.stlouisfed.org/fred/series/observations"
+    params = {
+        "series_id": series_id, "api_key": api_key, "file_type": "json",
+        "sort_order": "asc", "limit": months + 1,
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, params=params, timeout=15)
+            resp.raise_for_status()
+            obs = resp.json().get("observations", [])
+    except Exception as e:
+        logger.warning(f"FRED history fetch failed for {series_id}: {type(e).__name__}: {e}")
+        return []
+    return [
+        {"date": o["date"], "value": float(o["value"])}
+        for o in obs[-months:] if o.get("value") not in (".", None)
+    ]
+
+
+async def get_fred_history(label: str, months: int = 24) -> dict:
+    """label: one of FRED_SERIES's keys (fed_funds_rate/cpi_yoy/treasury_10y)."""
+    from ...core.config import settings
+    series_id = FRED_SERIES.get(label)
+    if not series_id:
+        return {"label": label, "points": [], "error": f"Unknown series. Valid: {list(FRED_SERIES)}"}
+    api_key = getattr(settings, "FRED_API_KEY", "") or ""
+    if not api_key:
+        return {"label": label, "points": [], "error": "FRED_API_KEY not configured"}
+    points = await _fred_history(series_id, api_key, months)
+    return {"label": label, "series_id": series_id, "points": points}
+
+
+async def _world_bank_history(indicator: str, years: int = 15) -> list[dict]:
+    url = f"https://api.worldbank.org/v2/country/WLD/indicator/{indicator}"
+    from datetime import datetime
+    this_year = datetime.utcnow().year
+    params = {"format": "json", "per_page": years + 2, "date": f"{this_year - years}:{this_year}"}
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, params=params, timeout=15)
+            resp.raise_for_status()
+            payload = resp.json()
+    except Exception as e:
+        logger.warning(f"World Bank history fetch failed for {indicator}: {type(e).__name__}: {e}")
+        return []
+    if not isinstance(payload, list) or len(payload) < 2 or not payload[1]:
+        return []
+    rows = [r for r in payload[1] if r.get("value") is not None]
+    rows.sort(key=lambda r: r.get("date", ""))
+    return [{"date": r["date"], "value": round(r["value"], 2)} for r in rows]
+
+
+async def get_world_bank_history(label: str, years: int = 15) -> dict:
+    """label: one of WORLD_BANK_INDICATORS's keys (global_gdp_growth/global_inflation)."""
+    indicator = WORLD_BANK_INDICATORS.get(label)
+    if not indicator:
+        return {"label": label, "points": [], "error": f"Unknown indicator. Valid: {list(WORLD_BANK_INDICATORS)}"}
+    points = await _world_bank_history(indicator, years)
+    return {"label": label, "indicator": indicator, "points": points}
+
+
 async def get_macro_snapshot() -> dict[str, Any]:
     cache_key = "macro_snapshot"
     now = time.time()

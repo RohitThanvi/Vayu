@@ -1,6 +1,6 @@
 /**
  * BusinessIntelBar.jsx
- * A full-width, collapsible bottom panel for the Maritime tab — replaces
+ * A full-width, collapsible bottom panel for the Business tab — replaces
  * cramming the business-intel features (risk score, dark vessels,
  * sanctions, macro, GDELT tone, EDGAR lookup) into the narrow 330px
  * left sidebar alongside vessel controls, which made that sidebar too
@@ -9,13 +9,19 @@
  * bottom ticker/dashboard, and collapses to a thin handle when not
  * needed so it doesn't permanently eat map height.
  *
- * Rendered only for the Maritime tab, desktop only (App.jsx already
- * hides/adapts a lot of chrome on mobile; a 6-column horizontal strip
+ * Two sub-views: "Live" (the current-value columns below) and
+ * "Analysis" (historical charts — commodities/macro/chokepoint traffic
+ * were previously current-value-only; this adds the "look at the trend
+ * and decide" half of business intelligence, not just a snapshot).
+ *
+ * Rendered only for the Business tab, desktop only (App.jsx already
+ * hides/adapts a lot of chrome on mobile; a wide horizontal strip
  * isn't a good mobile pattern anyway — mobile keeps the compact
  * version, if any, in the existing panel flow).
  */
 
 import { useState, useEffect } from 'react';
+import SparkChart from './SparkChart';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
@@ -107,8 +113,144 @@ function EdgarExposureLookup({ apiUrl }) {
   );
 }
 
+const COMMODITY_OPTIONS = [
+  ['CL=F', 'Crude Oil (WTI)'], ['BZ=F', 'Crude Oil (Brent)'], ['NG=F', 'Natural Gas'],
+  ['HG=F', 'Copper'], ['GC=F', 'Gold'], ['ZW=F', 'Wheat'], ['ZC=F', 'Corn'],
+  ['CT=F', 'Cotton'], ['SB=F', 'Sugar'], ['KC=F', 'Coffee'],
+];
+const FRED_OPTIONS = [
+  ['fed_funds_rate', 'US Fed Funds Rate'], ['cpi_yoy', 'US CPI (index)'], ['treasury_10y', 'US 10Y Treasury Yield'],
+];
+const WORLD_BANK_OPTIONS = [
+  ['global_gdp_growth', 'Global GDP Growth'], ['global_inflation', 'Global Inflation'],
+];
+const COMMODITY_RANGES = [['1mo', '1M'], ['3mo', '3M'], ['6mo', '6M'], ['1y', '1Y'], ['2y', '2Y'], ['5y', '5Y']];
+const CHOKEPOINT_DAY_RANGES = [[7, '7D'], [14, '14D'], [28, '28D']];
+
+const ANALYSIS_CATEGORIES = [
+  ['commodity', 'Commodity'], ['fred', 'US Macro'], ['worldbank', 'Global Macro'], ['chokepoint', 'Chokepoint Traffic'],
+];
+
+function fmtUnixOrIso(d) {
+  const date = typeof d === 'number' ? new Date(d * 1000) : new Date(d);
+  if (Number.isNaN(date.getTime())) return String(d);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' });
+}
+
+// Historical charts for the things that were current-value-only before
+// (commodities, FRED/World Bank macro, chokepoint traffic) — the "look
+// at the trend and decide" half of business intelligence, not just a
+// snapshot. Each series fetches on demand (category/series/range
+// change), not auto-polled like the Live tab — these are for review,
+// not a live ticker.
+function AnalysisView({ apiUrl }) {
+  const [category, setCategory] = useState('commodity');
+  const [series, setSeries] = useState(COMMODITY_OPTIONS[0][0]);
+  const [range, setRange] = useState('3mo');
+  const [days, setDays] = useState(14);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const optionsForCategory = () => {
+    if (category === 'commodity') return COMMODITY_OPTIONS;
+    if (category === 'fred') return FRED_OPTIONS;
+    if (category === 'worldbank') return WORLD_BANK_OPTIONS;
+    return CHOKEPOINTS;
+  };
+
+  const changeCategory = (id) => {
+    setCategory(id);
+    setResult(null);
+    if (id === 'commodity') setSeries(COMMODITY_OPTIONS[0][0]);
+    else if (id === 'fred') setSeries(FRED_OPTIONS[0][0]);
+    else if (id === 'worldbank') setSeries(WORLD_BANK_OPTIONS[0][0]);
+    else setSeries(CHOKEPOINTS[0][0]);
+  };
+
+  const load = () => {
+    setLoading(true);
+    setResult(null);
+    let url;
+    if (category === 'commodity') url = `${apiUrl}/api/v1/intel/commodities/history?symbol=${encodeURIComponent(series)}&range=${range}`;
+    else if (category === 'fred') url = `${apiUrl}/api/v1/intel/macro/history?series=${series}&months=24`;
+    else if (category === 'worldbank') url = `${apiUrl}/api/v1/intel/macro/history/global?indicator=${series}&years=15`;
+    else url = `${apiUrl}/api/v1/intel/chokepoint-traffic-history?chokepoint=${series}&days=${days}`;
+
+    fetch(url)
+      .then(r => r.json())
+      .then(setResult)
+      .catch(() => setResult({ points: [], error: 'Request failed' }))
+      .finally(() => setLoading(false));
+  };
+
+  // Load once on mount and whenever category changes (series follows
+  // category via changeCategory above); range/day changes require the
+  // explicit "Plot" button since they're less frequent adjustments.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [category, series]);
+
+  const points = result?.points || [];
+  const useUnixDates = category === 'commodity';
+  const selectStyle = { background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11.5, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 };
+
+  return (
+    <div style={{ padding: '12px 16px 16px' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        {ANALYSIS_CATEGORIES.map(([id, label]) => (
+          <button key={id} onClick={() => changeCategory(id)} style={{
+            background: category === id ? 'rgba(126,184,212,0.12)' : 'none',
+            border: `1px solid ${category === id ? S.accent : S.border}`,
+            color: category === id ? S.accent : S.text3, fontFamily: S.mono, fontSize: 10.5, letterSpacing: 0.5, textTransform: 'uppercase',
+            padding: '5px 10px', borderRadius: 3, cursor: 'pointer',
+          }}>
+            {label}
+          </button>
+        ))}
+
+        <span style={{ width: 1, height: 20, background: S.border, margin: '0 4px' }} />
+
+        <select value={series} onChange={e => setSeries(e.target.value)} style={selectStyle}>
+          {optionsForCategory().map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+        </select>
+
+        {category === 'commodity' && (
+          <select value={range} onChange={e => setRange(e.target.value)} style={selectStyle}>
+            {COMMODITY_RANGES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+        )}
+        {category === 'chokepoint' && (
+          <select value={days} onChange={e => setDays(Number(e.target.value))} style={selectStyle}>
+            {CHOKEPOINT_DAY_RANGES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+        )}
+
+        <button onClick={load} disabled={loading} style={{
+          background: 'rgba(126,184,212,0.12)', border: `1px solid ${S.accent}`, color: S.accent, fontSize: 10.5,
+          fontFamily: S.mono, padding: '6px 14px', borderRadius: 3, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: 0.5,
+        }}>
+          {loading ? '...' : 'Plot'}
+        </button>
+      </div>
+
+      {result?.error && <Empty>{result.error}</Empty>}
+      {!result?.error && (
+        <SparkChart
+          points={points}
+          height={150}
+          formatX={useUnixDates ? fmtUnixOrIso : (d) => String(d)}
+          formatY={(v) => v.toFixed(category === 'chokepoint' ? 0 : 2)}
+          emptyLabel={category === 'chokepoint'
+            ? 'Not enough history recorded yet for this chokepoint — traffic is sampled every 15 min, check back soon.'
+            : 'No data returned for this range.'}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function BusinessIntelBar({ apiUrl }) {
   const [open, setOpen] = useState(true);
+  const [view, setView] = useState('live'); // 'live' | 'analysis'
   const risk = useJson(apiUrl, '/api/v1/intel/business-risk');
   const dark = useJson(apiUrl, '/api/v1/intel/dark-vessels');
   const sanc = useJson(apiUrl, '/api/v1/intel/sanctions-screen');
@@ -135,6 +277,20 @@ export default function BusinessIntelBar({ apiUrl }) {
       </button>
 
       {open && (
+        <div style={{ display: 'flex', gap: 2, padding: '6px 16px 0', borderBottom: `1px solid ${S.border}` }}>
+          {[['live', 'Live'], ['analysis', 'Analysis']].map(([id, label]) => (
+            <button key={id} onClick={() => setView(id)} style={{
+              background: 'none', border: 'none', borderBottom: view === id ? `2px solid ${S.accent}` : '2px solid transparent',
+              color: view === id ? S.accent : S.text3, fontFamily: S.mono, fontSize: 11.5, letterSpacing: 1, textTransform: 'uppercase',
+              padding: '6px 12px', cursor: 'pointer', marginBottom: -1,
+            }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {open && view === 'live' && (
         <div style={{ display: 'flex', height: 230, overflowX: 'auto' }}>
           <Column title="Risk score by chokepoint" width={230}>
             {risk.error && <Empty>Unavailable right now.</Empty>}
@@ -226,6 +382,8 @@ export default function BusinessIntelBar({ apiUrl }) {
           </Column>
         </div>
       )}
+
+      {open && view === 'analysis' && <AnalysisView apiUrl={apiUrl} />}
     </div>
   );
 }

@@ -81,6 +81,19 @@ def record_chokepoint_snapshot(chokepoint_key: str, vessel_count: int):
         conn.execute("DELETE FROM chokepoint_snapshots WHERE chokepoint_key = ? AND ts < ?", (chokepoint_key, cutoff))
 
 
+def get_chokepoint_history(chokepoint_key: str, days: int = 14) -> list:
+    """Raw (ts, vessel_count) samples for charting — the same rows
+    get_chokepoint_baseline() already reads to compute mean/stddev,
+    just returned as a series instead of collapsed into statistics."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with _lock, _connect() as conn:
+        rows = conn.execute(
+            "SELECT ts, vessel_count FROM chokepoint_snapshots WHERE chokepoint_key = ? AND ts >= ? ORDER BY ts ASC",
+            (chokepoint_key, cutoff),
+        ).fetchall()
+    return [{"date": r["ts"], "value": r["vessel_count"]} for r in rows]
+
+
 def get_chokepoint_baseline(chokepoint_key: str, current_count: int) -> Dict[str, Any]:
     """
     Compares `current_count` (the live vessel_store count, passed in
