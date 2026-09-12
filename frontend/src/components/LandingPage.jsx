@@ -311,13 +311,13 @@ function AuthCard({ apiUrl, onAuthenticated }) {
 // the × since equal z-index falls back to DOM order.
 */
 
-function SpaceCard({ children, onClose }) {
+function SpaceCard({ children, onClose, width = 380 }) {
   const { ref: cardRef, tilt, onMouseMove, onMouseLeave } = useTilt(4);
 
   return (
     <div style={{ perspective: 1200 }}>
       <div ref={cardRef} onMouseMove={onMouseMove} onMouseLeave={onMouseLeave} style={{
-        position: 'relative', width: 380, maxWidth: '100%', borderRadius: 10, overflow: 'hidden',
+        position: 'relative', width, maxWidth: '100%', borderRadius: 10, overflow: 'hidden',
         border: `1px solid ${S.gold}55`, boxShadow: '0 0 60px rgba(201,168,106,0.15), 0 30px 70px rgba(0,0,0,0.65)',
         transform: `rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`, transformStyle: 'preserve-3d',
         transition: 'transform 0.3s ease',
@@ -379,15 +379,15 @@ function TierPickerModal({ onSelect, onClose }) {
       background: 'rgba(5,7,12,0.55)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
       animation: 'vayu-modal-fade-in 0.2s ease',
     }}>
-      <div onClick={e => e.stopPropagation()} style={{ animation: 'vayu-modal-pop-in 0.25s ease', width: 640, maxWidth: '100%' }}>
-        <SpaceCard onClose={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ animation: 'vayu-modal-pop-in 0.25s ease', width: 640, maxWidth: '100%', display: 'flex', justifyContent: 'center' }}>
+        <SpaceCard onClose={onClose} width={640}>
           <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 6, textAlign: 'center' }}>
             Choose your terminal
           </div>
           <div style={{ fontFamily: 'Georgia, serif', fontSize: 20, color: S.text, marginBottom: 22, textAlign: 'center' }}>
             Which slice of Vayu do you need?
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 14 }}>
             {SERVICE_OPTIONS.map((opt) => (
               <button key={opt.id} onClick={() => onSelect(opt.id)} className="vayu-tier-option" style={{
                 textAlign: 'left', cursor: 'pointer', background: 'rgba(13,17,23,0.7)', border: `1px solid ${S.border}`,
