@@ -26,7 +26,7 @@ from datetime import datetime
 
 from .fetchers import fetch_all_intel, fetch_usgs, fetch_firms, fetch_gdelt, fetch_acled, fetch_opensky
 from .store import intel_store
-from .vessel_store import vessel_store
+from .vessel_store import vessel_store, CHOKEPOINTS
 from .aircraft_store import aircraft_store
 from . import satellite_tle
 from . import commodity_prices
@@ -302,14 +302,26 @@ class IntelScheduler:
         # touch vessel_store itself (still the live source of truth for
         # map rendering) — it's a one-way read into a separate durable
         # store. See vessel_store.CHOKEPOINTS for the monitored zones.
+        #
+        # BUG FIX: this was `vessel_store.CHOKEPOINTS` (the singleton
+        # INSTANCE, imported as `vessel_store`) instead of the module-level
+        # CHOKEPOINTS constant — CHOKEPOINTS was never an attribute of the
+        # VesselStore class, so every single cycle of this loop raised
+        # AttributeError on the very first line and never got past it. That
+        # means record_chokepoint_snapshot() has likely never actually run
+        # in production — no chokepoint traffic history has been building
+        # up, get_chokepoint_baseline()'s z_score has always been None
+        # (falling back to 0 in business_risk.py's traffic component,
+        # silently under-weighting every risk score by up to 40%), and the
+        # new chokepoint-traffic-history chart has had nothing to show.
         await asyncio.sleep(30)
         while self._running:
             try:
-                for key, bbox_pair in vessel_store.CHOKEPOINTS.items():
+                for key, bbox_pair in CHOKEPOINTS.items():
                     (min_lat, min_lon), (max_lat, max_lon) = bbox_pair
                     vessels = vessel_store.query(bbox=(min_lat, min_lon, max_lat, max_lon))
                     timeseries_store.record_chokepoint_snapshot(key, len(vessels))
-                logger.info(f"Chokepoint snapshot: recorded {len(vessel_store.CHOKEPOINTS)} zones")
+                logger.info(f"Chokepoint snapshot: recorded {len(CHOKEPOINTS)} zones")
             except Exception as e:
                 logger.error(f"Chokepoint snapshot error: {type(e).__name__}: {e}")
             await asyncio.sleep(INTERVAL_CHOKEPOINT_SNAPSHOT)
