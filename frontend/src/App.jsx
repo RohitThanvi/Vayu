@@ -3,7 +3,7 @@ import { Analytics } from '@vercel/analytics/react';
 import IntelPanel from './components/IntelPanel';
 import CommodityTicker from './components/CommodityTicker';
 import SupplyChainStatus from './components/SupplyChainStatus';
-import BusinessIntelPanel from './components/BusinessIntelPanel';
+import BusinessIntelBar from './components/BusinessIntelBar';
 import SubscribeWidget from './components/SubscribeWidget';
 import ErrorBoundary from './components/ErrorBoundary';
 import AgriPanel from './components/AgriPanel';
@@ -1378,12 +1378,11 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
               <SupplyChainStatus apiUrl={apiUrl} />
             </div>
 
-            <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:12 }}>
-              <div style={{ fontSize:13, fontFamily:S.mono, color:S.accent, letterSpacing:1.5, marginBottom:8, textTransform:'uppercase' }}>
-                Business intelligence
-              </div>
-              <BusinessIntelPanel apiUrl={apiUrl} />
-            </div>
+            {/* The fuller business-intelligence breakdown (risk score,
+                dark vessels, sanctions, macro, GDELT tone, EDGAR lookup)
+                moved out of this narrow sidebar into BusinessIntelBar —
+                a wide horizontal panel below the map — since cramming
+                all of it in here made this column too dense to read. */}
 
             {(!vesselStats || vesselStats.active_vessels === 0) && (
               <div style={{ background:'rgba(201,147,58,0.06)', border:'1px solid rgba(201,147,58,0.25)', padding:'10px 12px', fontSize:13, color:S.text2, lineHeight:1.6 }}>
@@ -2317,20 +2316,22 @@ export default function App({ tier = 'full', onChangeTier }) {
         </div>
 
         {!isMobile && tab !== 'Orbital' && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{rightPanelEl}</div>}
-
-        {isMobile && mobilePanel === 'analyze' && (
-          <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:S.surface, overflow:'hidden' }}>
-            {sidebarEl}
-          </div>
-        )}
-        {isMobile && mobilePanel === 'intel' && (
-          <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:'#0a0c0f', overflow:'hidden' }}>
-            {rightPanelEl}
-          </div>
-        )}
-
-        {isMobile && <MobileBottomNav active={mobilePanel} onChange={setMobilePanel} />}
       </div>
+
+      {!isMobile && tab === 'Maritime' && <BusinessIntelBar apiUrl={API_URL} />}
+
+      {isMobile && mobilePanel === 'analyze' && (
+        <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:S.surface, overflow:'hidden' }}>
+          {sidebarEl}
+        </div>
+      )}
+      {isMobile && mobilePanel === 'intel' && (
+        <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:'#0a0c0f', overflow:'hidden' }}>
+          {rightPanelEl}
+        </div>
+      )}
+
+      {isMobile && <MobileBottomNav active={mobilePanel} onChange={setMobilePanel} />}
 
       {/* Commodity ticker: desktop only, as a real flex sibling (not a
           fixed overlay) so it never covers the mobile bottom nav or
