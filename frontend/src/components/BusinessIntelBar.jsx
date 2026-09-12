@@ -190,7 +190,7 @@ function AnalysisView({ apiUrl }) {
   useEffect(() => { load(); }, [category, series]);
 
   const points = result?.points || [];
-  const useUnixDates = category === 'commodity';
+  const xFormatter = category === 'worldbank' ? (d) => String(d) : fmtUnixOrIso;
   const selectStyle = { background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11.5, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 };
 
   return (
@@ -237,7 +237,7 @@ function AnalysisView({ apiUrl }) {
         <SparkChart
           points={points}
           height={150}
-          formatX={useUnixDates ? fmtUnixOrIso : (d) => String(d)}
+          formatX={xFormatter}
           formatY={(v) => v.toFixed(category === 'chokepoint' ? 0 : 2)}
           emptyLabel={category === 'chokepoint'
             ? 'Not enough history recorded yet for this chokepoint — traffic is sampled every 15 min, check back soon.'
