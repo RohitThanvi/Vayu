@@ -1,0 +1,126 @@
+"""
+remote_sensing_endpoints.py — direct-access endpoints for the Remote
+Sensing tab (see services/gee_remote_sensing.py). Deliberately skips
+the natural-language parsing / geocoding pipeline endpoints.py uses
+for the Analyze tab — this is for someone who already knows which
+tool and AOI they want, not someone typing a question in English.
+
+Reuses the same BackgroundTasks + job_store polling pattern as
+endpoints.py's /query, for the same reason: GEE's Python client calls
+(.getInfo()) are blocking, so running them directly in a request
+handler would tie up the event loop for however long the computation
+takes. A separate job_store namespace (RS job IDs vs analysis query
+job IDs) isn't needed since job_store keys everything by its own UUID
+regardless of caller.
+"""
+
+import logging
+import uuid
+from typing import Dict, Any, Optional, List
+
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from pydantic import BaseModel
+
+from ..core.rate_limit import limiter
+from ..core.job_store import job_store
+from ..services import gee_remote_sensing as rs
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/remote-sensing", tags=["Remote Sensing"])
+
+TOOLS = {
+    "spectral_indices": {
+        "label": "Spectral Indices", "needs_dates": True,
+        "description": "NDVI, NDWI, MNDWI, NDBI, SAVI, EVI, NDSI — Sentinel-2, 10-20m.",
+    },
+    "terrain": {
+        "label": "Terrain Analysis", "needs_dates": False,
+        "description": "Elevation, slope, aspect — Copernicus DEM GLO-30, 30m.",
+    },
+    "lulc": {
+        "label": "Land Cover Classification", "needs_dates": False,
+        "description": "11-class land cover area breakdown — ESA WorldCover v200, 10m, 2021.",
+    },
+    "snow_cover": {
+        "label": "Snow Cover (NDSI)", "needs_dates": True,
+        "description": "Snow/ice-covered area — Sentinel-2 NDSI, 20m.",
+    },
+    "sar_backscatter": {
+        "label": "SAR Backscatter", "needs_dates": True,
+        "description": "VV/VH backscatter + Radar Vegetation Index — Sentinel-1 GRD, 20m, all-weather.",
+    },
+}
+
+
+class RemoteSensingRequest(BaseModel):
+    tool: str
+    aoi_geojson: Dict[str, Any]
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    indices: Optional[List[str]] = None  # spectral_indices only
+
+
+def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
+    job_store.set(request_id, {"status": "processing", "stage": "computing", "progress_pct": 30})
+    try:
+        if req.tool == "spectral_indices":
+            if not req.start_date or not req.end_date:
+                raise ValueError("spectral_indices requires start_date and end_date.")
+            result = rs.compute_spectral_indices(req.aoi_geojson, req.start_date, req.end_date, req.indices)
+        elif req.tool == "terrain":
+            result = rs.compute_terrain_analysis(req.aoi_geojson)
+        elif req.tool == "lulc":
+            result = rs.compute_lulc_classification(req.aoi_geojson)
+        elif req.tool == "snow_cover":
+            if not req.start_date or not req.end_date:
+                raise ValueError("snow_cover requires start_date and end_date.")
+            result = rs.compute_snow_cover(req.aoi_geojson, req.start_date, req.end_date)
+        elif req.tool == "sar_backscatter":
+            if not req.start_date or not req.end_date:
+                raise ValueError("sar_backscatter requires start_date and end_date.")
+            result = rs.compute_sar_backscatter(req.aoi_geojson, req.start_date, req.end_date)
+        else:
+            job_store.update(request_id, {"status": "failed", "error": f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}"})
+            return
+    except ValueError as e:
+        logger.warning(f"[{request_id}] Remote sensing validation error: {e}")
+        job_store.update(request_id, {"status": "failed", "error": str(e)})
+        return
+    except Exception as e:
+        logger.error(f"[{request_id}] Remote sensing computation error: {e}", exc_info=True)
+        job_store.update(request_id, {"status": "failed", "error": f"Computation failed: {type(e).__name__}: {e}"})
+        return
+
+    job_store.update(request_id, {"status": "done", "stage": "done", "progress_pct": 100, "tool": req.tool, "result": result})
+    logger.info(f"[{request_id}] Remote sensing tool '{req.tool}' complete.")
+
+
+@router.get("/tools", summary="List available remote sensing tools")
+async def list_tools():
+    return {"tools": [{"id": k, **v} for k, v in TOOLS.items()]}
+
+
+@router.post("/analyze", status_code=202, summary="Run a remote sensing tool on an AOI")
+@limiter.limit("15/minute")
+async def analyze(req: RemoteSensingRequest, background_tasks: BackgroundTasks, request: Request):
+    if req.tool not in TOOLS:
+        raise HTTPException(status_code=422, detail=f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}")
+    if not req.aoi_geojson:
+        raise HTTPException(status_code=422, detail="aoi_geojson is required.")
+    request_id = uuid.uuid4()
+    job_store.set(request_id, {"status": "processing", "stage": "queued", "progress_pct": 0})
+    background_tasks.add_task(_run_tool, request_id, req)
+    return {"request_id": str(request_id)}
+
+
+@router.get("/analyze/{request_id}", summary="Get remote sensing job status/result")
+async def get_result(request_id: uuid.UUID):
+    result = job_store.get(request_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Request ID not found.")
+    status = result.get("status")
+    if status == "failed":
+        raise HTTPException(status_code=422, detail=result.get("error", "Processing failed."))
+    if status != "done":
+        return {"status": status, "progress_pct": result.get("progress_pct", 0)}
+    return {"status": "done", "tool": result.get("tool"), "result": result.get("result")}
