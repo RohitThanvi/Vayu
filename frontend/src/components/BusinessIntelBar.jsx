@@ -9,10 +9,13 @@
  * bottom ticker/dashboard, and collapses to a thin handle when not
  * needed so it doesn't permanently eat map height.
  *
- * Two sub-views: "Live" (the current-value columns below) and
- * "Analysis" (historical charts — commodities/macro/chokepoint traffic
- * were previously current-value-only; this adds the "look at the trend
- * and decide" half of business intelligence, not just a snapshot).
+ * Three sub-views: "Live" (the current-value columns below), "Analysis"
+ * (historical charts — commodities/macro/chokepoint traffic were
+ * previously current-value-only; this adds the "look at the trend and
+ * decide" half of business intelligence, not just a snapshot), and
+ * "Economics" (G7/G20/BRICS/ASEAN bloc analysis — see EconomicsView.jsx,
+ * given its own full-width tab rather than squeezed into Live's columns
+ * since a 19-country macro table genuinely needs the room).
  *
  * Rendered only for the Business tab, desktop only (App.jsx already
  * hides/adapts a lot of chrome on mobile; a wide horizontal strip
@@ -22,6 +25,7 @@
 
 import { useState, useEffect } from 'react';
 import SparkChart from './SparkChart';
+import EconomicsView from './EconomicsView';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
@@ -280,7 +284,7 @@ export default function BusinessIntelBar({ apiUrl }) {
 
       {open && (
         <div style={{ display: 'flex', gap: 2, padding: '6px 16px 0', borderBottom: `1px solid ${S.border}` }}>
-          {[['live', 'Live'], ['analysis', 'Analysis']].map(([id, label]) => (
+          {[['live', 'Live'], ['analysis', 'Analysis'], ['economics', 'Economics']].map(([id, label]) => (
             <button key={id} onClick={() => setView(id)} style={{
               background: 'none', border: 'none', borderBottom: view === id ? `2px solid ${S.accent}` : '2px solid transparent',
               color: view === id ? S.accent : S.text3, fontFamily: S.mono, fontSize: 11.5, letterSpacing: 1, textTransform: 'uppercase',
@@ -392,6 +396,8 @@ export default function BusinessIntelBar({ apiUrl }) {
       )}
 
       {open && view === 'analysis' && <AnalysisView apiUrl={apiUrl} />}
+
+      {open && view === 'economics' && <EconomicsView apiUrl={apiUrl} />}
     </div>
   );
 }
