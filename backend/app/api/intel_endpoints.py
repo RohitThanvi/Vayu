@@ -444,7 +444,7 @@ async def get_business_risk():
     return {"chokepoints": scores}
 
 
-@router.get("/strategic-sites", summary="Major ports/refineries/mines with live nearby-signal updates (earthquakes, dark vessels, news tone)")
+@router.get("/strategic-sites", summary="Major ports/refineries/mines with live nearby-signal updates (earthquakes, dark vessels, news tone, recent headlines)")
 async def get_strategic_sites(site_type: Optional[str] = None):
     """site_type: 'port' | 'refinery' | 'mine' | omit for all. Curated
     list — see services/intel/strategic_sites.py. Each site's 'signals'
