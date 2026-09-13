@@ -459,6 +459,17 @@ const SITE_STYLE = {
   refinery: { color: '#e08a3c', label: 'R' },
   mine:     { color: '#a97fd4', label: 'M' },
 };
+function _escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function _timeAgo(iso) {
+  if (!iso) return '';
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const hrs = diffMs / 3600000;
+  if (hrs < 1) return `${Math.max(1, Math.round(diffMs / 60000))}m ago`;
+  if (hrs < 48) return `${Math.round(hrs)}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
 function createSiteMarker(site) {
   const s = SITE_STYLE[site.type] || SITE_STYLE.port;
   const hasSignals = (site.signals || []).length > 0;
@@ -481,18 +492,33 @@ function createSiteMarker(site) {
   });
   const signalsHtml = (site.signals || []).length
     ? `<div style="margin-top:6px; padding-top:6px; border-top:1px solid #2a3040;">` +
-      site.signals.map(sig => `<div style="font-size:11px; color:${sig.severity === 'critical' ? '#e05c5c' : '#e0c23c'}; margin-bottom:2px;">${sig.note}</div>`).join('') +
+      site.signals.map(sig => `<div style="font-size:11px; color:${sig.severity === 'critical' ? '#e05c5c' : '#e0c23c'}; margin-bottom:2px;">${_escapeHtml(sig.note)}</div>`).join('') +
+      `</div>`
+    : '';
+  const news = site.recent_news || [];
+  const newsHtml = news.length
+    ? `<div style="margin-top:6px; padding-top:6px; border-top:1px solid #2a3040;">
+        <div style="font-size:9.5px; text-transform:uppercase; letter-spacing:0.5px; color:#7d8894; margin-bottom:4px;">Latest updates</div>` +
+      news.map(n => `
+        <div style="margin-bottom:6px;">
+          <a href="${_escapeHtml(n.url)}" target="_blank" rel="noreferrer" style="font-size:11px; color:#e8ecef; line-height:1.35; text-decoration:none; display:block;">
+            ${_escapeHtml(n.title)}
+          </a>
+          <div style="font-size:9.5px; color:#7d8894; margin-top:1px;">${_escapeHtml(n.domain)} &middot; ${_timeAgo(n.date)}</div>
+        </div>
+      `).join('') +
       `</div>`
     : '';
   const marker = L.marker([site.lat, site.lon], { icon, zIndexOffset: 40 });
-  marker.bindPopup(`
-    <div style="font-family:'JetBrains Mono',monospace; min-width:180px;">
-      <div style="font-size:12px; font-weight:700; color:#f5f0e8; margin-bottom:2px;">${site.name}</div>
-      <div style="font-size:10px; text-transform:uppercase; letter-spacing:1px; color:${s.color}; margin-bottom:6px;">${site.type}</div>
-      <div style="font-size:11px; color:#c7d0da; line-height:1.4;">${site.note}</div>
+  marker.bindTooltip(`
+    <div style="font-family:'JetBrains Mono',monospace; min-width:200px; max-width:260px;">
+      <div style="font-size:12px; font-weight:700; color:#f5f0e8; margin-bottom:2px;">${_escapeHtml(site.name)}</div>
+      <div style="font-size:10px; text-transform:uppercase; letter-spacing:1px; color:${s.color}; margin-bottom:6px;">${_escapeHtml(site.type)}</div>
+      <div style="font-size:11px; color:#c7d0da; line-height:1.4;">${_escapeHtml(site.note)}</div>
       ${signalsHtml}
+      ${newsHtml}
     </div>
-  `);
+  `, { permanent: false, direction: 'top', opacity: 1, className: 'vayu-tooltip', maxWidth: 280, interactive: true });
   return marker;
 }
 
