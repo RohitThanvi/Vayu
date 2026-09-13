@@ -55,6 +55,7 @@ from ..services.intel import sanctions
 from ..services.intel import geo_tone as geo_tone_mod
 from ..services.intel import seismic_disruption
 from ..services.intel import macro as macro_mod
+from ..services.intel import economic_blocs
 from ..services.intel import timeseries_store
 from ..services.intel import business_risk
 from ..services.intel import strategic_sites
@@ -479,6 +480,41 @@ async def get_chokepoint_traffic_history_endpoint(chokepoint: str, days: int = 1
     if chokepoint not in CHOKEPOINTS:
         raise HTTPException(status_code=404, detail=f"Unknown chokepoint. Valid: {list(CHOKEPOINTS)}")
     return {"chokepoint": chokepoint, "points": timeseries_store.get_chokepoint_history(chokepoint, days)}
+
+
+# ── Economic blocs (G7/G20/BRICS/ASEAN) — built on data already integrated above ──
+
+@router.get("/economic-blocs", summary="List available economic blocs and their members")
+async def list_economic_blocs():
+    return {"blocs": [economic_blocs.get_bloc_info(b) for b in economic_blocs.get_bloc_ids()]}
+
+
+@router.get("/economic-blocs/{bloc_id}/macro", summary="GDP growth + inflation per member country (World Bank)")
+async def get_economic_bloc_macro(bloc_id: str):
+    if bloc_id not in economic_blocs.get_bloc_ids():
+        raise HTTPException(status_code=404, detail=f"Unknown bloc. Valid: {economic_blocs.get_bloc_ids()}")
+    return await economic_blocs.get_bloc_macro(bloc_id)
+
+
+@router.get("/economic-blocs/{bloc_id}/tone", summary="GDELT news tone scoped to this bloc's name/members")
+async def get_economic_bloc_tone(bloc_id: str):
+    if bloc_id not in economic_blocs.get_bloc_ids():
+        raise HTTPException(status_code=404, detail=f"Unknown bloc. Valid: {economic_blocs.get_bloc_ids()}")
+    return economic_blocs.get_bloc_tone(bloc_id)
+
+
+@router.get("/economic-blocs/{bloc_id}/commodities", summary="Tracked commodities this bloc's members are major producers/exporters of (editorial)")
+async def get_economic_bloc_commodities(bloc_id: str):
+    if bloc_id not in economic_blocs.get_bloc_ids():
+        raise HTTPException(status_code=404, detail=f"Unknown bloc. Valid: {economic_blocs.get_bloc_ids()}")
+    return economic_blocs.get_bloc_commodities(bloc_id)
+
+
+@router.get("/economic-blocs/{bloc_id}/exposure", summary="Recent SEC filings mentioning this bloc (SEC EDGAR full-text search)")
+async def get_economic_bloc_exposure(bloc_id: str, days_back: int = 14):
+    if bloc_id not in economic_blocs.get_bloc_ids():
+        raise HTTPException(status_code=404, detail=f"Unknown bloc. Valid: {economic_blocs.get_bloc_ids()}")
+    return await economic_blocs.get_bloc_exposure(bloc_id, days_back)
 
 
 @router.get("/wind-field", summary="Animated wind vector grid (U/V components)")
