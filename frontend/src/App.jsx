@@ -4,6 +4,7 @@ import IntelPanel from './components/IntelPanel';
 import CommodityTicker from './components/CommodityTicker';
 import SupplyChainStatus from './components/SupplyChainStatus';
 import BusinessIntelBar from './components/BusinessIntelBar';
+import SpectraPanel from './components/SpectraPanel';
 import SubscribeWidget from './components/SubscribeWidget';
 import ErrorBoundary from './components/ErrorBoundary';
 import AgriPanel from './components/AgriPanel';
@@ -399,6 +400,7 @@ function Icon({ name, size = 16, style }) {
     case 'satellite-dish': return <svg {...p}><path d="M4 14a8 8 0 0 1 8-8"/><path d="M4 14a8 8 0 0 0 8 8"/><circle cx="12" cy="12" r="1.7"/><path d="M12 12 20 5M17 4l3 3-3 3"/></svg>;
     case 'close':      return <svg {...p}><path d="M6 6l12 12M18 6 6 18"/></svg>;
     case 'ship':       return <svg {...p}><path d="M4 15h16l-2 4H6Z"/><path d="M6 15V8h8l3 7M9 8V4h2v4"/></svg>;
+    case 'layers':     return <svg {...p}><path d="M12 3 3 8l9 5 9-5Z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg>;
     default:           return null;
   }
 }
@@ -1237,13 +1239,13 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 // Which tabs each service tier can see. 'full' intentionally includes
-// everything — Analyze/Weather/Guide are common ground across tiers
+// everything — Analyze/Weather/Spectra are common ground across tiers
 // since they're either the core flagship feature or general-purpose.
 // Adjust freely; this is a first pass, not a fixed business decision.
 const TIER_TABS = {
-  business: ['Analyze', 'Business', 'Weather', 'Orbital', 'Guide'],
-  agri:     ['Analyze', 'Weather', 'Agri', 'Guide'],
-  full:     ['Analyze', 'Business', 'Weather', 'Agri', 'Orbital', 'Guide'],
+  business: ['Analyze', 'Business', 'Weather', 'Orbital', 'Spectra'],
+  agri:     ['Analyze', 'Weather', 'Agri', 'Spectra'],
+  full:     ['Analyze', 'Business', 'Weather', 'Agri', 'Orbital', 'Spectra'],
 };
 
 function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, drawnAOI, aoiRegionName,
@@ -1263,7 +1265,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
     { id:'Weather',  icon:'thermo' },
     { id:'Agri',     icon:'leaf' },
     { id:'Orbital',  icon:'satellite-dish' },
-    { id:'Guide',    icon:'book' },
+    { id:'Spectra', icon:'layers' },
   ];
   const allowed = TIER_TABS[tier] || TIER_TABS.full;
   const TABS = ALL_TABS.filter(t => allowed.includes(t.id));
@@ -1465,32 +1467,9 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             filteredList={orbitalFilteredList}
             selected={orbitalSelected} onSelect={setOrbitalSelected}
           />
-        )}        {tab === 'Guide' && (
-          <div style={{ display:'flex', flexDirection:'column', gap:14, fontSize:15, color:S.text2 }}>
-            <div>
-              <div style={{ fontSize:15, fontFamily:S.mono, color:S.accent, letterSpacing:2, marginBottom:10, textTransform:'uppercase' }}>How to use</div>
-              {[['1','Select an analysis type (optional — Vayu can infer it from your query)'],['2','Draw a polygon on the map, or just name a place in your query — the 9 fixed metrics will auto-locate it'],['3','Enter a natural language query'],['4','Click Run Analysis']].map(([n,t]) => (
-                <div key={n} style={{ display:'flex', gap:10, marginBottom:8, alignItems:'flex-start' }}>
-                  <span style={{ fontSize:14, fontFamily:S.mono, color:S.accent, border:`1px solid ${S.border}`, padding:'2px 6px', flexShrink:0 }}>{n}</span>
-                  <span style={{ fontSize:15, color:S.text2 }}>{t}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{ borderTop:`1px solid ${S.border}`, paddingTop:12 }}>
-              <div style={{ fontSize:15, fontFamily:S.mono, color:S.accent, letterSpacing:2, marginBottom:10, textTransform:'uppercase' }}>Live Intel Sources</div>
-              {[
-                ['USGS','Earthquakes M3.5+, global'],
-                ['NASA FIRMS','Active fire hotspots'],
-                ['GDELT','Geolocated news events'],
-                ['ACLED','Armed conflict events'],
-              ].map(([src,desc]) => (
-                <div key={src} style={{ marginBottom:8 }}>
-                  <div style={{ fontSize:15, fontFamily:S.mono, color:INTEL_COLORS[src]?.border||S.accent, marginBottom:2 }}>{src}</div>
-                  <div style={{ fontSize:14, color:S.text3 }}>{desc}</div>
-                </div>
-              ))}
-            </div>
-          </div>
+        )}
+        {tab === 'Spectra' && (
+          <SpectraPanel apiUrl={apiUrl} drawnAOI={drawnAOI} />
         )}
       </div>
       <div style={{ flexShrink:0, padding:'10px 14px', borderTop:`1px solid ${S.border}` }}>

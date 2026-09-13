@@ -25,6 +25,7 @@ from .api.report_endpoints import router as report_router
 from .api.layers_endpoints import router as layers_router
 from .api.reporting_endpoints import router as reporting_router
 from .api.auth_endpoints import router as auth_router
+from .api.remote_sensing_endpoints import router as remote_sensing_router
 from .services.intel.scheduler import get_scheduler
 from .services.agri.alert_engine import get_agri_engine
 from .services.agri.whatsapp import send_whatsapp_message
@@ -101,6 +102,7 @@ app.include_router(report_router,    prefix="/api/v1")
 app.include_router(layers_router,    prefix="/api/v1")
 app.include_router(reporting_router, prefix="/api/v1")
 app.include_router(auth_router,      prefix="/api/v1")
+app.include_router(remote_sensing_router, prefix="/api/v1")
 
 
 # ── Access logging ────────────────────────────────────────────────────────────
