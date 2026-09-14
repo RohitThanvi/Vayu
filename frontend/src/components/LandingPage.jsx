@@ -357,8 +357,13 @@ const SERVICE_OPTIONS = [
     icon: 'M12 22s8-6.5 8-13a8 8 0 10-16 0c0 6.5 8 13 8 13z',
   },
   {
+    id: 'remote_sensing', label: 'Vayu Remote Sensing', tagline: 'Spectral, radar & terrain science',
+    desc: 'Spectral indices, SAR backscatter, terrain, land cover, snow cover — direct scientific access.',
+    icon: 'M12 2l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z',
+  },
+  {
     id: 'full', label: 'Full Terminal', tagline: 'Everything, unified',
-    desc: 'Every panel — Business and Agri combined, nothing hidden.',
+    desc: 'Every panel — Business, Agri, and Remote Sensing combined, nothing hidden.',
     icon: 'M4 4h16v16H4zM4 12h16M12 4v16',
   },
 ];
@@ -380,15 +385,15 @@ function TierPickerModal({ onSelect, onClose, isMobile }) {
       background: 'rgba(5,7,12,0.55)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
       animation: 'vayu-modal-fade-in 0.2s ease',
     }}>
-      <div onClick={e => e.stopPropagation()} style={{ animation: 'vayu-modal-pop-in 0.25s ease', width: 640, maxWidth: '100%', display: 'flex', justifyContent: 'center' }}>
-        <SpaceCard onClose={onClose} width={640} padding={isMobile ? '24px 18px' : '32px 28px'}>
+      <div onClick={e => e.stopPropagation()} style={{ animation: 'vayu-modal-pop-in 0.25s ease', width: 760, maxWidth: '100%', display: 'flex', justifyContent: 'center' }}>
+        <SpaceCard onClose={onClose} width={760} padding={isMobile ? '24px 18px' : '32px 28px'}>
           <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 6, textAlign: 'center' }}>
             Choose your terminal
           </div>
           <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 17 : 20, color: S.text, marginBottom: 20, textAlign: 'center' }}>
             Which slice of Vayu do you need?
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(155px, 1fr))', gap: 12 }}>
             {SERVICE_OPTIONS.map((opt) => (
               <button key={opt.id} onClick={() => onSelect(opt.id)} className="vayu-tier-option" style={{
                 textAlign: 'left', cursor: 'pointer', background: 'rgba(13,17,23,0.7)', border: `1px solid ${S.border}`,

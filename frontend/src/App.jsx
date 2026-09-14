@@ -1243,8 +1243,9 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
 // since they're either the core flagship feature or general-purpose.
 // Adjust freely; this is a first pass, not a fixed business decision.
 const TIER_TABS = {
-  business: ['Analyze', 'Business', 'Weather', 'Orbital', 'Spectra'],
-  agri:     ['Analyze', 'Weather', 'Agri', 'Spectra'],
+  business: ['Analyze', 'Business', 'Weather', 'Orbital'],
+  agri:     ['Analyze', 'Weather', 'Agri'],
+  remote_sensing: ['Analyze', 'Spectra', 'Weather'],
   full:     ['Analyze', 'Business', 'Weather', 'Agri', 'Orbital', 'Spectra'],
 };
 
