@@ -49,6 +49,22 @@ TOOLS = {
         "label": "SAR Backscatter", "needs_dates": True,
         "description": "VV/VH backscatter + Radar Vegetation Index — Sentinel-1 GRD, 20m, all-weather.",
     },
+    "change_detection": {
+        "label": "Change Detection", "needs_dates": False, "needs_two_periods": True,
+        "description": "Diff any spectral index between two date ranges — Sentinel-2, 20m.",
+    },
+    "burn_severity": {
+        "label": "Burn Severity (dNBR)", "needs_dates": False, "needs_two_periods": True,
+        "description": "USGS FIREMON dNBR burn-severity classification — Sentinel-2, 20m.",
+    },
+    "atmospheric_composition": {
+        "label": "Atmospheric Composition", "needs_dates": True,
+        "description": "NO2, SO2, CO, aerosol index — Sentinel-5P/TROPOMI, ~1.1km.",
+    },
+    "index_time_series": {
+        "label": "Index Time Series", "needs_dates": True,
+        "description": "Chart a spectral index across monthly/quarterly sub-periods — Sentinel-2, 20m.",
+    },
 }
 
 
@@ -58,6 +74,16 @@ class RemoteSensingRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     indices: Optional[List[str]] = None  # spectral_indices only
+    index: Optional[str] = None  # change_detection only
+    period1_start: Optional[str] = None  # change_detection
+    period1_end: Optional[str] = None
+    period2_start: Optional[str] = None
+    period2_end: Optional[str] = None
+    pre_start: Optional[str] = None  # burn_severity
+    pre_end: Optional[str] = None
+    post_start: Optional[str] = None
+    post_end: Optional[str] = None
+    interval: Optional[str] = "month"  # index_time_series
 
 
 def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
@@ -79,6 +105,22 @@ def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
             if not req.start_date or not req.end_date:
                 raise ValueError("sar_backscatter requires start_date and end_date.")
             result = rs.compute_sar_backscatter(req.aoi_geojson, req.start_date, req.end_date)
+        elif req.tool == "change_detection":
+            if not all([req.index, req.period1_start, req.period1_end, req.period2_start, req.period2_end]):
+                raise ValueError("change_detection requires index, period1_start, period1_end, period2_start, period2_end.")
+            result = rs.compute_change_detection(req.aoi_geojson, req.index, req.period1_start, req.period1_end, req.period2_start, req.period2_end)
+        elif req.tool == "burn_severity":
+            if not all([req.pre_start, req.pre_end, req.post_start, req.post_end]):
+                raise ValueError("burn_severity requires pre_start, pre_end, post_start, post_end.")
+            result = rs.compute_burn_severity(req.aoi_geojson, req.pre_start, req.pre_end, req.post_start, req.post_end)
+        elif req.tool == "atmospheric_composition":
+            if not req.start_date or not req.end_date:
+                raise ValueError("atmospheric_composition requires start_date and end_date.")
+            result = rs.compute_atmospheric_composition(req.aoi_geojson, req.start_date, req.end_date)
+        elif req.tool == "index_time_series":
+            if not all([req.index, req.start_date, req.end_date]):
+                raise ValueError("index_time_series requires index, start_date, end_date.")
+            result = rs.compute_index_time_series(req.aoi_geojson, req.index, req.start_date, req.end_date, req.interval or "month")
         else:
             job_store.update(request_id, {"status": "failed", "error": f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}"})
             return

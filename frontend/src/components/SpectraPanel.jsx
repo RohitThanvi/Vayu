@@ -28,6 +28,9 @@ const TOOL_META = {
   lulc: { label: 'Land Cover', needsDates: false, icon: '▦' },
   snow_cover: { label: 'Snow Cover', needsDates: true, icon: '❄' },
   sar_backscatter: { label: 'SAR Backscatter', needsDates: true, icon: '∿' },
+  change_detection: { label: 'Change Detection', needsDates: false, needsTwoPeriods: true, icon: '⇄' },
+  burn_severity: { label: 'Burn Severity', needsDates: false, needsPrePost: true, icon: '🔥' },
+  atmospheric_composition: { label: 'Atmosphere', needsDates: true, icon: '☁' },
 };
 
 const INDEX_CHOICES = [
@@ -145,6 +148,58 @@ function ResultView({ tool, result }) {
       </div>
     );
   }
+  if (tool === 'change_detection') {
+    const upColor = result.delta > 0 ? '#2ecc71' : result.delta < 0 ? '#ff7a45' : S.text3;
+    return (
+      <div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <div style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '8px 10px' }}>
+            <div style={{ fontSize: 9.5, color: S.text3, marginBottom: 3 }}>Period 1 ({result.period1.start} → {result.period1.end})</div>
+            <div style={{ fontFamily: S.mono, fontSize: 16, color: S.text }}>{result.period1.mean}</div>
+            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2 }}>{result.period1.scene_count} scene(s)</div>
+          </div>
+          <div style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '8px 10px' }}>
+            <div style={{ fontSize: 9.5, color: S.text3, marginBottom: 3 }}>Period 2 ({result.period2.start} → {result.period2.end})</div>
+            <div style={{ fontFamily: S.mono, fontSize: 16, color: S.text }}>{result.period2.mean}</div>
+            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2 }}>{result.period2.scene_count} scene(s)</div>
+          </div>
+        </div>
+        <StatRow label="Delta (P2 - P1)" value={<span style={{ color: upColor }}>{result.delta > 0 ? '+' : ''}{result.delta}</span>} />
+        {result.pct_change != null && <StatRow label="% change" value={`${result.pct_change > 0 ? '+' : ''}${result.pct_change}%`} />}
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'burn_severity') {
+    return (
+      <div>
+        <StatRow label="dNBR (mean)" value={result.dnbr_mean} />
+        <StatRow label="dNBR (min / max)" value={`${result.dnbr_min} / ${result.dnbr_max}`} />
+        <StatRow label="Overall classification" value={result.overall_classification} />
+        <StatRow label="Pre / post fire scenes" value={`${result.pre_fire_scenes} / ${result.post_fire_scenes}`} />
+        {Object.keys(result.area_by_severity_km2).length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Area by severity class</div>
+            {Object.entries(result.area_by_severity_km2).map(([label, km2]) => (
+              <StatRow key={label} label={label} value={`${km2} km²`} />
+            ))}
+          </div>
+        )}
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'atmospheric_composition') {
+    return (
+      <div>
+        <StatRow label="Tropospheric NO2" value={result.no2.mean != null ? `${result.no2.mean} ${result.no2.unit}` : 'No data'} />
+        <StatRow label="SO2" value={result.so2.mean != null ? `${result.so2.mean} ${result.so2.unit}` : 'No data'} />
+        <StatRow label="CO" value={result.co.mean != null ? `${result.co.mean} ${result.co.unit}` : 'No data'} />
+        <StatRow label="Aerosol Index" value={result.aerosol_index.mean != null ? result.aerosol_index.mean : 'No data'} />
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
   return null;
 }
 
@@ -153,6 +208,15 @@ export default function SpectraPanel({ apiUrl, drawnAOI }) {
   const [startDate, setStartDate] = useState(todayMinus(90));
   const [endDate, setEndDate] = useState(todayMinus(0));
   const [selectedIndices, setSelectedIndices] = useState(INDEX_CHOICES.map(([id]) => id));
+  const [changeIndex, setChangeIndex] = useState('ndvi');
+  const [period1Start, setPeriod1Start] = useState(todayMinus(395));
+  const [period1End, setPeriod1End] = useState(todayMinus(365));
+  const [period2Start, setPeriod2Start] = useState(todayMinus(30));
+  const [period2End, setPeriod2End] = useState(todayMinus(0));
+  const [preStart, setPreStart] = useState(todayMinus(120));
+  const [preEnd, setPreEnd] = useState(todayMinus(90));
+  const [postStart, setPostStart] = useState(todayMinus(30));
+  const [postEnd, setPostEnd] = useState(todayMinus(0));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -171,6 +235,15 @@ export default function SpectraPanel({ apiUrl, drawnAOI }) {
     const body = { tool, aoi_geojson: drawnAOI };
     if (meta.needsDates) { body.start_date = startDate; body.end_date = endDate; }
     if (tool === 'spectral_indices') body.indices = selectedIndices;
+    if (meta.needsTwoPeriods) {
+      body.index = changeIndex;
+      body.period1_start = period1Start; body.period1_end = period1End;
+      body.period2_start = period2Start; body.period2_end = period2End;
+    }
+    if (meta.needsPrePost) {
+      body.pre_start = preStart; body.pre_end = preEnd;
+      body.post_start = postStart; body.post_end = postEnd;
+    }
 
     try {
       const res = await fetch(`${apiUrl}/api/v1/remote-sensing/analyze`, {
@@ -200,7 +273,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI }) {
     } catch (e) {
       setError(`Failed to submit: ${e.message}`); setLoading(false);
     }
-  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices]);
+  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices, changeIndex, period1Start, period1End, period2Start, period2End, preStart, preEnd, postStart, postEnd]);
 
   const meta = TOOL_META[tool];
 
@@ -210,7 +283,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI }) {
         Spectra — Remote Sensing
       </div>
       <div style={{ fontSize: 11, color: S.text3, lineHeight: 1.5, marginBottom: 10 }}>
-        Direct access to spectral indices, terrain, land cover, snow cover, and SAR — each result states its dataset, resolution, and formula.
+        Direct access to spectral indices, terrain, land cover, snow cover, SAR, change detection, burn severity, and atmospheric composition — each result states its dataset, resolution, and formula.
       </div>
 
       <Field label="Tool">
@@ -261,6 +334,54 @@ export default function SpectraPanel({ apiUrl, drawnAOI }) {
               style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
           </div>
         </Field>
+      )}
+
+      {meta.needsTwoPeriods && (
+        <>
+          <Field label="Index to compare">
+            <select value={changeIndex} onChange={e => setChangeIndex(e.target.value)}
+              style={{ width: '100%', background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }}>
+              {INDEX_CHOICES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+            </select>
+          </Field>
+          <Field label="Period 1 (baseline)">
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type="date" value={period1Start} onChange={e => setPeriod1Start(e.target.value)}
+                style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
+              <input type="date" value={period1End} onChange={e => setPeriod1End(e.target.value)}
+                style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
+            </div>
+          </Field>
+          <Field label="Period 2 (comparison)">
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type="date" value={period2Start} onChange={e => setPeriod2Start(e.target.value)}
+                style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
+              <input type="date" value={period2End} onChange={e => setPeriod2End(e.target.value)}
+                style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
+            </div>
+          </Field>
+        </>
+      )}
+
+      {meta.needsPrePost && (
+        <>
+          <Field label="Pre-fire period">
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type="date" value={preStart} onChange={e => setPreStart(e.target.value)}
+                style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
+              <input type="date" value={preEnd} onChange={e => setPreEnd(e.target.value)}
+                style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
+            </div>
+          </Field>
+          <Field label="Post-fire period">
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type="date" value={postStart} onChange={e => setPostStart(e.target.value)}
+                style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
+              <input type="date" value={postEnd} onChange={e => setPostEnd(e.target.value)}
+                style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
+            </div>
+          </Field>
+        </>
       )}
 
       <button onClick={run} disabled={loading || (tool === 'spectral_indices' && selectedIndices.length === 0)} style={{

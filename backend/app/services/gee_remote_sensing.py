@@ -372,3 +372,245 @@ def compute_sar_backscatter(aoi: Dict, start_date: str, end_date: str) -> Dict[s
         ),
         "aoi_area_km2": round(_region_area_km2(region), 3),
     }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Change detection — generalized two-period diff for any spectral index above,
+# instead of a separate single-purpose function per index (gee_client.py's
+# vegetation_change/builtup_change/water_change already do this per-index for
+# the Analyze tab's natural-language flow; this is the same underlying idea
+# exposed directly for any of the 7 indices, picked explicitly rather than
+# inferred from a sentence).
+# ═════════════════════════════════════════════════════════════════════════════
+
+def compute_change_detection(aoi: Dict, index_id: str, period1_start: str, period1_end: str,
+                              period2_start: str, period2_end: str) -> Dict[str, Any]:
+    """Diffs a chosen spectral index between two independent date ranges
+    (e.g. two different years/seasons) over the same AOI. Returns the
+    mean value for each period, the delta, and % change — not just a
+    single-date snapshot."""
+    logger.info(f"GEE (remote sensing): change_detection {index_id} {period1_start}->{period1_end} vs {period2_start}->{period2_end}")
+    if index_id not in INDEX_DEFINITIONS:
+        raise ValueError(f"Unknown index: {index_id}. Valid: {list(INDEX_DEFINITIONS)}")
+
+    region = _polygon_geometry(aoi)
+    composite1, count1 = _s2_composite(region, period1_start, period1_end)
+    composite2, count2 = _s2_composite(region, period2_start, period2_end)
+
+    img1 = _index_image(composite1, index_id)
+    img2 = _index_image(composite2, index_id)
+    band_name = index_id.upper()
+
+    stats1 = img1.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
+    stats2 = img2.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
+    mean1 = stats1.get(band_name, 0) or 0
+    mean2 = stats2.get(band_name, 0) or 0
+    delta = mean2 - mean1
+    pct_change = (delta / abs(mean1) * 100) if mean1 != 0 else None
+
+    d = INDEX_DEFINITIONS[index_id]
+    return {
+        "index": index_id, "label": d["label"],
+        "period1": {"start": period1_start, "end": period1_end, "mean": round(mean1, 4), "scene_count": count1},
+        "period2": {"start": period2_start, "end": period2_end, "mean": round(mean2, 4), "scene_count": count2},
+        "delta": round(delta, 4),
+        "pct_change": round(pct_change, 2) if pct_change is not None else None,
+        "method": f"{d['label']} computed independently for both periods from cloud-masked Sentinel-2 SR median composites, 20m, then differenced (period 2 minus period 1). A positive delta means the index increased.",
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Burn severity — dNBR (differenced Normalized Burn Ratio), the standard USGS
+# post-fire assessment method (Key & Benson 2006), distinct from gee_client.py's
+# fire_detection (MODIS active-fire/burned-area DETECTION) — this is severity
+# CLASSIFICATION of an already-identified burn, at Sentinel-2's finer 20m.
+# ═════════════════════════════════════════════════════════════════════════════
+
+# USGS FIREMON standard dNBR severity breakpoints (Key & Benson 2006)
+DNBR_SEVERITY_CLASSES = [
+    (-1.0, -0.25, "High post-fire regrowth"),
+    (-0.25, -0.1, "Low post-fire regrowth"),
+    (-0.1, 0.1, "Unburned"),
+    (0.1, 0.27, "Low severity"),
+    (0.27, 0.44, "Moderate-low severity"),
+    (0.44, 0.66, "Moderate-high severity"),
+    (0.66, 1.3, "High severity"),
+]
+
+
+def _classify_dnbr(value: float) -> str:
+    for lo, hi, label in DNBR_SEVERITY_CLASSES:
+        if lo <= value < hi:
+            return label
+    return "Unclassified"
+
+
+def compute_burn_severity(aoi: Dict, pre_start: str, pre_end: str, post_start: str, post_end: str) -> Dict[str, Any]:
+    """dNBR burn severity between a pre-fire and post-fire period, using
+    the standard USGS FIREMON classification (Key & Benson 2006).
+    NBR = (NIR - SWIR2) / (NIR + SWIR2) = (B8 - B12) / (B8 + B12);
+    dNBR = NBR_pre - NBR_post (a positive dNBR indicates burn severity,
+    consistent with USGS convention)."""
+    logger.info(f"GEE (remote sensing): burn_severity pre={pre_start}->{pre_end} post={post_start}->{post_end}")
+    region = _polygon_geometry(aoi)
+    pre_composite, pre_count = _s2_composite(region, pre_start, pre_end)
+    post_composite, post_count = _s2_composite(region, post_start, post_end)
+
+    def _nbr(img):
+        return img.normalizedDifference(["B8", "B12"]).rename("NBR")
+
+    nbr_pre = _nbr(pre_composite)
+    nbr_post = _nbr(post_composite)
+    dnbr = nbr_pre.subtract(nbr_post).rename("dNBR")
+
+    dnbr_stats = dnbr.reduceRegion(
+        reducer=ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True),
+        geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
+
+    # Area breakdown by severity class
+    area_km2 = ee.Image.pixelArea().divide(1_000_000)
+    class_areas = {}
+    for lo, hi, label in DNBR_SEVERITY_CLASSES:
+        mask = dnbr.gte(lo).And(dnbr.lt(hi))
+        km2 = _calc_area_km2(mask, region, scale=20)
+        if km2 > 0:
+            class_areas[label] = round(km2, 3)
+
+    return {
+        "dnbr_mean": round(dnbr_stats.get("dNBR_mean", 0) or 0, 4),
+        "dnbr_min": round(dnbr_stats.get("dNBR_min", 0) or 0, 4),
+        "dnbr_max": round(dnbr_stats.get("dNBR_max", 0) or 0, 4),
+        "overall_classification": _classify_dnbr(dnbr_stats.get("dNBR_mean", 0) or 0),
+        "area_by_severity_km2": class_areas,
+        "aoi_area_km2": round(_region_area_km2(region), 3),
+        "pre_fire_scenes": pre_count, "post_fire_scenes": post_count,
+        "method": (
+            "dNBR (Key & Benson 2006, USGS FIREMON standard) = NBR_pre - NBR_post, where NBR = (B8-B12)/(B8+B12) "
+            "on cloud-masked Sentinel-2 SR composites, 20m. Severity classes are the standard USGS breakpoints, "
+            "not a custom threshold. Requires the pre-fire and post-fire periods to be specified correctly by the "
+            "caller — this function has no way to verify a fire actually occurred in the given window."
+        ),
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Atmospheric composition — Sentinel-5P (TROPOMI), free, no key. Complements
+# the surface-focused tools above with a column-density air-quality read —
+# genuinely different physical quantity (atmospheric trace gas column, not
+# surface reflectance/backscatter), included here as a first-class RS tool
+# rather than folded into the Weather tab's ground-station AQI overlay.
+# ═════════════════════════════════════════════════════════════════════════════
+
+S5P_MIN_DATE = "2018-06-28"  # dataset start for the OFFL L3 NO2/SO2/CO/AAI products used below
+
+
+def compute_atmospheric_composition(aoi: Dict, start_date: str, end_date: str) -> Dict[str, Any]:
+    """Tropospheric NO2, SO2, CO column density, and the absorbing
+    aerosol index (AAI) from Sentinel-5P/TROPOMI OFFL L3 products —
+    column densities (mol/m^2), not ground-level concentrations, and
+    not directly comparable to a surface AQI monitor reading."""
+    logger.info(f"GEE (remote sensing): atmospheric_composition {start_date} -> {end_date}")
+    _validate_date_range(start_date, end_date)
+    _require_start_after(start_date, S5P_MIN_DATE, "Sentinel-5P")
+    region = _polygon_geometry(aoi)
+    end_ee = _cap_end_date(end_date)
+
+    def _mean_band(collection_id: str, band: str) -> Dict[str, Any]:
+        col = ee.ImageCollection(collection_id).select(band).filterBounds(region).filterDate(ee.Date(start_date), end_ee)
+        n = col.size().getInfo()
+        if n == 0:
+            return {"mean": None, "scene_count": 0}
+        stats = col.mean().reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=1113, maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
+        return {"mean": stats.get(band), "scene_count": n}
+
+    no2 = _mean_band("COPERNICUS/S5P/OFFL/L3_NO2", "tropospheric_NO2_column_number_density")
+    so2 = _mean_band("COPERNICUS/S5P/OFFL/L3_SO2", "SO2_column_number_density")
+    co = _mean_band("COPERNICUS/S5P/OFFL/L3_CO", "CO_column_number_density")
+    aai = _mean_band("COPERNICUS/S5P/OFFL/L3_NO2", "absorbing_aerosol_index")  # AAI ships as a band of the NO2 product
+
+    def _fmt(d, unit, decimals=6):
+        return {**d, "mean": round(d["mean"], decimals) if d["mean"] is not None else None, "unit": unit}
+
+    return {
+        "no2": _fmt(no2, "mol/m^2 (tropospheric column)"),
+        "so2": _fmt(so2, "mol/m^2 (total column)"),
+        "co": _fmt(co, "mol/m^2 (total column)"),
+        "aerosol_index": _fmt(aai, "dimensionless (UV Absorbing Aerosol Index)", decimals=3),
+        "aoi_area_km2": round(_region_area_km2(region), 3),
+        "method": (
+            "Sentinel-5P/TROPOMI OFFL L3 products (NO2, SO2, CO, aerosol index), mean over the date range, "
+            "~1.1km native resolution (reported at ~1113m). These are ATMOSPHERIC COLUMN densities integrated "
+            "through the full air column (or troposphere, for NO2) — not ground-level concentrations, and not "
+            "directly comparable in units to a surface AQI monitor (e.g. the Weather tab's CPCB stations)."
+        ),
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Index time series — the charting counterpart to Business Intelligence's
+# Analysis tab. A single spectral_indices call gives one mean value for the
+# whole date range; this breaks the range into sub-periods and computes the
+# index for each one independently, so a trend (phenology, gradual
+# degradation, seasonal cycle) is visible rather than collapsed into a
+# single number.
+# ═════════════════════════════════════════════════════════════════════════════
+
+def compute_index_time_series(aoi: Dict, index_id: str, start_date: str, end_date: str, interval: str = "month") -> Dict[str, Any]:
+    """Computes `index_id` independently for each sub-period between
+    start_date and end_date (interval: 'month' or 'quarter'). Periods
+    with zero cloud-free Sentinel-2 scenes are reported as gaps
+    (value=None) rather than silently dropped or erroring the whole
+    series — a gap is itself informative (persistent cloud cover)."""
+    logger.info(f"GEE (remote sensing): index_time_series {index_id} {start_date} -> {end_date} ({interval})")
+    if index_id not in INDEX_DEFINITIONS:
+        raise ValueError(f"Unknown index: {index_id}. Valid: {list(INDEX_DEFINITIONS)}")
+    if interval not in ("month", "quarter"):
+        raise ValueError("interval must be 'month' or 'quarter'.")
+    _validate_date_range(start_date, end_date)
+
+    region = _polygon_geometry(aoi)
+    step_months = 1 if interval == "month" else 3
+
+    from datetime import date
+    y, m = int(start_date[:4]), int(start_date[5:7])
+    end_y, end_m = int(end_date[:4]), int(end_date[5:7])
+    periods = []
+    while (y, m) <= (end_y, end_m):
+        p_start = date(y, m, 1)
+        nm, ny = m + step_months, y
+        if nm > 12:
+            ny += (nm - 1) // 12
+            nm = ((nm - 1) % 12) + 1
+        p_end = date(ny, nm, 1)
+        periods.append((p_start.isoformat(), p_end.isoformat()))
+        y, m = ny, nm
+        if len(periods) > 60:  # sanity cap — a multi-decade daily/monthly request shouldn't run unbounded
+            break
+
+    points = []
+    band_name = index_id.upper()
+    for p_start, p_end in periods:
+        try:
+            col = (
+                ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+                .filterBounds(region).filterDate(ee.Date(p_start), ee.Date(p_end))
+                .map(_mask_s2_clouds)
+            )
+            n = col.size().getInfo()
+            if n == 0:
+                points.append({"date": p_start, "value": None, "scene_count": 0})
+                continue
+            img = _index_image(col.median(), index_id)
+            stats = img.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
+            points.append({"date": p_start, "value": round(stats.get(band_name, 0) or 0, 4), "scene_count": n})
+        except Exception as e:
+            logger.warning(f"index_time_series: period {p_start}-{p_end} failed: {type(e).__name__}: {e}")
+            points.append({"date": p_start, "value": None, "scene_count": 0})
+
+    d = INDEX_DEFINITIONS[index_id]
+    return {
+        "index": index_id, "label": d["label"], "interval": interval,
+        "points": points,
+        "method": f"{d['label']} computed independently for each {interval} from a cloud-masked Sentinel-2 SR median composite, 20m. Periods with zero cloud-free scenes are reported as gaps (value: null), not interpolated or dropped.",
+    }
