@@ -5,6 +5,7 @@ import CommodityTicker from './components/CommodityTicker';
 import SupplyChainStatus from './components/SupplyChainStatus';
 import BusinessIntelBar from './components/BusinessIntelBar';
 import SpectraPanel from './components/SpectraPanel';
+import SpectraIntelBar from './components/SpectraIntelBar';
 import SubscribeWidget from './components/SubscribeWidget';
 import ErrorBoundary from './components/ErrorBoundary';
 import AgriPanel from './components/AgriPanel';
@@ -2325,6 +2326,8 @@ export default function App({ tier = 'full', onChangeTier }) {
       </div>
 
       {!isMobile && tab === 'Business' && <BusinessIntelBar apiUrl={API_URL} />}
+
+      {!isMobile && tab === 'Spectra' && <SpectraIntelBar apiUrl={API_URL} drawnAOI={drawnAOI} />}
 
       {isMobile && mobilePanel === 'analyze' && (
         <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:S.surface, overflow:'hidden' }}>
