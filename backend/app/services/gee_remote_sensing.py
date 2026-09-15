@@ -366,9 +366,14 @@ def compute_snow_cover(aoi: Dict, start_date: str, end_date: str) -> Dict[str, A
     aoi_km2 = _region_area_km2(region)
 
     ndsi_stats = ndsi.reduceRegion(
-        reducer=ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True),
+        reducer=ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True),
         geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
     ).getInfo()
+
+    valid_px = composite.select("B3").mask().reduceRegion(
+        reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
+    valid_pixel_fraction = round((valid_px.get("B3", 0) or 0), 4)
 
     return {
         "snow_covered_km2": round(snow_km2, 3),
@@ -376,7 +381,14 @@ def compute_snow_cover(aoi: Dict, start_date: str, end_date: str) -> Dict[str, A
         "snow_cover_pct": round((snow_km2 / aoi_km2 * 100) if aoi_km2 > 0 else 0, 2),
         "ndsi_mean": round(ndsi_stats.get("NDSI_mean", 0) or 0, 4),
         "ndsi_max": round(ndsi_stats.get("NDSI_max", 0) or 0, 4),
+        "ndsi_std_dev": round(ndsi_stats.get("NDSI_stdDev", 0) or 0, 4),
         "threshold_used": NDSI_SNOW_THRESHOLD,
+        "valid_pixel_fraction": valid_pixel_fraction,
+        # Binary mask (0/1) rather than the continuous NDSI field — a
+        # scientist checking THIS tool's output wants to see exactly the
+        # pixels classified as snow at the stated threshold, not a
+        # smoothed gradient that hides where the cutoff actually fell.
+        "map_layer": _tile_layer(snow_mask.selfMask(), {"palette": ["#4292c6"]}),
         "method": f"NDSI = (Green-SWIR1)/(Green+SWIR1) via Sentinel-2 SR (B3/B11), cloud-masked median composite of {scene_count} scene(s), 20m resolution. Classified as snow where NDSI > {NDSI_SNOW_THRESHOLD} (Hall et al. 1995 threshold).",
         "scene_count": scene_count,
     }
@@ -427,11 +439,23 @@ def compute_sar_backscatter(aoi: Dict, start_date: str, end_date: str) -> Dict[s
     rvi = vh_lin.multiply(4).divide(vv_lin.add(vh_lin)).rename("RVI")
     rvi_stats = rvi.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
 
+    valid_px = composite.select("VV").mask().reduceRegion(
+        reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
+    valid_pixel_fraction = round((valid_px.get("VV", 0) or 0), 4)
+
     return {
         "vv_db": {"mean": round(stats.get("VV_mean", 0) or 0, 2), "std_dev": round(stats.get("VV_stdDev", 0) or 0, 2)},
         "vh_db": {"mean": round(stats.get("VH_mean", 0) or 0, 2), "std_dev": round(stats.get("VH_stdDev", 0) or 0, 2)},
         "radar_vegetation_index": round(rvi_stats.get("RVI", 0) or 0, 4),
         "scene_count": scene_count,
+        "valid_pixel_fraction": valid_pixel_fraction,
+        # RVI (not raw VV/VH dB) as the map layer — it's the single-band
+        # normalized quantity, so it colors meaningfully across the AOI;
+        # VV/VH dB would need a per-scene min/max to look right and
+        # doesn't have a widely agreed-on color convention the way RVI's
+        # 0-1 range does.
+        "map_layer": _tile_layer(rvi, {"min": 0, "max": 1, "palette": ["#f7fcf5", "#74c476", "#00441b"]}),
         "method": (
             f"Sentinel-1 GRD, IW mode, dual-pol (VV+VH), median composite of {scene_count} scene(s), 20m analysis "
             f"resolution. Backscatter reported in dB as provided by the GEE S1_GRD product. RVI = 4*VH/(VV+VH), "
@@ -469,20 +493,31 @@ def compute_change_detection(aoi: Dict, index_id: str, period1_start: str, perio
     img2 = _index_image(composite2, index_id)
     band_name = index_id.upper()
 
-    stats1 = img1.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
-    stats2 = img2.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
+    stats1 = img1.reduceRegion(
+        reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
+        geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
+    stats2 = img2.reduceRegion(
+        reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
+        geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
     mean1 = stats1.get(band_name, 0) or 0
     mean2 = stats2.get(band_name, 0) or 0
     delta = mean2 - mean1
     pct_change = (delta / abs(mean1) * 100) if mean1 != 0 else None
 
+    delta_img = img2.subtract(img1).rename("delta")
+
     d = INDEX_DEFINITIONS[index_id]
     return {
         "index": index_id, "label": d["label"],
-        "period1": {"start": period1_start, "end": period1_end, "mean": round(mean1, 4), "scene_count": count1},
-        "period2": {"start": period2_start, "end": period2_end, "mean": round(mean2, 4), "scene_count": count2},
+        "period1": {"start": period1_start, "end": period1_end, "mean": round(mean1, 4), "std_dev": round(stats1.get(f"{band_name}_stdDev", 0) or 0, 4), "scene_count": count1},
+        "period2": {"start": period2_start, "end": period2_end, "mean": round(mean2, 4), "std_dev": round(stats2.get(f"{band_name}_stdDev", 0) or 0, 4), "scene_count": count2},
         "delta": round(delta, 4),
         "pct_change": round(pct_change, 2) if pct_change is not None else None,
+        # Diverging red-white-green: negative delta (index decreased) reads
+        # red, positive (increased) reads green — consistent direction
+        # regardless of which index was picked, so it's readable without
+        # re-deriving what "positive" means for NDVI vs NDBI each time.
+        "map_layer": _tile_layer(delta_img, {"min": -0.3, "max": 0.3, "palette": ["#a50026", "#ffffbf", "#1a9850"]}),
         "method": f"{d['label']} computed independently for both periods from cloud-masked Sentinel-2 SR median composites, 20m, then differenced (period 2 minus period 1). A positive delta means the index increased.",
     }
 
@@ -597,9 +632,12 @@ def compute_atmospheric_composition(aoi: Dict, start_date: str, end_date: str) -
         col = ee.ImageCollection(collection_id).select(band).filterBounds(region).filterDate(ee.Date(start_date), end_ee)
         n = col.size().getInfo()
         if n == 0:
-            return {"mean": None, "scene_count": 0}
-        stats = col.mean().reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=1113, maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
-        return {"mean": stats.get(band), "scene_count": n}
+            return {"mean": None, "std_dev": None, "scene_count": 0}
+        stats = col.mean().reduceRegion(
+            reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
+            geometry=region, scale=1113, maxPixels=1e9, bestEffort=True, tileScale=4,
+        ).getInfo()
+        return {"mean": stats.get(band), "std_dev": stats.get(f"{band}_stdDev"), "scene_count": n}
 
     no2 = _mean_band("COPERNICUS/S5P/OFFL/L3_NO2", "tropospheric_NO2_column_number_density")
     so2 = _mean_band("COPERNICUS/S5P/OFFL/L3_SO2", "SO2_column_number_density")
@@ -607,7 +645,12 @@ def compute_atmospheric_composition(aoi: Dict, start_date: str, end_date: str) -
     aai = _mean_band("COPERNICUS/S5P/OFFL/L3_NO2", "absorbing_aerosol_index")  # AAI ships as a band of the NO2 product
 
     def _fmt(d, unit, decimals=6):
-        return {**d, "mean": round(d["mean"], decimals) if d["mean"] is not None else None, "unit": unit}
+        return {
+            **d,
+            "mean": round(d["mean"], decimals) if d["mean"] is not None else None,
+            "std_dev": round(d["std_dev"], decimals) if d.get("std_dev") is not None else None,
+            "unit": unit,
+        }
 
     return {
         "no2": _fmt(no2, "mol/m^2 (tropospheric column)"),

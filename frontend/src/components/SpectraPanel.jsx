@@ -156,9 +156,14 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
       <div>
         <StatRow label="Snow-covered area" value={`${result.snow_covered_km2} km²`} />
         <StatRow label="% of AOI" value={`${result.snow_cover_pct}%`} />
-        <StatRow label="NDSI (mean / max)" value={`${result.ndsi_mean} / ${result.ndsi_max}`} />
+        <StatRow label="NDSI (mean / max / σ)" value={`${result.ndsi_mean} / ${result.ndsi_max} / ${result.ndsi_std_dev}`} />
         <StatRow label="Classification threshold" value={`NDSI > ${result.threshold_used}`} />
         <StatRow label="Scenes used" value={result.scene_count} />
+        {result.valid_pixel_fraction != null && (
+          <StatRow label="Valid pixel coverage" value={`${Math.round(result.valid_pixel_fraction * 100)}%`} />
+        )}
+        <MapLayerButton mapLayer={result.map_layer} label="snow mask" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'snow_cover'} onActivate={() => setActiveLayerId?.('snow_cover')} />
         <MethodNote text={result.method} />
       </div>
     );
@@ -170,6 +175,11 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         <StatRow label="VH backscatter (mean)" value={`${result.vh_db.mean} dB (σ ${result.vh_db.std_dev})`} />
         <StatRow label="Radar Vegetation Index" value={result.radar_vegetation_index} />
         <StatRow label="Scenes used" value={result.scene_count} />
+        {result.valid_pixel_fraction != null && (
+          <StatRow label="Valid pixel coverage" value={`${Math.round(result.valid_pixel_fraction * 100)}%`} />
+        )}
+        <MapLayerButton mapLayer={result.map_layer} label="RVI" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'sar_backscatter'} onActivate={() => setActiveLayerId?.('sar_backscatter')} />
         <MethodNote text={result.method} />
       </div>
     );
@@ -182,16 +192,18 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
           <div style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '8px 10px' }}>
             <div style={{ fontSize: 9.5, color: S.text3, marginBottom: 3 }}>Period 1 ({result.period1.start} → {result.period1.end})</div>
             <div style={{ fontFamily: S.mono, fontSize: 16, color: S.text }}>{result.period1.mean}</div>
-            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2 }}>{result.period1.scene_count} scene(s)</div>
+            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2 }}>σ {result.period1.std_dev} &middot; {result.period1.scene_count} scene(s)</div>
           </div>
           <div style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '8px 10px' }}>
             <div style={{ fontSize: 9.5, color: S.text3, marginBottom: 3 }}>Period 2 ({result.period2.start} → {result.period2.end})</div>
             <div style={{ fontFamily: S.mono, fontSize: 16, color: S.text }}>{result.period2.mean}</div>
-            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2 }}>{result.period2.scene_count} scene(s)</div>
+            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2 }}>σ {result.period2.std_dev} &middot; {result.period2.scene_count} scene(s)</div>
           </div>
         </div>
         <StatRow label="Delta (P2 - P1)" value={<span style={{ color: upColor }}>{result.delta > 0 ? '+' : ''}{result.delta}</span>} />
         {result.pct_change != null && <StatRow label="% change" value={`${result.pct_change > 0 ? '+' : ''}${result.pct_change}%`} />}
+        <MapLayerButton mapLayer={result.map_layer} label="delta" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'change_detection'} onActivate={() => setActiveLayerId?.('change_detection')} />
         <MethodNote text={result.method} />
       </div>
     );
@@ -221,10 +233,10 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
   if (tool === 'atmospheric_composition') {
     return (
       <div>
-        <StatRow label="Tropospheric NO2" value={result.no2.mean != null ? `${result.no2.mean} ${result.no2.unit}` : 'No data'} />
-        <StatRow label="SO2" value={result.so2.mean != null ? `${result.so2.mean} ${result.so2.unit}` : 'No data'} />
-        <StatRow label="CO" value={result.co.mean != null ? `${result.co.mean} ${result.co.unit}` : 'No data'} />
-        <StatRow label="Aerosol Index" value={result.aerosol_index.mean != null ? result.aerosol_index.mean : 'No data'} />
+        <StatRow label="Tropospheric NO2" value={result.no2.mean != null ? `${result.no2.mean} ${result.no2.unit} (σ ${result.no2.std_dev})` : 'No data'} />
+        <StatRow label="SO2" value={result.so2.mean != null ? `${result.so2.mean} ${result.so2.unit} (σ ${result.so2.std_dev})` : 'No data'} />
+        <StatRow label="CO" value={result.co.mean != null ? `${result.co.mean} ${result.co.unit} (σ ${result.co.std_dev})` : 'No data'} />
+        <StatRow label="Aerosol Index" value={result.aerosol_index.mean != null ? `${result.aerosol_index.mean} (σ ${result.aerosol_index.std_dev})` : 'No data'} />
         <MethodNote text={result.method} />
       </div>
     );
