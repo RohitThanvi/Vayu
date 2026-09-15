@@ -34,6 +34,25 @@ from .gee_client import (
 logger = logging.getLogger(__name__)
 
 
+def _tile_layer(image: "ee.Image", vis_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Returns an XYZ tile URL template (e.g. '.../{z}/{x}/{y}') for the
+    given image, so the frontend can render the ACTUAL pixel-level raster
+    as a Leaflet tile layer on the live map — not just the AOI-averaged
+    number every tool already returns. This is a live GEE-backed tile
+    endpoint, not a static thumbnail: panning/zooming re-requests tiles
+    from Earth Engine directly, same mechanism the existing satellite
+    layer toggles in App.jsx already use for NDVI/SAR/Thermal.
+
+    vis_params follows GEE's normal visualization param shape, e.g.
+    {'min': -1, 'max': 1, 'palette': ['red', 'white', 'green']}.
+    """
+    map_id_dict = image.getMapId(vis_params)
+    return {
+        "tile_url": map_id_dict["tile_fetcher"].url_format,
+        "vis_params": vis_params,
+    }
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Spectral index formulas — all standard, citable definitions. Computed on a
 # cloud-masked Sentinel-2 SR median composite (same cloud-masking as the rest
@@ -139,6 +158,29 @@ def compute_spectral_indices(aoi: Dict, start_date: str, end_date: str, indices:
     region = _polygon_geometry(aoi)
     composite, scene_count = _s2_composite(region, start_date, end_date)
 
+    # Fraction of the AOI actually covered by cloud-free pixels in the
+    # composite (vs. gaps left by cloud masking) — an AOI-mean number
+    # computed from a composite that's only 40% valid pixel coverage is
+    # a much shakier number than one from 95% coverage, but without this
+    # field there'd be no way to tell the two apart.
+    valid_px = composite.select("B4").mask().reduceRegion(
+        reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
+    valid_pixel_fraction = round((valid_px.get("B4", 0) or 0), 4)
+
+    # Standard, roughly perceptually-even palettes for the indices most
+    # likely to actually get looked at as a map rather than just a
+    # number — not exhaustive, but covers vegetation/water/built-up.
+    INDEX_PALETTES = {
+        "ndvi": {"min": -0.2, "max": 0.8, "palette": ["#a50026", "#f46d43", "#fee08b", "#66bd63", "#1a9850"]},
+        "savi": {"min": -0.2, "max": 0.8, "palette": ["#a50026", "#f46d43", "#fee08b", "#66bd63", "#1a9850"]},
+        "evi": {"min": -0.2, "max": 0.8, "palette": ["#a50026", "#f46d43", "#fee08b", "#66bd63", "#1a9850"]},
+        "ndwi": {"min": -0.5, "max": 0.5, "palette": ["#8c510a", "#f6e8c3", "#c7eae5", "#01665e"]},
+        "mndwi": {"min": -0.5, "max": 0.5, "palette": ["#8c510a", "#f6e8c3", "#c7eae5", "#01665e"]},
+        "ndbi": {"min": -0.3, "max": 0.3, "palette": ["#ffffcc", "#fed976", "#fd8d3c", "#e31a1c"]},
+        "ndsi": {"min": -0.2, "max": 0.8, "palette": ["#08306b", "#4292c6", "#c6dbef", "#ffffff"]},
+    }
+
     results = {}
     for idx_id in indices:
         img = _index_image(composite, idx_id)
@@ -155,12 +197,14 @@ def compute_spectral_indices(aoi: Dict, start_date: str, end_date: str, indices:
             "min": round(stats.get(f"{band_name}_min", 0) or 0, 4),
             "max": round(stats.get(f"{band_name}_max", 0) or 0, 4),
             "std_dev": round(stats.get(f"{band_name}_stdDev", 0) or 0, 4),
+            "map_layer": _tile_layer(img, INDEX_PALETTES.get(idx_id, {"min": -1, "max": 1, "palette": ["#000000", "#ffffff"]})),
         }
 
     return {
         "indices": results,
         "method": f"Sentinel-2 SR Harmonized, cloud-masked via Scene Classification Layer, median composite of {scene_count} scene(s), 10-20m native resolution.",
         "scene_count": scene_count,
+        "valid_pixel_fraction": valid_pixel_fraction,
         "aoi_area_km2": round(_region_area_km2(region), 3),
     }
 
@@ -234,6 +278,16 @@ WORLDCOVER_CLASSES = {
     100: "Moss and lichen",
 }
 
+# ESA WorldCover's own official per-class colors (from the product's
+# published color legend) — using these rather than inventing our own
+# palette means the map matches what WorldCover's own documentation and
+# other tools that display this dataset show, so it's recognizable to
+# anyone already familiar with the product.
+WORLDCOVER_PALETTE = [
+    "006400", "ffbb22", "ffff4c", "f096ff", "fa0000", "b4b4b4",
+    "f0f0f0", "0064c8", "0096a0", "00cf75", "fae6a0",
+]  # ordered to match class codes 10,20,...,100
+
 
 def compute_lulc_classification(aoi: Dict) -> Dict[str, Any]:
     """Land-use/land-cover class area breakdown from ESA WorldCover v200
@@ -266,11 +320,25 @@ def compute_lulc_classification(aoi: Dict) -> Dict[str, Any]:
         })
     classes.sort(key=lambda c: c["area_km2"], reverse=True)
 
+    # WorldCover's class codes (10, 20, ..., 100) aren't contiguous, so
+    # visualizing them directly would have GEE linearly interpolate the
+    # palette across the whole 10-100 range — smearing color between
+    # classes and through the unused code gaps (e.g. between 40 and 50)
+    # instead of giving each class one flat, correct color. Remap to a
+    # dense 0..10 sequence first so each class lands on an exact
+    # palette entry.
+    class_codes = sorted(WORLDCOVER_CLASSES.keys())
+    wc_dense = wc.remap(class_codes, list(range(len(class_codes))))
+
     return {
         "classes": classes,
         "total_classified_km2": round(total_km2, 3),
         "aoi_area_km2": round(_region_area_km2(region), 3),
-        "method": "ESA WorldCover v200, 10m resolution, calendar year 2021, Sentinel-1+Sentinel-2-derived (Zanaga et al. 2022, doi:10.5281/zenodo.7254221). Overall validated accuracy 76.7%.",
+        "map_layer": _tile_layer(wc_dense, {
+            "min": 0, "max": len(class_codes) - 1,
+            "palette": WORLDCOVER_PALETTE,
+        }),
+        "method": "ESA WorldCover v200, 10m resolution, calendar year 2021, Sentinel-1+Sentinel-2-derived (Zanaga et al. 2022, doi:10.5281/zenodo.7254221). Overall validated accuracy 76.7%. Map colors are WorldCover's own official class palette.",
     }
 
 
@@ -464,7 +532,7 @@ def compute_burn_severity(aoi: Dict, pre_start: str, pre_end: str, post_start: s
     dnbr = nbr_pre.subtract(nbr_post).rename("dNBR")
 
     dnbr_stats = dnbr.reduceRegion(
-        reducer=ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True),
+        reducer=ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True),
         geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
     ).getInfo()
 
@@ -481,10 +549,19 @@ def compute_burn_severity(aoi: Dict, pre_start: str, pre_end: str, post_start: s
         "dnbr_mean": round(dnbr_stats.get("dNBR_mean", 0) or 0, 4),
         "dnbr_min": round(dnbr_stats.get("dNBR_min", 0) or 0, 4),
         "dnbr_max": round(dnbr_stats.get("dNBR_max", 0) or 0, 4),
+        "dnbr_std_dev": round(dnbr_stats.get("dNBR_stdDev", 0) or 0, 4),
         "overall_classification": _classify_dnbr(dnbr_stats.get("dNBR_mean", 0) or 0),
         "area_by_severity_km2": class_areas,
         "aoi_area_km2": round(_region_area_km2(region), 3),
         "pre_fire_scenes": pre_count, "post_fire_scenes": post_count,
+        # USGS FIREMON's own conventional severity color ramp (blue-green
+        # regrowth through yellow/orange/red severity) — same breakpoints
+        # as DNBR_SEVERITY_CLASSES above, so the map and the tabulated
+        # area-by-severity numbers describe the same classification.
+        "map_layer": _tile_layer(dnbr, {
+            "min": -0.25, "max": 0.66,
+            "palette": ["#1a9850", "#66bd63", "#ffffbf", "#fdae61", "#f46d43", "#a50026"],
+        }),
         "method": (
             "dNBR (Key & Benson 2006, USGS FIREMON standard) = NBR_pre - NBR_post, where NBR = (B8-B12)/(B8+B12) "
             "on cloud-masked Sentinel-2 SR composites, 20m. Severity classes are the standard USGS breakpoints, "
