@@ -1471,7 +1471,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
           />
         )}
         {tab === 'Spectra' && (
-          <SpectraPanel apiUrl={apiUrl} drawnAOI={drawnAOI} />
+          <SpectraPanel apiUrl={apiUrl} drawnAOI={drawnAOI} onShowOverlay={showSpectraOverlay} onClearOverlay={clearSpectraOverlay} />
         )}
       </div>
       <div style={{ flexShrink:0, padding:'10px 14px', borderTop:`1px solid ${S.border}` }}>
@@ -1571,6 +1571,10 @@ export default function App({ tier = 'full', onChangeTier }) {
   const layersRef       = useRef([]);
   const weatherTileRefs = useRef({});     // 'temp'|'wind'|'pressure' -> L.tileLayer instance
   const satelliteTileRefs = useRef({});   // 'true_color'|'ndvi'|'sar'|'thermal'|'worldview' -> L.tileLayer instance
+  // Single-slot: the Spectra tab shows one classified/index raster at a
+  // time (unlike the satellite toggles, which can be layered). A new
+  // call to showSpectraOverlay replaces whatever was on before.
+  const spectraOverlayRef = useRef(null);
   const aqiLayerRef     = useRef(null);   // LayerGroup for CPCB AQI station markers
   const pollRef         = useRef(null);
   const aoiBoundsRef    = useRef(null);
@@ -2053,6 +2057,31 @@ export default function App({ tier = 'full', onChangeTier }) {
       })
       .finally(() => setSatelliteLoadingKey(null));
   }, [satelliteLayers]);
+
+  // showSpectraOverlay/clearSpectraOverlay: lets Spectra tool results
+  // (spectral index maps, the LULC classification, dNBR burn severity —
+  // see gee_remote_sensing.py's map_layer field) render as an actual
+  // pixel-level Leaflet tile layer on the live map, exactly the same
+  // mechanism as the satellite NDVI/SAR/Thermal toggles above — instead
+  // of only ever showing an AOI-averaged number. Single-slot by design:
+  // switching tools/indices in Spectra replaces the previous overlay
+  // rather than stacking layers indefinitely.
+  const showSpectraOverlay = useCallback((tileUrl, opts = {}) => {
+    if (!mapRef.current || !tileUrl) return;
+    if (spectraOverlayRef.current) {
+      mapRef.current.removeLayer(spectraOverlayRef.current);
+      spectraOverlayRef.current = null;
+    }
+    const tl = L.tileLayer(tileUrl, { opacity: opts.opacity ?? 0.75, zIndex: 5 }).addTo(mapRef.current);
+    spectraOverlayRef.current = tl;
+  }, []);
+
+  const clearSpectraOverlay = useCallback(() => {
+    if (spectraOverlayRef.current && mapRef.current) {
+      mapRef.current.removeLayer(spectraOverlayRef.current);
+    }
+    spectraOverlayRef.current = null;
+  }, []);
 
   const handleEventClick = useCallback((event) => {
     setSelectedIntelEvent(event);

@@ -71,7 +71,24 @@ function StatRow({ label, value }) {
   );
 }
 
-function ResultView({ tool, result }) {
+function MapLayerButton({ mapLayer, label, onShowOverlay, active, onActivate }) {
+  if (!mapLayer?.tile_url || !onShowOverlay) return null;
+  return (
+    <button
+      onClick={() => { onShowOverlay(mapLayer.tile_url); onActivate?.(); }}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontFamily: S.mono,
+        background: active ? 'rgba(201,168,106,0.14)' : 'rgba(126,184,212,0.08)',
+        border: `1px solid ${active ? S.gold : S.accent}`, color: active ? S.gold : S.accent,
+        padding: '3px 8px', borderRadius: 3, cursor: 'pointer', marginTop: 4,
+      }}
+    >
+      ▦ {active ? 'Shown on map' : `Show ${label || 'map'} on map`}
+    </button>
+  );
+}
+
+function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayerId }) {
   if (tool === 'spectral_indices') {
     return (
       <div>
@@ -86,8 +103,15 @@ function ResultView({ tool, result }) {
             <div style={{ display: 'flex', gap: 12, fontSize: 10, color: S.text3, fontFamily: S.mono }}>
               <span>min {d.min}</span><span>max {d.max}</span><span>σ {d.std_dev}</span>
             </div>
+            <MapLayerButton mapLayer={d.map_layer} label={id.toUpperCase()} onShowOverlay={onShowOverlay}
+              active={activeLayerId === id} onActivate={() => setActiveLayerId?.(id)} />
           </div>
         ))}
+        {result.valid_pixel_fraction != null && (
+          <div style={{ fontSize: 10, color: S.text3, marginBottom: 6 }}>
+            Valid (cloud-free) pixel coverage: {Math.round(result.valid_pixel_fraction * 100)}% of AOI
+          </div>
+        )}
         <MethodNote text={result.method} />
       </div>
     );
@@ -121,6 +145,8 @@ function ResultView({ tool, result }) {
             <div style={{ fontSize: 9.5, color: S.text3, marginTop: 1 }}>{c.area_km2} km²</div>
           </div>
         ))}
+        <MapLayerButton mapLayer={result.map_layer} label="classification" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'lulc'} onActivate={() => setActiveLayerId?.('lulc')} />
         <MethodNote text={result.method} />
       </div>
     );
@@ -175,6 +201,7 @@ function ResultView({ tool, result }) {
       <div>
         <StatRow label="dNBR (mean)" value={result.dnbr_mean} />
         <StatRow label="dNBR (min / max)" value={`${result.dnbr_min} / ${result.dnbr_max}`} />
+        <StatRow label="dNBR (σ)" value={result.dnbr_std_dev} />
         <StatRow label="Overall classification" value={result.overall_classification} />
         <StatRow label="Pre / post fire scenes" value={`${result.pre_fire_scenes} / ${result.post_fire_scenes}`} />
         {Object.keys(result.area_by_severity_km2).length > 0 && (
@@ -185,6 +212,8 @@ function ResultView({ tool, result }) {
             ))}
           </div>
         )}
+        <MapLayerButton mapLayer={result.map_layer} label="dNBR severity" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'burn_severity'} onActivate={() => setActiveLayerId?.('burn_severity')} />
         <MethodNote text={result.method} />
       </div>
     );
@@ -203,7 +232,7 @@ function ResultView({ tool, result }) {
   return null;
 }
 
-export default function SpectraPanel({ apiUrl, drawnAOI }) {
+export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearOverlay }) {
   const [tool, setTool] = useState('spectral_indices');
   const [startDate, setStartDate] = useState(todayMinus(90));
   const [endDate, setEndDate] = useState(todayMinus(0));
@@ -220,9 +249,14 @@ export default function SpectraPanel({ apiUrl, drawnAOI }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [activeLayerId, setActiveLayerId] = useState(null);
   const pollRef = useRef(null);
 
-  useEffect(() => () => clearInterval(pollRef.current), []);
+  // Clear any map overlay left over from a previous result when the whole
+  // panel unmounts (i.e. the user leaves the Spectra tab) — otherwise a
+  // classified raster would keep sitting on the map after switching to
+  // Analyze/Business/Agri, which has nothing to do with what's showing there.
+  useEffect(() => () => { clearInterval(pollRef.current); onClearOverlay?.(); }, []);
 
   const toggleIndex = (id) => {
     setSelectedIndices(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
@@ -264,7 +298,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI }) {
           const d = await r.json();
           if (d.status === 'done') {
             clearInterval(pollRef.current);
-            setResult(d.result); setLoading(false);
+            setResult(d.result); setLoading(false); setActiveLayerId(null);
           }
         } catch (e) {
           clearInterval(pollRef.current); setError(`Polling error: ${e.message}`); setLoading(false);
@@ -289,7 +323,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI }) {
       <Field label="Tool">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {Object.entries(TOOL_META).map(([id, m]) => (
-            <button key={id} onClick={() => { setTool(id); setResult(null); setError(null); }} style={{
+            <button key={id} onClick={() => { setTool(id); setResult(null); setError(null); setActiveLayerId(null); onClearOverlay?.(); }} style={{
               background: tool === id ? 'rgba(126,184,212,0.12)' : S.surface2,
               border: `1px solid ${tool === id ? S.accent : S.border}`,
               color: tool === id ? S.accent : S.text2, fontFamily: S.mono, fontSize: 11,
@@ -399,7 +433,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI }) {
 
       {result && (
         <div style={{ marginTop: 14, borderTop: `1px solid ${S.border}`, paddingTop: 12 }}>
-          <ResultView tool={tool} result={result} />
+          <ResultView tool={tool} result={result} onShowOverlay={onShowOverlay} activeLayerId={activeLayerId} setActiveLayerId={setActiveLayerId} />
         </div>
       )}
     </div>
