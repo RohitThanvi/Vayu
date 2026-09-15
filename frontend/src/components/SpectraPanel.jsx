@@ -71,20 +71,39 @@ function StatRow({ label, value }) {
   );
 }
 
-function MapLayerButton({ mapLayer, label, onShowOverlay, active, onActivate }) {
-  if (!mapLayer?.tile_url || !onShowOverlay) return null;
+function RasterControls({ mapLayer, downloadUrl, label, onShowOverlay, active, onActivate }) {
+  const hasMap = mapLayer?.tile_url && onShowOverlay;
+  const hasDownload = !!downloadUrl;
+  if (!hasMap && !hasDownload) return null;
   return (
-    <button
-      onClick={() => { onShowOverlay(mapLayer.tile_url); onActivate?.(); }}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontFamily: S.mono,
-        background: active ? 'rgba(201,168,106,0.14)' : 'rgba(126,184,212,0.08)',
-        border: `1px solid ${active ? S.gold : S.accent}`, color: active ? S.gold : S.accent,
-        padding: '3px 8px', borderRadius: 3, cursor: 'pointer', marginTop: 4,
-      }}
-    >
-      ▦ {active ? 'Shown on map' : `Show ${label || 'map'} on map`}
-    </button>
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+      {hasMap && (
+        <button
+          onClick={() => { onShowOverlay(mapLayer.tile_url); onActivate?.(); }}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontFamily: S.mono,
+            background: active ? 'rgba(201,168,106,0.14)' : 'rgba(126,184,212,0.08)',
+            border: `1px solid ${active ? S.gold : S.accent}`, color: active ? S.gold : S.accent,
+            padding: '3px 8px', borderRadius: 3, cursor: 'pointer',
+          }}
+        >
+          ▦ {active ? 'Shown on map' : `Show ${label || 'map'} on map`}
+        </button>
+      )}
+      {hasDownload && (
+        <a
+          href={downloadUrl} target="_blank" rel="noopener noreferrer"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontFamily: S.mono,
+            background: 'rgba(126,184,212,0.08)', border: `1px solid ${S.border2}`, color: S.text2,
+            padding: '3px 8px', borderRadius: 3, textDecoration: 'none',
+          }}
+          title="Downloads the raw raster as a GeoTIFF — open in QGIS, SNAP, or any GIS/remote-sensing tool to verify independently."
+        >
+          ⬇ GeoTIFF
+        </a>
+      )}
+    </div>
   );
 }
 
@@ -103,7 +122,7 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
             <div style={{ display: 'flex', gap: 12, fontSize: 10, color: S.text3, fontFamily: S.mono }}>
               <span>min {d.min}</span><span>max {d.max}</span><span>σ {d.std_dev}</span>
             </div>
-            <MapLayerButton mapLayer={d.map_layer} label={id.toUpperCase()} onShowOverlay={onShowOverlay}
+            <RasterControls mapLayer={d.map_layer} downloadUrl={d.download_url} label={id.toUpperCase()} onShowOverlay={onShowOverlay}
               active={activeLayerId === id} onActivate={() => setActiveLayerId?.(id)} />
           </div>
         ))}
@@ -145,7 +164,7 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
             <div style={{ fontSize: 9.5, color: S.text3, marginTop: 1 }}>{c.area_km2} km²</div>
           </div>
         ))}
-        <MapLayerButton mapLayer={result.map_layer} label="classification" onShowOverlay={onShowOverlay}
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="classification" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'lulc'} onActivate={() => setActiveLayerId?.('lulc')} />
         <MethodNote text={result.method} />
       </div>
@@ -162,7 +181,7 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         {result.valid_pixel_fraction != null && (
           <StatRow label="Valid pixel coverage" value={`${Math.round(result.valid_pixel_fraction * 100)}%`} />
         )}
-        <MapLayerButton mapLayer={result.map_layer} label="snow mask" onShowOverlay={onShowOverlay}
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="snow mask" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'snow_cover'} onActivate={() => setActiveLayerId?.('snow_cover')} />
         <MethodNote text={result.method} />
       </div>
@@ -178,7 +197,7 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         {result.valid_pixel_fraction != null && (
           <StatRow label="Valid pixel coverage" value={`${Math.round(result.valid_pixel_fraction * 100)}%`} />
         )}
-        <MapLayerButton mapLayer={result.map_layer} label="RVI" onShowOverlay={onShowOverlay}
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="RVI" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'sar_backscatter'} onActivate={() => setActiveLayerId?.('sar_backscatter')} />
         <MethodNote text={result.method} />
       </div>
@@ -202,7 +221,7 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         </div>
         <StatRow label="Delta (P2 - P1)" value={<span style={{ color: upColor }}>{result.delta > 0 ? '+' : ''}{result.delta}</span>} />
         {result.pct_change != null && <StatRow label="% change" value={`${result.pct_change > 0 ? '+' : ''}${result.pct_change}%`} />}
-        <MapLayerButton mapLayer={result.map_layer} label="delta" onShowOverlay={onShowOverlay}
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="delta" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'change_detection'} onActivate={() => setActiveLayerId?.('change_detection')} />
         <MethodNote text={result.method} />
       </div>
@@ -224,7 +243,7 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
             ))}
           </div>
         )}
-        <MapLayerButton mapLayer={result.map_layer} label="dNBR severity" onShowOverlay={onShowOverlay}
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="dNBR severity" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'burn_severity'} onActivate={() => setActiveLayerId?.('burn_severity')} />
         <MethodNote text={result.method} />
       </div>

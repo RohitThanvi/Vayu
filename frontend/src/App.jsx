@@ -1258,7 +1258,8 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
   tier, onChangeTier,
   orbitalShowSatellites, setOrbitalShowSatellites, orbitalShowAircraft, setOrbitalShowAircraft,
   orbitalSatellites, orbitalSatLoaded, orbitalSatDebug, orbitalAircraftStats, orbitalAircraftValid,
-  orbitalSearch, setOrbitalSearch, orbitalFilteredList, orbitalSelected, setOrbitalSelected }) {
+  orbitalSearch, setOrbitalSearch, orbitalFilteredList, orbitalSelected, setOrbitalSelected,
+  onShowSpectraOverlay, onClearSpectraOverlay }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const ALL_TABS = [
@@ -1471,7 +1472,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
           />
         )}
         {tab === 'Spectra' && (
-          <SpectraPanel apiUrl={apiUrl} drawnAOI={drawnAOI} onShowOverlay={showSpectraOverlay} onClearOverlay={clearSpectraOverlay} />
+          <SpectraPanel apiUrl={apiUrl} drawnAOI={drawnAOI} onShowOverlay={onShowSpectraOverlay} onClearOverlay={onClearSpectraOverlay} />
         )}
       </div>
       <div style={{ flexShrink:0, padding:'10px 14px', borderTop:`1px solid ${S.border}` }}>
@@ -2278,6 +2279,7 @@ export default function App({ tier = 'full', onChangeTier }) {
       sitesOn={sitesOn} onToggleSites={() => setSitesOn(s => !s)}
       tier={tier} onChangeTier={onChangeTier}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
+      onShowSpectraOverlay={showSpectraOverlay} onClearSpectraOverlay={clearSpectraOverlay}
       satelliteLoadingKey={satelliteLoadingKey} mapZoom={mapZoom}
       orbitalShowSatellites={orbitalShowSatellites} setOrbitalShowSatellites={setOrbitalShowSatellites}
       orbitalShowAircraft={orbitalShowAircraft} setOrbitalShowAircraft={setOrbitalShowAircraft}

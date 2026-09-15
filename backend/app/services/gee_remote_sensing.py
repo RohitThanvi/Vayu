@@ -22,7 +22,7 @@ never just a bare number.
 
 import logging
 import math
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import ee
 
@@ -51,6 +51,36 @@ def _tile_layer(image: "ee.Image", vis_params: Dict[str, Any]) -> Dict[str, Any]
         "tile_url": map_id_dict["tile_fetcher"].url_format,
         "vis_params": vis_params,
     }
+
+
+# GeoTIFF export cap. getDownloadURL() builds the file synchronously in
+# the request (no batch task / polling needed, unlike ee.batch.Export),
+# but that only works for reasonably small rasters — GEE's own hard
+# limit on this call is ~32MB, and past a few thousand pixels per side
+# things get slow even well under that. 5000x5000 at typical Sentinel-2
+# 10-20m scale already covers a fairly large AOI; anything bigger should
+# use ee.batch.Export to Drive/GCS instead, which isn't implemented here.
+_MAX_EXPORT_PIXELS_PER_SIDE = 5000
+
+
+def _download_url(image: "ee.Image", region: "ee.Geometry", scale: int) -> Optional[str]:
+    """GeoTIFF download URL for `image`, clipped to `region` at `scale`
+    meters/pixel — the raw pixel data behind whatever AOI-mean number or
+    map_layer the caller already returned, so it can be pulled into
+    QGIS/SNAP/Python and checked independently rather than taken on
+    trust. Returns None (rather than raising) if the AOI is too large
+    for a synchronous export at the given scale, since every tool that
+    calls this already has a real result to return either way — a
+    failed export shouldn't fail the whole request.
+    """
+    try:
+        return image.getDownloadURL({
+            "region": region, "scale": scale, "format": "GEO_TIFF",
+            "maxPixels": _MAX_EXPORT_PIXELS_PER_SIDE * _MAX_EXPORT_PIXELS_PER_SIDE,
+        })
+    except Exception as e:
+        logger.warning(f"GeoTIFF export URL failed (AOI likely too large at this scale): {type(e).__name__}: {e}")
+        return None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -198,6 +228,7 @@ def compute_spectral_indices(aoi: Dict, start_date: str, end_date: str, indices:
             "max": round(stats.get(f"{band_name}_max", 0) or 0, 4),
             "std_dev": round(stats.get(f"{band_name}_stdDev", 0) or 0, 4),
             "map_layer": _tile_layer(img, INDEX_PALETTES.get(idx_id, {"min": -1, "max": 1, "palette": ["#000000", "#ffffff"]})),
+            "download_url": _download_url(img, region, scale=20),
         }
 
     return {
@@ -262,6 +293,15 @@ def compute_terrain_analysis(aoi: Dict) -> Dict[str, Any]:
         },
         "dominant_aspect": {"degrees": round(circular_mean_aspect, 1), "compass": _compass(circular_mean_aspect)},
         "vertical_datum": "EGM2008 (EPSG:3855) — a 0m reading here does NOT mean mean sea level; see COPERNICUS/DEM/GLO30 documentation.",
+        # Hillshade rather than raw elevation as the map layer — a flat
+        # elevation color ramp needs a per-AOI min/max to look like
+        # anything, while a hillshade reads as actual terrain relief at
+        # a glance regardless of the AOI's absolute elevation range.
+        "map_layer": _tile_layer(ee.Terrain.hillshade(dem), {"min": 0, "max": 255}),
+        # Export the raw DEM, not the hillshade — hillshade is a display
+        # rendering, the DEM itself is the actual data someone would want
+        # to pull into QGIS/SNAP.
+        "download_url": _download_url(dem, region, scale=30),
         "method": "Copernicus DEM GLO-30 (30m, TanDEM-X-derived Digital Surface Model incl. buildings/vegetation, not bare-earth). Slope/aspect via ee.Terrain. Aspect averaged circularly (unit-vector mean), not arithmetically.",
         "aoi_area_km2": round(_region_area_km2(region), 3),
     }
@@ -338,6 +378,11 @@ def compute_lulc_classification(aoi: Dict) -> Dict[str, Any]:
             "min": 0, "max": len(class_codes) - 1,
             "palette": WORLDCOVER_PALETTE,
         }),
+        # Export the ORIGINAL class-code image (wc), not the display-only
+        # dense-remapped one (wc_dense) — someone pulling this into QGIS
+        # wants WorldCover's real class codes (10=Tree cover, etc., per
+        # WORLDCOVER_CLASSES above), not our internal 0-10 display index.
+        "download_url": _download_url(wc, region, scale=10),
         "method": "ESA WorldCover v200, 10m resolution, calendar year 2021, Sentinel-1+Sentinel-2-derived (Zanaga et al. 2022, doi:10.5281/zenodo.7254221). Overall validated accuracy 76.7%. Map colors are WorldCover's own official class palette.",
     }
 
@@ -389,6 +434,11 @@ def compute_snow_cover(aoi: Dict, start_date: str, end_date: str) -> Dict[str, A
         # pixels classified as snow at the stated threshold, not a
         # smoothed gradient that hides where the cutoff actually fell.
         "map_layer": _tile_layer(snow_mask.selfMask(), {"palette": ["#4292c6"]}),
+        # Export the continuous NDSI image, not the binary mask — the
+        # mask is derived (NDSI > threshold), so exporting NDSI itself
+        # lets someone re-apply a different threshold or check the
+        # classification's sensitivity, which the mask alone can't do.
+        "download_url": _download_url(ndsi, region, scale=20),
         "method": f"NDSI = (Green-SWIR1)/(Green+SWIR1) via Sentinel-2 SR (B3/B11), cloud-masked median composite of {scene_count} scene(s), 20m resolution. Classified as snow where NDSI > {NDSI_SNOW_THRESHOLD} (Hall et al. 1995 threshold).",
         "scene_count": scene_count,
     }
@@ -456,6 +506,11 @@ def compute_sar_backscatter(aoi: Dict, start_date: str, end_date: str) -> Dict[s
         # doesn't have a widely agreed-on color convention the way RVI's
         # 0-1 range does.
         "map_layer": _tile_layer(rvi, {"min": 0, "max": 1, "palette": ["#f7fcf5", "#74c476", "#00441b"]}),
+        # Export the VV+VH composite (both dB bands), not just RVI — RVI
+        # is a derived ratio; the raw dual-pol backscatter is the more
+        # useful artifact to hand someone checking the RVI computation
+        # itself, or wanting to compute a different derived index.
+        "download_url": _download_url(composite, region, scale=20),
         "method": (
             f"Sentinel-1 GRD, IW mode, dual-pol (VV+VH), median composite of {scene_count} scene(s), 20m analysis "
             f"resolution. Backscatter reported in dB as provided by the GEE S1_GRD product. RVI = 4*VH/(VV+VH), "
@@ -518,6 +573,7 @@ def compute_change_detection(aoi: Dict, index_id: str, period1_start: str, perio
         # regardless of which index was picked, so it's readable without
         # re-deriving what "positive" means for NDVI vs NDBI each time.
         "map_layer": _tile_layer(delta_img, {"min": -0.3, "max": 0.3, "palette": ["#a50026", "#ffffbf", "#1a9850"]}),
+        "download_url": _download_url(delta_img, region, scale=20),
         "method": f"{d['label']} computed independently for both periods from cloud-masked Sentinel-2 SR median composites, 20m, then differenced (period 2 minus period 1). A positive delta means the index increased.",
     }
 
@@ -597,6 +653,7 @@ def compute_burn_severity(aoi: Dict, pre_start: str, pre_end: str, post_start: s
             "min": -0.25, "max": 0.66,
             "palette": ["#1a9850", "#66bd63", "#ffffbf", "#fdae61", "#f46d43", "#a50026"],
         }),
+        "download_url": _download_url(dnbr, region, scale=20),
         "method": (
             "dNBR (Key & Benson 2006, USGS FIREMON standard) = NBR_pre - NBR_post, where NBR = (B8-B12)/(B8+B12) "
             "on cloud-masked Sentinel-2 SR composites, 20m. Severity classes are the standard USGS breakpoints, "
