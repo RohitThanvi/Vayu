@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as satellite from "satellite.js";
+import { apiFetch } from '../lib/api.js';
 
 const TLE_REFETCH_MS = 30 * 60 * 1000;   // 30min — server cache itself refreshes ~6h, this just picks it up eventually
 const PROPAGATE_INTERVAL_MS = 3000;       // recompute positions every 3s — smooth enough for a live feel, cheap on CPU
@@ -33,7 +34,7 @@ export function useSatelliteTracker(apiUrl, enabled = true) {
   const fetchTLEs = useCallback(async () => {
     if (apiUrl === undefined || apiUrl === null) return;
     try {
-      const res = await fetch(`${apiUrl}/api/v1/intel/satellites/tle`);
+      const res = await apiFetch(`${apiUrl}/api/v1/intel/satellites/tle`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (!mountedRef.current) return;

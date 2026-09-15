@@ -11,6 +11,9 @@ python-dotenv==1.0.1
 # Rate limiting
 slowapi==0.1.9
 
+# Clerk session token verification (RS256 JWT, networkless via CLERK_JWT_KEY)
+PyJWT[crypto]==2.10.1
+
 # Google Earth Engine
 earthengine-api==1.7.16
 

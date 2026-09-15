@@ -41,12 +41,19 @@ class Settings(BaseSettings):
     # endpoints entirely (see auth_endpoints.py) rather than leaving them
     # open with a blank/guessable key.
     ADMIN_API_KEY: str = ""
-    # Postgres connection string (Supabase) for the auth (and, going
-    # forward, other) tables — see services/auth/db.py. The contact-form
-    # messages table deliberately stays on local SQLite (messages.sqlite3),
-    # per explicit decision — it's lower-stakes, append-only data, no
-    # need to add it to the migration.
-    DATABASE_URL: str = ""
+    # Clerk (replaces the old Postgres/Supabase account system in
+    # services/auth/db.py — that file is no longer imported by anything
+    # and DATABASE_URL is gone). CLERK_JWT_KEY is the PEM public key from
+    # Clerk Dashboard -> Configure -> API Keys -> Show JWT public key —
+    # deliberately used instead of hitting Clerk's JWKS endpoint on every
+    # request: verification below is fully local/networkless, so it can't
+    # fail open due to a Clerk-side outage or this sandbox's own network
+    # allowlist (Clerk's domains aren't on it). CLERK_SECRET_KEY is only
+    # needed if/when a backend-initiated Clerk Backend API call is added
+    # later (e.g. reading a user by id) — not required for verifying
+    # tokens, which is all tier_gate.py currently does.
+    CLERK_JWT_KEY: str = ""
+    CLERK_SECRET_KEY: str = ""
     FRONTEND_URL: str = "https://vayu-geop.vercel.app"
     # "HH:MM" 24h, interpreted in REPORT_TIMEZONE — see reporting/scheduler.py
     DAILY_REPORT_TIME: str = "12:00"

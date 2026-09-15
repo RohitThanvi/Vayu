@@ -20,6 +20,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import SparkChart from './SparkChart';
+import { apiFetch } from '../lib/api.js';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
@@ -57,7 +58,7 @@ function useJobPoll(apiUrl) {
   const submit = useCallback(async (body) => {
     setLoading(true); setError(null); setResult(null);
     try {
-      const res = await fetch(`${apiUrl}/api/v1/remote-sensing/analyze`, {
+      const res = await apiFetch(`${apiUrl}/api/v1/remote-sensing/analyze`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
@@ -65,7 +66,7 @@ function useJobPoll(apiUrl) {
       clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
         try {
-          const r = await fetch(`${apiUrl}/api/v1/remote-sensing/analyze/${data.request_id}`);
+          const r = await apiFetch(`${apiUrl}/api/v1/remote-sensing/analyze/${data.request_id}`);
           if (r.status === 422) {
             clearInterval(pollRef.current);
             const e = await r.json().catch(() => ({}));

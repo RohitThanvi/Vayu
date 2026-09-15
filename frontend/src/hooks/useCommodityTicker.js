@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { apiFetch } from '../lib/api.js';
 
 const POLL_INTERVAL_MS = 15 * 60 * 1000;   // 15 min — matches the shorter server-side refresh cadence now
 
@@ -23,7 +24,7 @@ export function useCommodityTicker(apiUrl, enabled = true) {
   const fetchCommodities = useCallback(async () => {
     if (apiUrl === undefined || apiUrl === null) return;
     try {
-      const res = await fetch(`${apiUrl}/api/v1/intel/commodities`);
+      const res = await apiFetch(`${apiUrl}/api/v1/intel/commodities`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (!mountedRef.current) return;

@@ -28,6 +28,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { apiFetch } from '../lib/api.js';
 
 const S = {
   bg: '#0a0c0f', surface: '#0d1117', surface2: '#0f1419',
@@ -296,7 +297,7 @@ export default function DroughtDashboard({ drawnAOI, apiUrl, searchedRegionName,
     if (!drawnAOI) return;
     setLoading(true); setError(null);
     try {
-      const resp = await fetch(`${apiUrl}/api/v1/agri/drought-dashboard`, {
+      const resp = await apiFetch(`${apiUrl}/api/v1/agri/drought-dashboard`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ aoi_geojson: drawnAOI }),
       });

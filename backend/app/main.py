@@ -8,7 +8,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -26,6 +26,7 @@ from .api.layers_endpoints import router as layers_router
 from .api.reporting_endpoints import router as reporting_router
 from .api.auth_endpoints import router as auth_router
 from .api.remote_sensing_endpoints import router as remote_sensing_router
+from .services.auth.tier_gate import get_current_user
 from .services.intel.scheduler import get_scheduler
 from .services.agri.alert_engine import get_agri_engine
 from .services.agri.whatsapp import send_whatsapp_message
@@ -95,14 +96,31 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-app.include_router(endpoints.router, prefix="/api/v1")
-app.include_router(intel_router,     prefix="/api/v1")
-app.include_router(agri_router,      prefix="/api/v1")
-app.include_router(report_router,    prefix="/api/v1")
-app.include_router(layers_router,    prefix="/api/v1")
-app.include_router(reporting_router, prefix="/api/v1")
-app.include_router(auth_router,      prefix="/api/v1")
-app.include_router(remote_sensing_router, prefix="/api/v1")
+# Every router below except auth_router requires a valid Clerk session —
+# dependencies=[Depends(get_current_user)] runs get_current_user before
+# ANY handler in the router, on every route in it, with no per-route
+# opt-out possible short of removing the router from this list. A 401/503
+# from that dependency short-circuits the request before any endpoint
+# code (GEE calls, DB reads, external API calls, everything) executes.
+#
+# auth_router is intentionally NOT gated here: /auth/contact must stay
+# reachable by a visitor who isn't signed in yet (it's the landing-page
+# contact form), and /auth/admin/* protect themselves individually via
+# the X-Admin-Key header (_require_admin in auth_endpoints.py) — a
+# separate, admin-only credential, not the user-tier system.
+_AUTH_DEP = [Depends(get_current_user)]
+app.include_router(endpoints.router,      prefix="/api/v1", dependencies=_AUTH_DEP)
+# intel_router is NOT gated here: it has a /ws route that browsers can't
+# attach an Authorization header to, so every route in intel_endpoints.py
+# carries its own per-route dependencies=[Depends(get_current_user)], and
+# /ws does its own query-param token check instead. See that file.
+app.include_router(intel_router,          prefix="/api/v1")
+app.include_router(agri_router,           prefix="/api/v1", dependencies=_AUTH_DEP)
+app.include_router(report_router,         prefix="/api/v1", dependencies=_AUTH_DEP)
+app.include_router(layers_router,         prefix="/api/v1", dependencies=_AUTH_DEP)
+app.include_router(reporting_router,      prefix="/api/v1", dependencies=_AUTH_DEP)
+app.include_router(auth_router,           prefix="/api/v1")
+app.include_router(remote_sensing_router, prefix="/api/v1", dependencies=_AUTH_DEP)
 
 
 # ── Access logging ────────────────────────────────────────────────────────────

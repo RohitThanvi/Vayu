@@ -8,6 +8,7 @@
  */
 
 import { useState } from 'react';
+import { apiFetch } from '../lib/api.js';
 
 const S = {
   surface2: '#0f1419', border: '#2a3040',
@@ -25,7 +26,7 @@ export default function SubscribeWidget({ apiUrl }) {
     if (!email.trim()) return;
     setStatus('loading');
     try {
-      const resp = await fetch(`${apiUrl}/api/v1/subscribe`, {
+      const resp = await apiFetch(`${apiUrl}/api/v1/subscribe`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim() }),
       });

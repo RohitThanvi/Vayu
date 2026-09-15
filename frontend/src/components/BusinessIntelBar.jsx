@@ -26,6 +26,7 @@
 import { useState, useEffect } from 'react';
 import SparkChart from './SparkChart';
 import EconomicsView from './EconomicsView';
+import { apiFetch } from '../lib/api.js';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
@@ -44,7 +45,7 @@ function useJson(apiUrl, path, refreshMs = REFRESH_MS) {
   useEffect(() => {
     let cancelled = false;
     const run = () => {
-      fetch(`${apiUrl}${path}`)
+      apiFetch(`${apiUrl}${path}`)
         .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
         .then(d => { if (!cancelled) { setData(d); setError(null); } })
         .catch(() => { if (!cancelled) setError(true); });
@@ -84,7 +85,7 @@ function EdgarExposureLookup({ apiUrl }) {
   const lookup = () => {
     setLoading(true);
     setResult(null);
-    fetch(`${apiUrl}/api/v1/intel/edgar-exposure/${selected}`)
+    apiFetch(`${apiUrl}/api/v1/intel/edgar-exposure/${selected}`)
       .then(r => r.json())
       .then(setResult)
       .catch(() => setResult({ filings: [], count: 0 }))
@@ -182,7 +183,7 @@ function AnalysisView({ apiUrl }) {
     else if (category === 'india_macro') url = `${apiUrl}/api/v1/intel/macro/history/worldbank?indicator=${series}&region=india&years=15`;
     else url = `${apiUrl}/api/v1/intel/chokepoint-traffic-history?chokepoint=${series}&days=${days}`;
 
-    fetch(url)
+    apiFetch(url)
       .then(r => r.json())
       .then(setResult)
       .catch(() => setResult({ points: [], error: 'Request failed' }))

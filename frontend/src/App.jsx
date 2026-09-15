@@ -20,6 +20,7 @@ import { useStrategicSites } from './hooks/useStrategicSites';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useSatelliteTracker } from './hooks/useSatelliteTracker';
 import { useAircraftTracker } from './hooks/useAircraftTracker';
+import { apiFetch } from './lib/api.js';
 
 // Any string that ends up interpolated into a raw HTML string passed to
 // Leaflet's bindPopup() (Leaflet has no JSX-style auto-escaping — it's
@@ -846,7 +847,7 @@ function AirQualityCheck({ mapRef, apiUrl }) {
     const center = map.getCenter();
     setLoading(true); setError(null); setResult(null);
     try {
-      const resp = await fetch(`${apiUrl}/api/v1/intel/air-quality?lat=${center.lat}&lon=${center.lng}`);
+      const resp = await apiFetch(`${apiUrl}/api/v1/intel/air-quality?lat=${center.lat}&lon=${center.lng}`);
       if (!resp.ok) throw new Error((await resp.json()).detail || 'Air quality lookup failed');
       setResult(await resp.json());
     } catch (e) {
@@ -1164,7 +1165,7 @@ function ResultsPanel({ result, drawnAOI, apiUrl }) {
     if (!drawnAOI) { setReportError('AOI unavailable — re-run the analysis first.'); return; }
     setReportLoading(true); setReportError(null);
     try {
-      const resp = await fetch(`${apiUrl}/api/v1/report/analysis`, {
+      const resp = await apiFetch(`${apiUrl}/api/v1/report/analysis`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           analysis_type: result.metric, aoi_geojson: drawnAOI,
@@ -1878,7 +1879,7 @@ export default function App({ tier = 'full', onChangeTier }) {
     }
 
     setAqiLoading(true);
-    fetch(`${API_URL}/api/v1/intel/air-quality/cpcb-stations`)
+    apiFetch(`${API_URL}/api/v1/intel/air-quality/cpcb-stations`)
       .then(r => { if (!r.ok) throw new Error(`air-quality ${r.status}`); return r.json(); })
       .then(data => {
         setAqiLoading(false);
@@ -1949,7 +1950,7 @@ export default function App({ tier = 'full', onChangeTier }) {
         // Animated layer needs real vector data first — fetch, then add once
         // it arrives. Optimistically flip the toggle on now; if the fetch
         // fails, flip it back off rather than leaving a dead "ON" state.
-        fetch(`${API_URL}/api/v1/intel/wind-field`)
+        apiFetch(`${API_URL}/api/v1/intel/wind-field`)
           .then(r => { if (!r.ok) throw new Error(`wind-field ${r.status}`); return r.json(); })
           .then(data => {
             if (!mapRef.current) return;
@@ -2035,7 +2036,7 @@ export default function App({ tier = 'full', onChangeTier }) {
     // first time (cached for 12h after), so show a loading state rather
     // than optimistically flipping on like the weather tiles do.
     setSatelliteLoadingKey(key);
-    fetch(`${API_URL}/api/v1/layers/${key}`)
+    apiFetch(`${API_URL}/api/v1/layers/${key}`)
       .then(r => { if (!r.ok) throw new Error(`layers/${key} ${r.status}`); return r.json(); })
       .then(data => {
         if (!mapRef.current) return;
@@ -2103,7 +2104,7 @@ export default function App({ tier = 'full', onChangeTier }) {
     const savedAOI = drawnAOI;
     const text = selMetric ? `[Metric: ${selMetric}] ${queryText}` : queryText;
     try {
-      const res = await fetch(`${API_URL}/api/v1/query`, {
+      const res = await apiFetch(`${API_URL}/api/v1/query`, {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ text, aoi_geojson: savedAOI }),
       });
@@ -2112,7 +2113,7 @@ export default function App({ tier = 'full', onChangeTier }) {
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
         try {
-          const r = await fetch(`${API_URL}/api/v1/query/${data.request_id}`);
+          const r = await apiFetch(`${API_URL}/api/v1/query/${data.request_id}`);
           if (r.status === 202) { const d = await r.json(); setJobStatus(d); return; }
           if (r.status === 200) {
             clearInterval(pollRef.current);
