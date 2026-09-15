@@ -14,6 +14,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { apiWsUrl } from "../lib/api.js";
 
 const MAX_LOCAL_EVENTS = 500;
 const RECONNECT_DELAY_MS = 3000;
@@ -21,7 +22,7 @@ const RECONNECT_DELAY_MS = 3000;
 export function useIntelFeed(apiUrl, onNewEvent) {
   // apiUrl truthy  -> absolute backend URL (multi-container/Render setups)
   // apiUrl ""/falsy -> same-origin relative (single-container nginx-proxy setups)
-  const wsUrl = apiUrl
+  const wsPath = apiUrl
     ? apiUrl.replace(/^http/, "ws") + "/api/v1/intel/ws"
     : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/v1/intel/ws`;
 
@@ -59,11 +60,23 @@ export function useIntelFeed(apiUrl, onNewEvent) {
     }
   }, [onNewEvent]);
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (!mountedRef.current) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const ws = new WebSocket(wsUrl);
+    let signedWsUrl;
+    try {
+      signedWsUrl = await apiWsUrl(wsPath);
+    } catch {
+      // No Clerk session yet (e.g. a brief race on first mount before
+      // Clerk finishes loading) — retry on the same cadence as a normal
+      // dropped connection rather than leaving the feed dead forever.
+      if (mountedRef.current) reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY_MS);
+      return;
+    }
+    if (!mountedRef.current) return;
+
+    const ws = new WebSocket(signedWsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -91,14 +104,16 @@ export function useIntelFeed(apiUrl, onNewEvent) {
     ws.onclose = () => {
       if (!mountedRef.current) return;
       setConnected(false);
-      // Reconnect after delay
+      // Reconnect after delay — gets a fresh token each time via
+      // apiWsUrl() above, so this also transparently covers the case
+      // where the old token expired mid-session.
       reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY_MS);
     };
 
     ws.onerror = () => {
       ws.close();
     };
-  }, [wsUrl, addEvents]);
+  }, [wsPath, addEvents]);
 
   useEffect(() => {
     mountedRef.current = true;

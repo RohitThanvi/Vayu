@@ -9,6 +9,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { apiFetch } from '../lib/api.js';
 
 const S = {
   surface2: '#0f1419', border: '#2a3040', border2: '#3a4250',
@@ -28,7 +29,7 @@ export default function SupplyChainStatus({ apiUrl }) {
   useEffect(() => {
     let cancelled = false;
     const fetchData = () => {
-      fetch(`${apiUrl}/api/v1/intel/supply-chain-correlation`)
+      apiFetch(`${apiUrl}/api/v1/intel/supply-chain-correlation`)
         .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
         .then(d => { if (!cancelled) { setData(d); setError(null); } })
         .catch(() => { if (!cancelled) setError('Supply-chain status unavailable right now.'); });

@@ -11,6 +11,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { apiFetch } from '../lib/api.js';
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 min — signals are slow-moving
 
@@ -22,7 +23,7 @@ export function useStrategicSites(apiUrl, enabled = true) {
   const fetchSites = useCallback(async () => {
     if (apiUrl === undefined || apiUrl === null) return;
     try {
-      const res = await fetch(`${apiUrl}/api/v1/intel/strategic-sites`);
+      const res = await apiFetch(`${apiUrl}/api/v1/intel/strategic-sites`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (mountedRef.current) setSites(data.sites || []);

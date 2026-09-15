@@ -13,6 +13,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { apiFetch } from '../lib/api.js';
 
 const POLL_INTERVAL_MS = 10000;
 
@@ -27,7 +28,7 @@ export function useAircraftTracker(apiUrl, enabled = true) {
   const fetchAircraft = useCallback(async () => {
     if (apiUrl === undefined || apiUrl === null) return;
     try {
-      const res = await fetch(`${apiUrl}/api/v1/intel/aircraft?limit=3000`);
+      const res = await apiFetch(`${apiUrl}/api/v1/intel/aircraft?limit=3000`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (!mountedRef.current) return;
@@ -38,7 +39,7 @@ export function useAircraftTracker(apiUrl, enabled = true) {
     }
 
     try {
-      const sres = await fetch(`${apiUrl}/api/v1/intel/aircraft/stats`);
+      const sres = await apiFetch(`${apiUrl}/api/v1/intel/aircraft/stats`);
       if (sres.ok) {
         const sdata = await sres.json();
         if (mountedRef.current) setStats(sdata);

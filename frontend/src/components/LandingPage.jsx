@@ -25,6 +25,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useClerk } from '@clerk/clerk-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 
 // Account system (signup/login/password-reset) is disabled for the MVP
@@ -534,7 +535,7 @@ function ContactForm({ apiUrl }) {
   );
 }
 
-export default function LandingPage({ apiUrl, onSelectTier }) {
+export default function LandingPage({ apiUrl, onSelectTier, skipToTierPicker }) {
   const [activeSection, setActiveSection] = useState('home');
   const [parallaxY, setParallaxY] = useState(0);
   const [tierModalOpen, setTierModalOpen] = useState(false);
@@ -542,6 +543,23 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
   const isMobile = useIsMobile(760);
   const sectionRefs = useRef({});
   const scrollContainerRef = useRef(null);
+  const { openSignIn } = useClerk();
+
+  // AppGate only passes onSelectTier once the visitor is already
+  // <SignedIn> — no account, no tier picker. Signed-out visitors get
+  // Clerk's own sign-in modal instead, never the tier picker.
+  const handleEnterTerminal = useCallback(() => {
+    if (onSelectTier) setTierModalOpen(true);
+    else openSignIn();
+  }, [onSelectTier, openSignIn]);
+
+  // AppGate re-renders LandingPage with skipToTierPicker right after a
+  // sign-in completes (the visitor had clicked "Enter Terminal" to get
+  // here in the first place) — jump straight to the tier picker instead
+  // of making them find and click the button again.
+  useEffect(() => {
+    if (skipToTierPicker) setTierModalOpen(true);
+  }, [skipToTierPicker]);
 
   // Reset-password mode disabled along with the rest of the account
   // system — see the AuthModal/ResetPasswordCard block above. Flip

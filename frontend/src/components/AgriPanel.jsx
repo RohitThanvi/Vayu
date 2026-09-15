@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiFetch } from '../lib/api.js';
 
 // Matches the dark-terminal aesthetic used elsewhere in App.jsx (kept local
 // to avoid importing the S/Icon internals across files).
@@ -31,7 +32,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
 
   const [whatsappInfo, setWhatsappInfo] = useState(null);
   useEffect(() => {
-    fetch(`${apiUrl}/api/v1/agri/whatsapp/info`).then(r => r.json()).then(setWhatsappInfo).catch(() => {});
+    apiFetch(`${apiUrl}/api/v1/agri/whatsapp/info`).then(r => r.json()).then(setWhatsappInfo).catch(() => {});
   }, [apiUrl]);
 
   const [mandiRecords, setMandiRecords] = useState(null);
@@ -44,7 +45,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
     if (!drawnAOI) return;
     setScoreLoading(true); setScoreError(null); setScoreResult(null);
     try {
-      const resp = await fetch(`${apiUrl}/api/v1/agri/risk-score`, {
+      const resp = await apiFetch(`${apiUrl}/api/v1/agri/risk-score`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ aoi_geojson: drawnAOI }),
       });
@@ -61,7 +62,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
     if (!drawnAOI) return;
     setReportLoading(true); setReportError(null);
     try {
-      const resp = await fetch(`${apiUrl}/api/v1/report/agri-risk`, {
+      const resp = await apiFetch(`${apiUrl}/api/v1/report/agri-risk`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ aoi_geojson: drawnAOI, region_name: searchedRegionName || undefined }),
       });
@@ -81,7 +82,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
 
   const loadRegions = useCallback(async () => {
     try {
-      const resp = await fetch(`${apiUrl}/api/v1/agri/regions`);
+      const resp = await apiFetch(`${apiUrl}/api/v1/agri/regions`);
       const data = await resp.json();
       setRegions(data.regions || []);
     } catch (e) { /* non-fatal */ }
@@ -89,7 +90,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
 
   const loadRollup = useCallback(async (role) => {
     try {
-      const resp = await fetch(`${apiUrl}/api/v1/agri/rollup?role=${role}`);
+      const resp = await apiFetch(`${apiUrl}/api/v1/agri/rollup?role=${role}`);
       setRollup(await resp.json());
     } catch (e) { /* non-fatal */ }
   }, [apiUrl]);
@@ -100,7 +101,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
       const params = new URLSearchParams();
       if (mandiCommodity.trim()) params.set('commodity', mandiCommodity.trim());
       if (mandiState.trim()) params.set('state', mandiState.trim());
-      const resp = await fetch(`${apiUrl}/api/v1/agri/mandi-price?${params}`);
+      const resp = await apiFetch(`${apiUrl}/api/v1/agri/mandi-price?${params}`);
       const data = await resp.json();
       if (data.error) { setMandiError(data.error); setMandiRecords([]); }
       else setMandiRecords(data.records || []);
@@ -125,7 +126,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
     if (!drawnAOI || !regionName.trim()) return;
     setCreatingRegion(true);
     try {
-      await fetch(`${apiUrl}/api/v1/agri/regions`, {
+      await apiFetch(`${apiUrl}/api/v1/agri/regions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: regionName.trim(), aoi_geojson: drawnAOI,
@@ -140,7 +141,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
   };
 
   const deleteRegion = async (id) => {
-    await fetch(`${apiUrl}/api/v1/agri/regions/${id}`, { method: 'DELETE' });
+    await apiFetch(`${apiUrl}/api/v1/agri/regions/${id}`, { method: 'DELETE' });
     loadRegions();
   };
 
@@ -395,7 +396,7 @@ function RegionCard({ region, apiUrl, onDelete }) {
   const [expanded, setExpanded] = useState(false);
 
   const loadAlerts = async () => {
-    const resp = await fetch(`${apiUrl}/api/v1/agri/regions/${region.id}/alerts?limit=5`);
+    const resp = await apiFetch(`${apiUrl}/api/v1/agri/regions/${region.id}/alerts?limit=5`);
     const data = await resp.json();
     setAlerts(data.alerts || []);
   };
@@ -407,7 +408,7 @@ function RegionCard({ region, apiUrl, onDelete }) {
   };
 
   const sendFeedback = async (alertId, accurate) => {
-    await fetch(`${apiUrl}/api/v1/agri/feedback`, {
+    await apiFetch(`${apiUrl}/api/v1/agri/feedback`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ alert_id: alertId, accurate }),
     });

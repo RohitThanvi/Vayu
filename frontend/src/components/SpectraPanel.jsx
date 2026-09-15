@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { apiFetch } from '../lib/api.js';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
@@ -246,7 +247,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI }) {
     }
 
     try {
-      const res = await fetch(`${apiUrl}/api/v1/remote-sensing/analyze`, {
+      const res = await apiFetch(`${apiUrl}/api/v1/remote-sensing/analyze`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
@@ -254,7 +255,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI }) {
       clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
         try {
-          const r = await fetch(`${apiUrl}/api/v1/remote-sensing/analyze/${data.request_id}`);
+          const r = await apiFetch(`${apiUrl}/api/v1/remote-sensing/analyze/${data.request_id}`);
           if (r.status === 422) {
             clearInterval(pollRef.current);
             const e = await r.json().catch(() => ({}));

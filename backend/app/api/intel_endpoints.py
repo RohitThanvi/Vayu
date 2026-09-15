@@ -39,7 +39,10 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, HTTPException
+
+from ..services.auth import clerk_auth
+from ..services.auth.tier_gate import get_current_user
 
 from ..services.intel.store import intel_store
 from ..services.intel.scheduler import get_scheduler
@@ -68,7 +71,7 @@ router = APIRouter(prefix="/intel", tags=["intelligence"])
 
 # ── REST endpoints ─────────────────────────────────────────────────────────────
 
-@router.get("/events", summary="Get paginated intelligence events")
+@router.get("/events", summary="Get paginated intelligence events", dependencies=[Depends(get_current_user)])
 async def get_events(
     sources: Optional[str] = Query(None, description="Comma-separated: USGS,NASA FIRMS,ACLED,GDELT"),
     severities: Optional[str] = Query(None, description="Comma-separated: info,warn,critical"),
@@ -94,7 +97,7 @@ async def get_events(
     }
 
 
-@router.get("/events/aoi", summary="Get events within a bounding box")
+@router.get("/events/aoi", summary="Get events within a bounding box", dependencies=[Depends(get_current_user)])
 async def get_events_aoi(
     min_lat: float = Query(..., description="Minimum latitude"),
     min_lon: float = Query(..., description="Minimum longitude"),
@@ -127,12 +130,12 @@ async def get_events_aoi(
     }
 
 
-@router.get("/stats", summary="Intelligence store statistics")
+@router.get("/stats", summary="Intelligence store statistics", dependencies=[Depends(get_current_user)])
 async def get_stats():
     return intel_store.get_stats()
 
 
-@router.get("/sources", summary="Available intelligence sources and status")
+@router.get("/sources", summary="Available intelligence sources and status", dependencies=[Depends(get_current_user)])
 async def get_sources():
     stats = intel_store.get_stats()
     by_source = stats.get("by_source", {})
@@ -161,7 +164,27 @@ async def intel_websocket(websocket: WebSocket):
     On connect: sends last 50 events immediately as a snapshot.
     Then streams new events as they arrive from any source.
     Client can send filter messages to narrow the stream.
+
+    Auth: a browser WebSocket can't set a custom Authorization header on
+    the handshake, so — unlike every other route in this file — the
+    Clerk session token comes in as a query param: wss://.../ws?token=...
+    Verified with the same clerk_auth.verify_session_token() the header
+    path uses; only the transport differs. Rejected before accept() with
+    close code 4401 (never 101) so no data is exchanged over an
+    unauthenticated socket, and before intel_store.subscribe() so a
+    rejected connection never gets a queue.
     """
+    token = websocket.query_params.get("token", "")
+    try:
+        clerk_auth.verify_session_token(token)
+    except clerk_auth.ClerkAuthUnavailable:
+        logger.error("Clerk auth misconfigured: CLERK_JWT_KEY not set.")
+        await websocket.close(code=4503, reason="Auth service unavailable")
+        return
+    except clerk_auth.ClerkTokenInvalid:
+        await websocket.close(code=4401, reason="Not authenticated")
+        return
+
     await websocket.accept()
     queue: asyncio.Queue = asyncio.Queue(maxsize=500)
     intel_store.subscribe(queue)
@@ -253,7 +276,7 @@ async def intel_websocket(websocket: WebSocket):
 
 # ── Maritime / Logistics Vessel Tracking ──────────────────────────────────────
 
-@router.get("/vessels", summary="Get currently tracked vessels")
+@router.get("/vessels", summary="Get currently tracked vessels", dependencies=[Depends(get_current_user)])
 async def get_vessels(
     category: Optional[str] = Query(
         None, description="Filter by: TANKER, CARGO, PASSENGER, FISHING, OTHER"
@@ -276,12 +299,12 @@ async def get_vessels(
     }
 
 
-@router.get("/vessels/stats", summary="Maritime tracking statistics")
+@router.get("/vessels/stats", summary="Maritime tracking statistics", dependencies=[Depends(get_current_user)])
 async def get_vessel_stats():
     return vessel_store.get_stats()
 
 
-@router.get("/vessels/chokepoints", summary="Monitored maritime chokepoint regions")
+@router.get("/vessels/chokepoints", summary="Monitored maritime chokepoint regions", dependencies=[Depends(get_current_user)])
 async def get_chokepoints():
     from ..services.intel.vessel_store import CHOKEPOINTS
     return {
@@ -294,7 +317,7 @@ async def get_chokepoints():
 
 # ── Aviation Tracking (adsb.lol, via ais-bridge) ────────────────────────────────
 
-@router.get("/aircraft", summary="Get currently tracked aircraft")
+@router.get("/aircraft", summary="Get currently tracked aircraft", dependencies=[Depends(get_current_user)])
 async def get_aircraft(
     min_lat: Optional[float] = Query(None),
     min_lon: Optional[float] = Query(None),
@@ -314,14 +337,14 @@ async def get_aircraft(
     }
 
 
-@router.get("/aircraft/stats", summary="Aviation tracking statistics")
+@router.get("/aircraft/stats", summary="Aviation tracking statistics", dependencies=[Depends(get_current_user)])
 async def get_aircraft_stats():
     return aircraft_store.get_stats()
 
 
 # ── Satellite Tracking (CelesTrak TLEs, propagated client-side) ───────────────
 
-@router.get("/satellites/tle", summary="Cached satellite orbital elements (TLEs)")
+@router.get("/satellites/tle", summary="Cached satellite orbital elements (TLEs)", dependencies=[Depends(get_current_user)])
 async def get_satellite_tles():
     """Returns raw TLE data for a curated set of satellites (space stations
     + CelesTrak's 'visual' brightest-objects group). Position is NOT
@@ -334,7 +357,7 @@ async def get_satellite_tles():
 
 # ── Commodity price ticker (Yahoo Finance, keyless) ─────────────────────────
 
-@router.get("/commodities", summary="Cached global commodity prices")
+@router.get("/commodities", summary="Cached global commodity prices", dependencies=[Depends(get_current_user)])
 async def get_commodities():
     """Global commodity futures prices (crude oil, natural gas, metals,
     agri commodities) for the marquee ticker. NOT MCX real-time data —
@@ -347,7 +370,7 @@ async def get_commodities():
 
 # ── Air quality (CPCB, India-only, free data.gov.in key) ───────────────────
 
-@router.get("/air-quality/cpcb-stations", summary="Cached real-time CPCB Air Quality Index stations")
+@router.get("/air-quality/cpcb-stations", summary="Cached real-time CPCB Air Quality Index stations", dependencies=[Depends(get_current_user)])
 async def get_air_quality():
     """Real-time AQI from CPCB's monitoring network (~800+ India stations,
     hourly). India-only, matching CPCB's actual coverage — not a global
@@ -368,7 +391,7 @@ async def get_air_quality():
 
 # ── Supply-chain correlation (chokepoint disruption + related commodities) ──
 
-@router.get("/supply-chain-correlation", summary="Chokepoint traffic status vs. related commodity price moves")
+@router.get("/supply-chain-correlation", summary="Chokepoint traffic status vs. related commodity price moves", dependencies=[Depends(get_current_user)])
 async def get_supply_chain_correlation():
     """For each of the 7 monitored maritime chokepoints: current vessel
     count vs. its own 14-day baseline (status: normal/elevated/disrupted/
@@ -384,7 +407,7 @@ async def get_supply_chain_correlation():
 
 # ── New business-intelligence features (all free/open data sources) ────────
 
-@router.get("/edgar-exposure/{chokepoint}", summary="Recent SEC filings mentioning a chokepoint (SEC EDGAR full-text search)")
+@router.get("/edgar-exposure/{chokepoint}", summary="Recent SEC filings mentioning a chokepoint (SEC EDGAR full-text search)", dependencies=[Depends(get_current_user)])
 async def get_edgar_exposure(chokepoint: str, days_back: int = 14):
     """Which public companies have recently disclosed exposure (in an
     8-K/10-K/10-Q) to a given monitored chokepoint — e.g. 'strait_of_hormuz'.
@@ -394,7 +417,7 @@ async def get_edgar_exposure(chokepoint: str, days_back: int = 14):
     return await edgar_exposure.exposure_for_chokepoint(chokepoint, days_back=days_back)
 
 
-@router.get("/dark-vessels", summary="Vessels that went dark (AIS gap) near a chokepoint and reappeared elsewhere")
+@router.get("/dark-vessels", summary="Vessels that went dark (AIS gap) near a chokepoint and reappeared elsewhere", dependencies=[Depends(get_current_user)])
 async def get_dark_vessels():
     """Pure logic on the AIS stream already tracked — no new data
     source. See services/intel/dark_vessels.py for the detection
@@ -402,7 +425,7 @@ async def get_dark_vessels():
     return {"flags": dark_vessels.list_flags(), "stats": dark_vessels.get_stats()}
 
 
-@router.get("/sanctions-screen", summary="Currently tracked vessels matched against the OFAC SDN list")
+@router.get("/sanctions-screen", summary="Currently tracked vessels matched against the OFAC SDN list", dependencies=[Depends(get_current_user)])
 async def get_sanctions_screen():
     """Name-match only (see services/intel/sanctions.py for why, and
     why that's a real limitation to read match_confidence against)."""
@@ -411,24 +434,24 @@ async def get_sanctions_screen():
     return {"hits": hits, "list_status": sanctions.get_list_status()}
 
 
-@router.get("/geo-tone", summary="GDELT regional sentiment, aggregated from already-tracked events into grid cells")
+@router.get("/geo-tone", summary="GDELT regional sentiment, aggregated from already-tracked events into grid cells", dependencies=[Depends(get_current_user)])
 async def get_geo_tone():
     gdelt_events = intel_store.query(sources=["GDELT"], limit=1000)
     return {"regions": geo_tone_mod.compute_tone_regions(gdelt_events)}
 
 
-@router.get("/seismic-disruption", summary="Recent earthquakes near a monitored chokepoint")
+@router.get("/seismic-disruption", summary="Recent earthquakes near a monitored chokepoint", dependencies=[Depends(get_current_user)])
 async def get_seismic_disruption(min_magnitude: float = 5.0):
     usgs_events = intel_store.query(sources=["USGS"], limit=500)
     return {"disruptions": seismic_disruption.find_disruptions(usgs_events, min_magnitude=min_magnitude)}
 
 
-@router.get("/macro", summary="Free macro-economic context (FRED + World Bank)")
+@router.get("/macro", summary="Free macro-economic context (FRED + World Bank)", dependencies=[Depends(get_current_user)])
 async def get_macro():
     return await macro_mod.get_macro_snapshot()
 
 
-@router.get("/business-risk", summary="Unified 0-100 risk score per chokepoint, blending traffic/tone/seismic/sanctions")
+@router.get("/business-risk", summary="Unified 0-100 risk score per chokepoint, blending traffic/tone/seismic/sanctions", dependencies=[Depends(get_current_user)])
 async def get_business_risk():
     """See services/intel/business_risk.py for the exact weights —
     deliberately simple/auditable rather than an opaque model."""
@@ -444,7 +467,7 @@ async def get_business_risk():
     return {"chokepoints": scores}
 
 
-@router.get("/strategic-sites", summary="Major ports/refineries/mines with live nearby-signal updates (earthquakes, dark vessels, news tone, recent headlines)")
+@router.get("/strategic-sites", summary="Major ports/refineries/mines with live nearby-signal updates (earthquakes, dark vessels, news tone, recent headlines)", dependencies=[Depends(get_current_user)])
 async def get_strategic_sites(site_type: Optional[str] = None):
     """site_type: 'port' | 'refinery' | 'mine' | omit for all. Curated
     list — see services/intel/strategic_sites.py. Each site's 'signals'
@@ -460,22 +483,22 @@ async def get_strategic_sites(site_type: Optional[str] = None):
 
 # ── Historical data, for the Analysis tab (charts, not just current values) ──
 
-@router.get("/commodities/history", summary="Historical daily closes for a commodity, for charting")
+@router.get("/commodities/history", summary="Historical daily closes for a commodity, for charting", dependencies=[Depends(get_current_user)])
 async def get_commodity_history_endpoint(symbol: str, range: str = "3mo"):  # noqa: A002 (matches query param name)
     return await commodity_prices.get_history(symbol, range)
 
 
-@router.get("/macro/history", summary="Historical FRED series (US) for charting")
+@router.get("/macro/history", summary="Historical FRED series (US) for charting", dependencies=[Depends(get_current_user)])
 async def get_fred_history_endpoint(series: str, months: int = 24):
     return await macro_mod.get_fred_history(series, months)
 
 
-@router.get("/macro/history/worldbank", summary="Historical World Bank indicator (global or a specific country) for charting")
+@router.get("/macro/history/worldbank", summary="Historical World Bank indicator (global or a specific country) for charting", dependencies=[Depends(get_current_user)])
 async def get_world_bank_history_endpoint(indicator: str, region: str = "global", years: int = 15):
     return await macro_mod.get_world_bank_history(indicator, region, years)
 
 
-@router.get("/chokepoint-traffic-history", summary="Historical vessel-count series for a chokepoint, for charting")
+@router.get("/chokepoint-traffic-history", summary="Historical vessel-count series for a chokepoint, for charting", dependencies=[Depends(get_current_user)])
 async def get_chokepoint_traffic_history_endpoint(chokepoint: str, days: int = 14):
     if chokepoint not in CHOKEPOINTS:
         raise HTTPException(status_code=404, detail=f"Unknown chokepoint. Valid: {list(CHOKEPOINTS)}")
@@ -484,40 +507,40 @@ async def get_chokepoint_traffic_history_endpoint(chokepoint: str, days: int = 1
 
 # ── Economic blocs (G7/G20/BRICS/ASEAN) — built on data already integrated above ──
 
-@router.get("/economic-blocs", summary="List available economic blocs and their members")
+@router.get("/economic-blocs", summary="List available economic blocs and their members", dependencies=[Depends(get_current_user)])
 async def list_economic_blocs():
     return {"blocs": [economic_blocs.get_bloc_info(b) for b in economic_blocs.get_bloc_ids()]}
 
 
-@router.get("/economic-blocs/{bloc_id}/macro", summary="GDP growth + inflation per member country (World Bank)")
+@router.get("/economic-blocs/{bloc_id}/macro", summary="GDP growth + inflation per member country (World Bank)", dependencies=[Depends(get_current_user)])
 async def get_economic_bloc_macro(bloc_id: str):
     if bloc_id not in economic_blocs.get_bloc_ids():
         raise HTTPException(status_code=404, detail=f"Unknown bloc. Valid: {economic_blocs.get_bloc_ids()}")
     return await economic_blocs.get_bloc_macro(bloc_id)
 
 
-@router.get("/economic-blocs/{bloc_id}/tone", summary="GDELT news tone scoped to this bloc's name/members")
+@router.get("/economic-blocs/{bloc_id}/tone", summary="GDELT news tone scoped to this bloc's name/members", dependencies=[Depends(get_current_user)])
 async def get_economic_bloc_tone(bloc_id: str):
     if bloc_id not in economic_blocs.get_bloc_ids():
         raise HTTPException(status_code=404, detail=f"Unknown bloc. Valid: {economic_blocs.get_bloc_ids()}")
     return economic_blocs.get_bloc_tone(bloc_id)
 
 
-@router.get("/economic-blocs/{bloc_id}/commodities", summary="Tracked commodities this bloc's members are major producers/exporters of (editorial)")
+@router.get("/economic-blocs/{bloc_id}/commodities", summary="Tracked commodities this bloc's members are major producers/exporters of (editorial)", dependencies=[Depends(get_current_user)])
 async def get_economic_bloc_commodities(bloc_id: str):
     if bloc_id not in economic_blocs.get_bloc_ids():
         raise HTTPException(status_code=404, detail=f"Unknown bloc. Valid: {economic_blocs.get_bloc_ids()}")
     return economic_blocs.get_bloc_commodities(bloc_id)
 
 
-@router.get("/economic-blocs/{bloc_id}/exposure", summary="Recent SEC filings mentioning this bloc (SEC EDGAR full-text search)")
+@router.get("/economic-blocs/{bloc_id}/exposure", summary="Recent SEC filings mentioning this bloc (SEC EDGAR full-text search)", dependencies=[Depends(get_current_user)])
 async def get_economic_bloc_exposure(bloc_id: str, days_back: int = 14):
     if bloc_id not in economic_blocs.get_bloc_ids():
         raise HTTPException(status_code=404, detail=f"Unknown bloc. Valid: {economic_blocs.get_bloc_ids()}")
     return await economic_blocs.get_bloc_exposure(bloc_id, days_back)
 
 
-@router.get("/wind-field", summary="Animated wind vector grid (U/V components)")
+@router.get("/wind-field", summary="Animated wind vector grid (U/V components)", dependencies=[Depends(get_current_user)])
 async def get_wind_field():
     data = wind_field_store.get()
     if data is None:
@@ -525,7 +548,7 @@ async def get_wind_field():
     return data
 
 
-@router.get("/air-quality", summary="Air quality (PM2.5, PM10, US AQI) at a point")
+@router.get("/air-quality", summary="Air quality (PM2.5, PM10, US AQI) at a point", dependencies=[Depends(get_current_user)])
 async def get_air_quality_endpoint(lat: float, lon: float):
     from ..services.weather.air_quality import get_air_quality
     result = await get_air_quality(lat, lon)

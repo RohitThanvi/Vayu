@@ -16,6 +16,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { apiFetch } from '../lib/api.js';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
@@ -37,7 +38,7 @@ function useJson(url) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch(url)
+    apiFetch(url)
       .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
       .then(d => { if (!cancelled) { setData(d); setError(null); } })
       .catch(() => { if (!cancelled) setError(true); })
@@ -75,7 +76,7 @@ export default function EconomicsView({ apiUrl }) {
   const loadExposure = () => {
     setExposureLoading(true);
     setExposure(null);
-    fetch(`${apiUrl}/api/v1/intel/economic-blocs/${blocId}/exposure`)
+    apiFetch(`${apiUrl}/api/v1/intel/economic-blocs/${blocId}/exposure`)
       .then(r => r.json())
       .then(setExposure)
       .catch(() => setExposure({ filings: [] }))
