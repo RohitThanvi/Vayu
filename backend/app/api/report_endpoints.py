@@ -1,13 +1,14 @@
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from ..services import gee_client
-from ..services.report_generator import build_analysis_report, build_agri_risk_report, ANALYSIS_SPECS
+from ..services.report_generator import build_analysis_report, build_agri_risk_report, build_remote_sensing_report, ANALYSIS_SPECS
+from ..services import gee_remote_sensing as rs
 from ..services.agri.risk_scoring import compute_risk_score
 from ..services.agri.baseline import compute_seasonal_baseline
 from ..services.agri.groundwater import compute_groundwater_trend
@@ -324,4 +325,70 @@ async def agri_risk_report(req: AgriRiskReportRequest):
     return Response(
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="vayu_agri_risk_report.pdf"'},
+    )
+
+
+class RemoteSensingReportRequest(BaseModel):
+    tool: str
+    aoi_geojson: Dict[str, Any]
+    # The already-computed compute_*() result from a prior /remote-sensing/
+    # analyze call — required, not optional (unlike /analysis's `metrics`
+    # above). The frontend always has this in state by the time "Generate
+    # Report" is clickable, and requiring it here avoids re-running the
+    # full computation (including every index/period the user selected)
+    # a second time just to build the PDF.
+    result: Dict[str, Any]
+    region_name: Optional[str] = None
+    include_imagery: bool = True
+    # Only the params needed to REBUILD the underlying image for a static
+    # thumbnail (see gee_remote_sensing.get_report_thumbnail) — a subset
+    # of RemoteSensingRequest's fields in remote_sensing_endpoints.py,
+    # whichever the tool actually needs.
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    indices: Optional[List[str]] = None
+    index: Optional[str] = None
+    period1_start: Optional[str] = None
+    period1_end: Optional[str] = None
+    period2_start: Optional[str] = None
+    period2_end: Optional[str] = None
+    pre_start: Optional[str] = None
+    pre_end: Optional[str] = None
+    post_start: Optional[str] = None
+    post_end: Optional[str] = None
+
+
+@router.post("/remote-sensing", summary="Generate a scientific PDF report for a Spectra (remote sensing) result")
+async def remote_sensing_report(req: RemoteSensingReportRequest):
+    thumbnail_bytes = None
+    if req.include_imagery:
+        try:
+            thumbnail_bytes = await asyncio.to_thread(
+                rs.get_report_thumbnail, req.tool, req.aoi_geojson,
+                start_date=req.start_date, end_date=req.end_date,
+                indices=req.indices, index=req.index,
+                period1_start=req.period1_start, period1_end=req.period1_end,
+                period2_start=req.period2_start, period2_end=req.period2_end,
+                pre_start=req.pre_start, pre_end=req.pre_end,
+                post_start=req.post_start, post_end=req.post_end,
+            )
+        except Exception as e:
+            # Thumbnail is a nice-to-have for the report, not load-bearing —
+            # the numeric results and methodology are already fully known
+            # from req.result, so a failed image fetch shouldn't block the
+            # PDF the way a failed core computation would.
+            logger.warning(f"remote sensing report thumbnail fetch failed, continuing without it: {e}")
+
+    try:
+        pdf_bytes = build_remote_sensing_report(
+            tool=req.tool, aoi_geojson=req.aoi_geojson, result=req.result,
+            thumbnail_bytes=thumbnail_bytes, region_name=req.region_name,
+        )
+    except Exception as e:
+        logger.error(f"remote sensing report generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {e}")
+
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="vayu_spectra_{req.tool}_report.pdf"'},
     )

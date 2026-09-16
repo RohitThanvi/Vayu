@@ -22,6 +22,43 @@ const S = {
 
 const POLL_MS = 2000;
 
+// Flattens a (possibly nested) result object into flat key/value rows
+// for CSV export — the AOI-summary numbers (means, std_devs, areas,
+// etc.), not per-pixel data (that's what the GeoTIFF download is for).
+// Skips map_layer/download_url since those are URLs, not data.
+function _flattenForCsv(obj, prefix = '', rows = []) {
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (k === 'map_layer' || k === 'download_url') continue;
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      _flattenForCsv(v, key, rows);
+    } else if (Array.isArray(v)) {
+      v.forEach((item, i) => {
+        if (item && typeof item === 'object') _flattenForCsv(item, `${key}[${i}]`, rows);
+        else rows.push([`${key}[${i}]`, item]);
+      });
+    } else {
+      rows.push([key, v]);
+    }
+  }
+  return rows;
+}
+
+function downloadResultCsv(tool, result) {
+  const rows = _flattenForCsv(result);
+  const csv = ['field,value', ...rows.map(([k, v]) => {
+    const val = String(v ?? '').replace(/"/g, '""');
+    return `"${k}","${val}"`;
+  })].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `vayu_spectra_${tool}_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 const TOOL_META = {
   spectral_indices: { label: 'Spectral Indices', needsDates: true, icon: '≈' },
   terrain: { label: 'Terrain Analysis', needsDates: false, icon: '△' },
@@ -281,6 +318,8 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
   const [activeLayerId, setActiveLayerId] = useState(null);
+  const [lastParams, setLastParams] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
   const pollRef = useRef(null);
 
   // Clear any map overlay left over from a previous result when the whole
@@ -292,6 +331,29 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
   const toggleIndex = (id) => {
     setSelectedIndices(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
+
+  const generateReport = useCallback(async () => {
+    if (!result || !lastParams) return;
+    setReportLoading(true); setError(null);
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/report/remote-sensing`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...lastParams, result }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `vayu_spectra_${tool}_report.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(`Report generation failed: ${e.message}`);
+    } finally {
+      setReportLoading(false);
+    }
+  }, [apiUrl, tool, result, lastParams]);
 
   const run = useCallback(async () => {
     if (!drawnAOI) { setError('Draw an Area of Interest on the map first (top-right draw tools).'); return; }
@@ -309,6 +371,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
       body.pre_start = preStart; body.pre_end = preEnd;
       body.post_start = postStart; body.post_end = postEnd;
     }
+    setLastParams(body);
 
     try {
       const res = await fetch(`${apiUrl}/api/v1/remote-sensing/analyze`, {
@@ -464,6 +527,33 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
 
       {result && (
         <div style={{ marginTop: 14, borderTop: `1px solid ${S.border}`, paddingTop: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: 8 }}>
+            <button
+              onClick={generateReport}
+              disabled={reportLoading}
+              title="Generates a full scientific PDF report: cover page, study area, imagery, results table, methodology, glossary, and limitations."
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontFamily: S.mono,
+                background: reportLoading ? 'rgba(201,168,106,0.08)' : 'rgba(201,168,106,0.14)',
+                border: `1px solid ${S.gold}`, color: S.gold,
+                padding: '3px 8px', borderRadius: 3, cursor: reportLoading ? 'default' : 'pointer',
+                opacity: reportLoading ? 0.6 : 1,
+              }}
+            >
+              {reportLoading ? '⟳ Generating…' : '▤ Generate Report'}
+            </button>
+            <button
+              onClick={() => downloadResultCsv(tool, result)}
+              title="Downloads the AOI-summary numbers (means, std devs, areas, etc.) as CSV — for per-pixel raw data, use the GeoTIFF download on the map layer below."
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontFamily: S.mono,
+                background: 'rgba(126,184,212,0.08)', border: `1px solid ${S.border2}`, color: S.text2,
+                padding: '3px 8px', borderRadius: 3, cursor: 'pointer',
+              }}
+            >
+              ⬇ Download CSV
+            </button>
+          </div>
           <ResultView tool={tool} result={result} onShowOverlay={onShowOverlay} activeLayerId={activeLayerId} setActiveLayerId={setActiveLayerId} />
         </div>
       )}

@@ -30,6 +30,7 @@ from .gee_client import (
     _polygon_geometry, _validate_date_range, _require_start_after,
     _cap_end_date, _mask_s2_clouds, _region_area_km2, _calc_area_km2,
 )
+from .satellite_imagery import _fetch_thumb_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -198,19 +199,6 @@ def compute_spectral_indices(aoi: Dict, start_date: str, end_date: str, indices:
     ).getInfo()
     valid_pixel_fraction = round((valid_px.get("B4", 0) or 0), 4)
 
-    # Standard, roughly perceptually-even palettes for the indices most
-    # likely to actually get looked at as a map rather than just a
-    # number — not exhaustive, but covers vegetation/water/built-up.
-    INDEX_PALETTES = {
-        "ndvi": {"min": -0.2, "max": 0.8, "palette": ["#a50026", "#f46d43", "#fee08b", "#66bd63", "#1a9850"]},
-        "savi": {"min": -0.2, "max": 0.8, "palette": ["#a50026", "#f46d43", "#fee08b", "#66bd63", "#1a9850"]},
-        "evi": {"min": -0.2, "max": 0.8, "palette": ["#a50026", "#f46d43", "#fee08b", "#66bd63", "#1a9850"]},
-        "ndwi": {"min": -0.5, "max": 0.5, "palette": ["#8c510a", "#f6e8c3", "#c7eae5", "#01665e"]},
-        "mndwi": {"min": -0.5, "max": 0.5, "palette": ["#8c510a", "#f6e8c3", "#c7eae5", "#01665e"]},
-        "ndbi": {"min": -0.3, "max": 0.3, "palette": ["#ffffcc", "#fed976", "#fd8d3c", "#e31a1c"]},
-        "ndsi": {"min": -0.2, "max": 0.8, "palette": ["#08306b", "#4292c6", "#c6dbef", "#ffffff"]},
-    }
-
     results = {}
     for idx_id in indices:
         img = _index_image(composite, idx_id)
@@ -310,6 +298,21 @@ def compute_terrain_analysis(aoi: Dict) -> Dict[str, Any]:
 # ═════════════════════════════════════════════════════════════════════════════
 # Land cover classification — ESA WorldCover v200 (10m, 2021, Sentinel-1+2-derived)
 # ═════════════════════════════════════════════════════════════════════════════
+
+# Standard, roughly perceptually-even palettes for the indices most
+# likely to actually get looked at as a map rather than just a number —
+# not exhaustive, but covers vegetation/water/built-up. Module-level
+# (not per-function) since both the live map_layer and the PDF report's
+# static thumbnail need the exact same visualization for the same index.
+INDEX_PALETTES = {
+    "ndvi": {"min": -0.2, "max": 0.8, "palette": ["#a50026", "#f46d43", "#fee08b", "#66bd63", "#1a9850"]},
+    "savi": {"min": -0.2, "max": 0.8, "palette": ["#a50026", "#f46d43", "#fee08b", "#66bd63", "#1a9850"]},
+    "evi": {"min": -0.2, "max": 0.8, "palette": ["#a50026", "#f46d43", "#fee08b", "#66bd63", "#1a9850"]},
+    "ndwi": {"min": -0.5, "max": 0.5, "palette": ["#8c510a", "#f6e8c3", "#c7eae5", "#01665e"]},
+    "mndwi": {"min": -0.5, "max": 0.5, "palette": ["#8c510a", "#f6e8c3", "#c7eae5", "#01665e"]},
+    "ndbi": {"min": -0.3, "max": 0.3, "palette": ["#ffffcc", "#fed976", "#fd8d3c", "#e31a1c"]},
+    "ndsi": {"min": -0.2, "max": 0.8, "palette": ["#08306b", "#4292c6", "#c6dbef", "#ffffff"]},
+}
 
 WORLDCOVER_CLASSES = {
     10: "Tree cover", 20: "Shrubland", 30: "Grassland", 40: "Cropland",
@@ -791,3 +794,75 @@ def compute_index_time_series(aoi: Dict, index_id: str, start_date: str, end_dat
         "points": points,
         "method": f"{d['label']} computed independently for each {interval} from a cloud-masked Sentinel-2 SR median composite, 20m. Periods with zero cloud-free scenes are reported as gaps (value: null), not interpolated or dropped.",
     }
+
+
+def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
+    """Static PNG thumbnail for a Spectra PDF report — reconstructs the
+    minimal image for `tool` (same underlying data/visualization as its
+    live map_layer, see the matching compute_* function above) and
+    fetches a rendered PNG via satellite_imagery.py's _fetch_thumb_bytes.
+
+    Deliberately separate from the compute_* functions rather than
+    having them return a raw ee.Image: those functions cross an async
+    job_store/HTTP boundary and only ever return JSON-serializable
+    dicts, so there's no image object left by the time report
+    generation happens in a later, separate request. This re-derives
+    just the image, not the full stats — cheaper than a full recompute,
+    and kept in this module (not satellite_imagery.py) since it reuses
+    this module's AOI/tool-specific construction logic directly.
+
+    Returns None for atmospheric_composition (no meaningful spatial
+    picture at ~1.1km resolution over a typical AOI — same reasoning as
+    why it has no map_layer) and on any GEE failure, rather than
+    raising — a report should still generate without its imagery page
+    if the thumbnail fetch fails, not fail outright.
+    """
+    try:
+        region = _polygon_geometry(aoi)
+        if tool == "spectral_indices":
+            start_date, end_date = params["start_date"], params["end_date"]
+            index_id = (params.get("indices") or ["ndvi"])[0]
+            composite, _ = _s2_composite(region, start_date, end_date)
+            img = _index_image(composite, index_id)
+            return _fetch_thumb_bytes(img, region, INDEX_PALETTES.get(index_id, {"min": -1, "max": 1, "palette": ["#000000", "#ffffff"]}))
+        if tool == "terrain":
+            dem = ee.Image("COPERNICUS/DEM/GLO30").select("DEM").clip(region)
+            return _fetch_thumb_bytes(ee.Terrain.hillshade(dem), region, {"min": 0, "max": 255})
+        if tool == "lulc":
+            wc = ee.ImageCollection("ESA/WorldCover/v200").first().select("Map").clip(region)
+            class_codes = sorted(WORLDCOVER_CLASSES.keys())
+            wc_dense = wc.remap(class_codes, list(range(len(class_codes))))
+            return _fetch_thumb_bytes(wc_dense, region, {"min": 0, "max": len(class_codes) - 1, "palette": WORLDCOVER_PALETTE})
+        if tool == "snow_cover":
+            start_date, end_date = params["start_date"], params["end_date"]
+            composite, _ = _s2_composite(region, start_date, end_date)
+            ndsi = composite.normalizedDifference(["B3", "B11"]).rename("NDSI")
+            return _fetch_thumb_bytes(ndsi.gt(NDSI_SNOW_THRESHOLD).selfMask(), region, {"palette": ["#4292c6"]})
+        if tool == "sar_backscatter":
+            start_date, end_date = params["start_date"], params["end_date"]
+            col = (ee.ImageCollection("COPERNICUS/S1_GRD")
+                   .filterBounds(region).filterDate(ee.Date(start_date), ee.Date(end_date))
+                   .filter(ee.Filter.eq("instrumentMode", "IW"))
+                   .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+                   .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH")))
+            composite = col.select(["VV", "VH"]).median().clip(region)
+            vv_lin, vh_lin = ee.Image(10).pow(composite.select("VV").divide(10)), ee.Image(10).pow(composite.select("VH").divide(10))
+            rvi = vh_lin.multiply(4).divide(vv_lin.add(vh_lin)).rename("RVI")
+            return _fetch_thumb_bytes(rvi, region, {"min": 0, "max": 1, "palette": ["#f7fcf5", "#74c476", "#00441b"]})
+        if tool == "change_detection":
+            index_id = params["index"]
+            c1, _ = _s2_composite(region, params["period1_start"], params["period1_end"])
+            c2, _ = _s2_composite(region, params["period2_start"], params["period2_end"])
+            delta_img = _index_image(c2, index_id).subtract(_index_image(c1, index_id)).rename("delta")
+            return _fetch_thumb_bytes(delta_img, region, {"min": -0.3, "max": 0.3, "palette": ["#a50026", "#ffffbf", "#1a9850"]})
+        if tool == "burn_severity":
+            c_pre, _ = _s2_composite(region, params["pre_start"], params["pre_end"])
+            c_post, _ = _s2_composite(region, params["post_start"], params["post_end"])
+            nbr_pre = c_pre.normalizedDifference(["B8", "B12"]).rename("NBR")
+            nbr_post = c_post.normalizedDifference(["B8", "B12"]).rename("NBR")
+            dnbr = nbr_pre.subtract(nbr_post).rename("dNBR")
+            return _fetch_thumb_bytes(dnbr, region, {"min": -0.25, "max": 0.66, "palette": ["#1a9850", "#66bd63", "#ffffbf", "#fdae61", "#f46d43", "#a50026"]})
+        return None  # atmospheric_composition, index_time_series (a chart, not a raster)
+    except Exception as e:
+        logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")
+        return None
