@@ -2078,7 +2078,22 @@ export default function App({ tier = 'full', onChangeTier }) {
     if (key === 'high_res') {
       const meta = SATELLITE_LAYERS.high_res;
       const tl = L.tileLayer(ESRI_HIGH_RES_URL, {
-        opacity: meta.opacity, zIndex: 4, maxZoom: 20,
+        opacity: meta.opacity, zIndex: 4,
+        // Esri's actual native tile resolution varies wildly by location —
+        // most populated areas have real imagery up to z19, some areas
+        // (Esri's own "5cm ultra-high-res" coverage) go as high as z22-23,
+        // and sparse/remote areas may have less than 19. There's no
+        // per-location "what's the real max here" API for this free tile
+        // service, so maxNativeZoom:19 is the safe, broadly-available
+        // baseline — Leaflet will request real tiles up to z19 everywhere
+        // that has them, and for zoom levels beyond that, AUTO-UPSCALES
+        // (magnifies) the sharpest tile it has instead of requesting a
+        // nonexistent z20+ tile, which would otherwise come back blank.
+        // maxZoom is the ceiling the user can actually zoom the map to —
+        // raised well past maxNativeZoom specifically so upscaling kicks
+        // in and the user gets a bigger, still-recognizable image instead
+        // of hitting a hard stop at 19/20.
+        maxNativeZoom: 19, maxZoom: 22,
         attribution: ESRI_ATTRIBUTION,
       }).addTo(mapRef.current);
       satelliteTileRefs.current.high_res = tl;
