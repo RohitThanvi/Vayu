@@ -79,6 +79,7 @@ const SATELLITE_LAYERS = {
   // Free for non-commercial use; requires attribution, shown in the UI
   // note wherever this layer is toggled (see EOX_ATTRIBUTION).
   true_color: { label: 'True Color',      icon: 'map',    opacity: 0.9,  desc: 'Sentinel-2 cloudless global mosaic (EOX), any zoom' },
+  true_color_live: { label: 'True Color (Live)', icon: 'map', opacity: 0.9, desc: 'Recent cloud-free Sentinel-2 imagery, sharper and more current than the mosaic above' },
   worldview:  { label: 'Daily Worldview', icon: 'globe',  opacity: 0.9,  desc: "NASA GIBS daily satellite view (MODIS Terra), any zoom" },
   ndvi:       { label: 'NDVI Vegetation', icon: 'leaf',   opacity: 0.75, desc: 'Vegetation health index' },
   sar:        { label: 'SAR / Microwave', icon: 'radio',  opacity: 0.75, desc: 'Sentinel-1, sees through cloud cover' },
@@ -109,7 +110,7 @@ const GIBS_ATTRIBUTION = 'Imagery courtesy NASA GIBS/Worldview';
 
 // Only these three genuinely need the low-zoom gate (live GEE compute,
 // see global_layers.py) — True Color and Worldview are both pre-tiled and exempt.
-const GEE_GATED_LAYERS = new Set(['ndvi', 'sar', 'thermal']);
+const GEE_GATED_LAYERS = new Set(['ndvi', 'sar', 'thermal', 'true_color_live']);
 
 
 // Official OpenWeatherMap Weather Maps 1.0 color stops (openweathermap.org/map_legend),
@@ -576,7 +577,7 @@ function SatelliteLayerToggles({ active, onToggle, loadingKey, currentZoom }) {
       {zoomBlocked && (
         <div style={{ fontSize:11, color:S.text3, fontFamily:S.mono, marginBottom:9, padding:'8px 10px',
           border:`1px solid ${S.border}`, borderRadius:3, background:S.surface2, lineHeight:1.4 }}>
-          Zoom in to load NDVI / SAR / Thermal — these render per-tile from live imagery and world view is too large an area to compute. True Color is a pre-rendered mosaic and works at any zoom.
+          Zoom in to load NDVI / SAR / Thermal / True Color (Live) — these render per-tile from live imagery and world view is too large an area to compute. The other True Color option is a pre-rendered mosaic and works at any zoom.
         </div>
       )}
       <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
@@ -1588,7 +1589,7 @@ export default function App({ tier = 'full', onChangeTier }) {
   const [jobStatus, setJobStatus] = useState(null);
   const [, setHistory]     = useState([]);   // history tab removed from UI for now — still tracked in case it comes back
   const [weatherLayers, setWeatherLayers] = useState({ temp:false, wind:false, pressure:false });
-  const [satelliteLayers, setSatelliteLayers] = useState({ true_color:false, ndvi:false, sar:false, thermal:false, worldview:false });
+  const [satelliteLayers, setSatelliteLayers] = useState({ true_color:false, true_color_live:false, ndvi:false, sar:false, thermal:false, worldview:false });
   const [satelliteLoadingKey, setSatelliteLoadingKey] = useState(null);
   const [mapZoom, setMapZoom] = useState(null);
   const [aqiOn, setAqiOn] = useState(false);

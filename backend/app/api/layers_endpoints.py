@@ -7,7 +7,7 @@ from ..services.global_layers import get_layer
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/layers", tags=["Layers"])
 
-VALID_LAYERS = ("ndvi", "sar", "thermal")   # true_color served client-side from EOX, not via this endpoint — see global_layers.py
+VALID_LAYERS = ("ndvi", "sar", "thermal", "true_color_live")   # the OTHER true_color (static EOX mosaic) is served client-side, not via this endpoint — see global_layers.py
 
 
 @router.get("/{layer_key}", summary="Get a cached tile URL for a toggleable satellite layer")

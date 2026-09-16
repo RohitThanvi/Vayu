@@ -1,16 +1,18 @@
 """
 global_layers.py — toggleable, whole-map satellite imagery layers (NDVI,
-SAR/microwave, thermal/IR), similar to the layer switcher in ISRO's Bhuvan
-or Google Earth Engine's own Explorer.
+SAR/microwave, thermal/IR, live True Color), similar to the layer
+switcher in ISRO's Bhuvan or Google Earth Engine's own Explorer.
 
-True Color is deliberately NOT here — it's served directly from EOX's
-pre-rendered Sentinel-2 cloudless global mosaic (s2maps.eu) client-side,
-with no backend involvement at all, since that's a genuinely better fit
-(higher visual quality, works at any zoom, no per-tile compute cost) than
-asking GEE to build a fresh cloud-free composite per tile on demand. See
-SATELLITE_LAYERS.true_color in App.jsx for that wiring. NDVI/SAR/Thermal
-have no equivalent pre-rendered global product anywhere free, so they
-stay on live GEE compute and the minZoom gate that requires.
+The DEFAULT True Color layer is still NOT here — it's served directly
+from EOX's pre-rendered Sentinel-2 cloudless global mosaic (s2maps.eu)
+client-side, with no backend involvement, since that's a genuinely
+better fit for an always-on, any-zoom base layer (no per-tile compute
+cost, no minZoom gate). See SATELLITE_LAYERS.true_color in App.jsx for
+that wiring. This module's true_color_live is a second, optional
+variant: built fresh from the last 30 days of actual Sentinel-2 imagery
+(see _build_true_color below) rather than a fixed prior-year composite
+— sharper and more current, at the cost of the same minZoom gate NDVI/
+SAR/Thermal already need, since it's live per-tile GEE compute.
 
 Earth Engine's getMapId() tile URLs are inherently a {z}/{x}/{y} tile
 template that Google computes lazily per-tile on request — a single call
@@ -147,10 +149,33 @@ def _build_thermal() -> Dict[str, Any]:
     return {"tile_url": map_id["tile_fetcher"].url_format, "label": "Thermal / IR (Landsat LST)"}
 
 
+def _build_true_color() -> Dict[str, Any]:
+    """Live Sentinel-2 true color (B4/B3/B2), most-recent-cloud-free-pixel
+    mosaic — the GEE-backed counterpart to the static EOX mosaic that
+    powers SATELLITE_LAYERS.true_color in App.jsx. That EOX layer is a
+    fixed 2024 global composite: fast and always available at any zoom,
+    but a year-plus old and visually softer (it's a downsampled global
+    product). This one is built from whatever's actually cloud-free in
+    the last 30 days, at Sentinel-2's native clarity.
+
+    The min/max/gamma stretch below matters more than it might look —
+    Sentinel-2 SR reflectance values are NOT 0-1 or 0-255, they're
+    roughly 0-10000+; visualizing the raw range renders everything
+    near-black. 0-3000 with a 1.2 gamma lift is the standard stretch
+    used across GEE's own true-color tutorials/examples for this
+    product and gives a natural (not washed-out, not muddy) look.
+    """
+    composite = _recent_s2_composite()
+    rgb = composite.select(["B4", "B3", "B2"])
+    map_id = rgb.getMapId({"min": 0, "max": 3000, "gamma": 1.2})
+    return {"tile_url": map_id["tile_fetcher"].url_format, "label": "True Color (Live, Sentinel-2)"}
+
+
 _BUILDERS = {
     "ndvi": _build_ndvi,
     "sar": _build_sar,
     "thermal": _build_thermal,
+    "true_color_live": _build_true_color,
 }
 
 
