@@ -310,15 +310,16 @@ const EXAMPLES = [
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
-  bg: '#0a0c0f',
-  surface: '#0d1117',
-  surface2: '#0f1419',
-  border: '#2a3040',
-  border2: '#3a4250',
-  text: '#ffffff',
-  text2: 'rgba(255,255,255,0.8)',
-  text3: 'rgba(255,255,255,0.6)',
-  accent: '#7eb8d4',
+  bg: 'var(--vayu-bg)',
+  surface: 'var(--vayu-surface)',
+  surface2: 'var(--vayu-surface2)',
+  border: 'var(--vayu-border)',
+  border2: 'var(--vayu-border2)',
+  text: 'var(--vayu-text)',
+  text2: 'var(--vayu-text2)',
+  text3: 'var(--vayu-text3)',
+  accent: 'var(--vayu-accent)',
+  gold: 'var(--vayu-gold)',
 };
 
 function fmtKey(k) { return k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()); }
@@ -402,6 +403,8 @@ function Icon({ name, size = 16, style }) {
     case 'close':      return <svg {...p}><path d="M6 6l12 12M18 6 6 18"/></svg>;
     case 'ship':       return <svg {...p}><path d="M4 15h16l-2 4H6Z"/><path d="M6 15V8h8l3 7M9 8V4h2v4"/></svg>;
     case 'layers':     return <svg {...p}><path d="M12 3 3 8l9 5 9-5Z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg>;
+    case 'moon':       return <svg {...p}><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z"/></svg>;
+    case 'sun':        return <svg {...p}><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.6M12 18.9v2.6M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M2.5 12h2.6M18.9 12h2.6M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></svg>;
     default:           return null;
   }
 }
@@ -1259,7 +1262,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
   orbitalShowSatellites, setOrbitalShowSatellites, orbitalShowAircraft, setOrbitalShowAircraft,
   orbitalSatellites, orbitalSatLoaded, orbitalSatDebug, orbitalAircraftStats, orbitalAircraftValid,
   orbitalSearch, setOrbitalSearch, orbitalFilteredList, orbitalSelected, setOrbitalSelected,
-  onShowSpectraOverlay, onClearSpectraOverlay }) {
+  onShowSpectraOverlay, onClearSpectraOverlay, theme, onToggleTheme }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const ALL_TABS = [
@@ -1284,7 +1287,19 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             </div>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            <div style={{ fontSize:12, fontFamily:S.mono, color:'#4a7c59', border:'1px solid #4a7c59', padding:'2px 7px', letterSpacing:1 }}>v2.0</div>
+            <button
+              onClick={onToggleTheme}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, fontFamily: S.mono,
+                color: '#4a7c59', background: 'transparent', border: '1px solid #4a7c59',
+                padding: '2px 7px', letterSpacing: 1, borderRadius: 3, cursor: 'pointer',
+              }}
+            >
+              <Icon name={theme === 'dark' ? 'moon' : 'sun'} size={12} />
+              {theme === 'dark' ? 'DARK' : 'LIGHT'}
+            </button>
             {isMobile && (
               <button onClick={onClose} aria-label="Close panel"
                 style={{ display:'flex', padding:6, background:S.surface2, border:`1px solid ${S.border}`, borderRadius:4, color:S.text2, cursor:'pointer' }}>
@@ -1536,6 +1551,19 @@ function MapOverlay({ result, isLoading, drawnAOI, isMobile }) {
 export default function App({ tier = 'full', onChangeTier }) {
   const isMobile = useIsMobile(MOBILE_BREAKPOINT);
   const [mobilePanel, setMobilePanel] = useState('map'); // 'map' | 'analyze' | 'intel'
+  // Light/dark toggle — applied as a data-theme attribute on <html>,
+  // which the --vayu-* CSS variables in index.css key off of. See
+  // App.jsx's S={...} object: every S.bg/S.text/etc. is a var(--vayu-*)
+  // reference, so flipping this one attribute reskins every component
+  // that uses S without needing per-component theme plumbing.
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem('vayu_theme') || 'dark'; } catch { return 'dark'; }
+  });
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem('vayu_theme', theme); } catch {}
+  }, [theme]);
+  const toggleTheme = useCallback(() => setTheme(t => (t === 'dark' ? 'light' : 'dark')), []);
   // If the current tab isn't visible for this tier (e.g. switched from
   // Full to Agri while on Business), fall back to Analyze — it's in
   // every tier's allowed list, so it's always a safe default.
@@ -2280,6 +2308,7 @@ export default function App({ tier = 'full', onChangeTier }) {
       tier={tier} onChangeTier={onChangeTier}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
       onShowSpectraOverlay={showSpectraOverlay} onClearSpectraOverlay={clearSpectraOverlay}
+      theme={theme} onToggleTheme={toggleTheme}
       satelliteLoadingKey={satelliteLoadingKey} mapZoom={mapZoom}
       orbitalShowSatellites={orbitalShowSatellites} setOrbitalShowSatellites={setOrbitalShowSatellites}
       orbitalShowAircraft={orbitalShowAircraft} setOrbitalShowAircraft={setOrbitalShowAircraft}

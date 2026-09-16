@@ -16,6 +16,37 @@
   --text3: #4a7a9b;
   --mono: 'Space Mono', monospace;
   --sans: 'DM Sans', sans-serif;
+
+  /* Theme toggle (light/dark) — namespaced --vayu-* rather than reusing
+     the vars above, since those are a separate legacy set (different
+     values, only wired to Leaflet controls + a few unused CSS classes)
+     that predates this toggle and isn't what the main app's S={...}
+     objects actually use. These match App.jsx's S object exactly for
+     the dark (default) values, so switching App.jsx's S to reference
+     these is a no-visual-change baseline. */
+  --vayu-bg: #0a0c0f;
+  --vayu-surface: #0d1117;
+  --vayu-surface2: #0f1419;
+  --vayu-border: #2a3040;
+  --vayu-border2: #3a4250;
+  --vayu-text: #ffffff;
+  --vayu-text2: rgba(255,255,255,0.8);
+  --vayu-text3: rgba(255,255,255,0.6);
+  --vayu-accent: #7eb8d4;
+  --vayu-gold: #c9a86a;
+}
+
+[data-theme="light"] {
+  --vayu-bg: #f4f5f7;
+  --vayu-surface: #ffffff;
+  --vayu-surface2: #eef0f3;
+  --vayu-border: #d6dae1;
+  --vayu-border2: #b9c0cb;
+  --vayu-text: #12151a;
+  --vayu-text2: rgba(18,21,26,0.78);
+  --vayu-text3: rgba(18,21,26,0.55);
+  --vayu-accent: #2f7fa8;
+  --vayu-gold: #a3803f;
 }
 
 * { box-sizing: border-box; }
