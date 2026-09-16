@@ -18,6 +18,7 @@
     "@capacitor/core": "^8.4.2",
     "@capacitor/splash-screen": "^8.0.2",
     "@vercel/analytics": "^2.0.1",
+    "mapillary-js": "^4.1.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "satellite.js": "^6.0.2",

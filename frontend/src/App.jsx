@@ -15,6 +15,10 @@ import DroughtDashboard from './components/DroughtDashboard';
 // means everyone else's initial load stays fast, and it's only fetched
 // the first time someone actually opens that tab.
 const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
+// mapillary-js is a WebGL viewer library that added >1MB to the main
+// bundle when statically imported — lazy-loaded so it only downloads
+// when a user actually opens Street View, same reasoning as OrbitalGlobe.
+const StreetViewPanel = lazy(() => import('./components/StreetViewPanel'));
 import { useVesselTracker } from './hooks/useVesselTracker';
 import { useStrategicSites } from './hooks/useStrategicSites';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -53,6 +57,10 @@ const POLL_MS = 2500;
 // Tiles are fetched straight from the browser, so this only needs a
 // build-time frontend env var, no backend involvement.
 const OWM_API_KEY = import.meta.env.VITE_OWM_API_KEY || '';
+// Mapillary's free "client token" is meant for exactly this kind of
+// client-side use (same as a Mapbox public token) — see
+// mapillary.com/dashboard/developers to register a free app and get one.
+const MAPILLARY_TOKEN = import.meta.env.VITE_MAPILLARY_ACCESS_TOKEN || '';
 
 const WEATHER_LAYERS = {
   temp:     { type:'tile',     owmLayer: 'temp_new',     label: 'Temperature', icon: 'thermo', opacity: 0.55 },
@@ -420,6 +428,7 @@ function Icon({ name, size = 16, style }) {
     case 'layers':     return <svg {...p}><path d="M12 3 3 8l9 5 9-5Z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg>;
     case 'moon':       return <svg {...p}><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z"/></svg>;
     case 'sun':        return <svg {...p}><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.6M12 18.9v2.6M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M2.5 12h2.6M18.9 12h2.6M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></svg>;
+    case 'camera':     return <svg {...p}><path d="M4 8h3l1.5-2h7L17 8h3v11H4Z"/><circle cx="12" cy="13.5" r="3.5"/></svg>;
     default:           return null;
   }
 }
@@ -757,8 +766,23 @@ function OrbitalSidebarPanel({
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────────
-function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, sitesLayerRef, onZoomChange }) {
+function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, sitesLayerRef, onZoomChange, streetViewMode, onMapClickForStreetView }) {
   const divRef = useRef(null);
+  // The map-creation effect below runs once ([] deps) — it can't read a
+  // prop value that changes later without going stale, so streetViewMode
+  // is mirrored into a ref the click handler (registered once, in that
+  // same effect) reads from instead. Same pattern as filterRef in
+  // useIntelFeed.js.
+  const streetViewModeRef = useRef(streetViewMode);
+  useEffect(() => { streetViewModeRef.current = streetViewMode; }, [streetViewMode]);
+  // Crosshair cursor while in Street View mode — a real effect (not
+  // inside the [] map-creation one) since it needs to re-run whenever
+  // streetViewMode itself changes, using the already-created map.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const el = mapRef.current.getContainer();
+    el.style.cursor = streetViewMode ? 'crosshair' : '';
+  }, [streetViewMode, mapRef]);
   useEffect(() => {
     if (mapRef.current) return;
     const map = L.map(divRef.current, {
@@ -832,6 +856,15 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     map.on(L.Draw.Event.CREATED, e => { dg.clearLayers(); dg.addLayer(e.layer); onAreaDrawn(e.layer.toGeoJSON().geometry); });
     map.on(L.Draw.Event.EDITED, e => { e.layers.eachLayer(l => onAreaDrawn(l.toGeoJSON().geometry)); });
     map.on(L.Draw.Event.DELETED, () => { if(dg.getLayers().length===0) onAreaDrawn(null); });
+    // Street View mode: a click looks up nearby Mapillary coverage instead
+    // of the draw tool's normal click-to-place behavior. Only acts when
+    // streetViewModeRef.current is true (toggled from the Weather tab),
+    // so it's a no-op the rest of the time.
+    map.on('click', (e) => {
+      if (streetViewModeRef.current && onMapClickForStreetView) {
+        onMapClickForStreetView(e.latlng.lat, e.latlng.lng);
+      }
+    });
     mapRef.current = map;
 
     // Keep Leaflet's internal size in sync — container width changes when
@@ -1277,7 +1310,8 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
   orbitalShowSatellites, setOrbitalShowSatellites, orbitalShowAircraft, setOrbitalShowAircraft,
   orbitalSatellites, orbitalSatLoaded, orbitalSatDebug, orbitalAircraftStats, orbitalAircraftValid,
   orbitalSearch, setOrbitalSearch, orbitalFilteredList, orbitalSelected, setOrbitalSelected,
-  onShowSpectraOverlay, onClearSpectraOverlay, theme, onToggleTheme }) {
+  onShowSpectraOverlay, onClearSpectraOverlay, theme, onToggleTheme,
+  streetViewMode, onToggleStreetView }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const ALL_TABS = [
@@ -1469,6 +1503,24 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
                 <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{aqiLoading ? '…' : (aqiOn ? 'ON' : 'OFF')}</span>
               </button>
             </div>
+            <div style={{ marginTop:8 }}>
+              <button onClick={onToggleStreetView}
+                style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', minHeight:44, width:'100%',
+                  fontFamily:S.mono, letterSpacing:0.3,
+                  background: streetViewMode ? 'rgba(126,184,212,0.10)' : S.surface2,
+                  border: `1px solid ${streetViewMode ? S.accent : S.border}`, borderRadius:3,
+                  color: streetViewMode ? S.accent : S.text2, cursor:'pointer',
+                  textAlign:'left' }}>
+                <Icon name="camera" size={18} style={{ flexShrink:0, opacity: streetViewMode ? 1 : 0.75 }} />
+                <span style={{ fontSize:14, flex:1 }}>Street View (click map, Mapillary)</span>
+                <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{streetViewMode ? 'ON' : 'OFF'}</span>
+              </button>
+              {streetViewMode && (
+                <div style={{ fontSize:11, color:S.text3, marginTop:6, lineHeight:1.4 }}>
+                  Click anywhere on the map to look for nearby street-level imagery. Free, crowdsourced coverage — dense in some cities, sparse elsewhere.
+                </div>
+              )}
+            </div>
             <div style={{ fontSize:13, color:S.text3, lineHeight:1.6 }}>
             </div>
             {!OWM_API_KEY && (
@@ -1579,6 +1631,61 @@ export default function App({ tier = 'full', onChangeTier }) {
     try { localStorage.setItem('vayu_theme', theme); } catch {}
   }, [theme]);
   const toggleTheme = useCallback(() => setTheme(t => (t === 'dark' ? 'light' : 'dark')), []);
+
+  // Street View mode — click the map to look up nearby free crowdsourced
+  // imagery (Mapillary). streetViewImage holds {id, capturedAt} for the
+  // currently-open viewer panel, or null when closed.
+  const [streetViewMode, setStreetViewMode] = useState(false);
+  const [streetViewImage, setStreetViewImage] = useState(null);
+  const [streetViewLoading, setStreetViewLoading] = useState(false);
+  const [streetViewNotFoundAt, setStreetViewNotFoundAt] = useState(null);
+
+  useEffect(() => {
+    if (!streetViewNotFoundAt) return;
+    const t = setTimeout(() => setStreetViewNotFoundAt(null), 4500);
+    return () => clearTimeout(t);
+  }, [streetViewNotFoundAt]);
+
+  const handleMapClickForStreetView = useCallback(async (lat, lng) => {
+    if (!MAPILLARY_TOKEN) {
+      setStreetViewNotFoundAt({ lat, lng, reason: 'no_token' });
+      return;
+    }
+    setStreetViewLoading(true);
+    setStreetViewNotFoundAt(null);
+    try {
+      // ~150m bbox around the click — Mapillary's Graph API takes a bbox,
+      // not a point+radius, so this approximates "nearby" (0.0015deg is
+      // roughly 150-170m at most latitudes; imprecise near the poles,
+      // fine for this use).
+      const d = 0.0015;
+      const bbox = [lng - d, lat - d, lng + d, lat + d].join(',');
+      const url = `https://graph.mapillary.com/images?access_token=${MAPILLARY_TOKEN}&fields=id,captured_at,computed_geometry,geometry&bbox=${bbox}&limit=10`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Mapillary API ${res.status}`);
+      const data = await res.json();
+      const candidates = (data.data || []).filter(img => img.computed_geometry || img.geometry);
+      if (candidates.length === 0) {
+        setStreetViewNotFoundAt({ lat, lng, reason: 'no_coverage' });
+        return;
+      }
+      // Pick the closest candidate by straight-line distance — good
+      // enough at this scale (a ~150m bbox), no need for haversine.
+      let best = null, bestDist = Infinity;
+      for (const img of candidates) {
+        const geom = img.computed_geometry || img.geometry;
+        const [ilng, ilat] = geom.coordinates;
+        const dist = Math.hypot(ilat - lat, ilng - lng);
+        if (dist < bestDist) { bestDist = dist; best = img; }
+      }
+      setStreetViewImage({ id: best.id, capturedAt: best.captured_at });
+    } catch (e) {
+      console.error('Mapillary lookup failed:', e);
+      setStreetViewNotFoundAt({ lat, lng, reason: 'error' });
+    } finally {
+      setStreetViewLoading(false);
+    }
+  }, []);
   // If the current tab isn't visible for this tier (e.g. switched from
   // Full to Agri while on Business), fall back to Analyze — it's in
   // every tier's allowed list, so it's always a safe default.
@@ -2355,6 +2462,7 @@ export default function App({ tier = 'full', onChangeTier }) {
       tier={tier} onChangeTier={onChangeTier}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
       onShowSpectraOverlay={showSpectraOverlay} onClearSpectraOverlay={clearSpectraOverlay}
+      streetViewMode={streetViewMode} onToggleStreetView={() => setStreetViewMode(v => !v)}
       theme={theme} onToggleTheme={toggleTheme}
       satelliteLoadingKey={satelliteLoadingKey} mapZoom={mapZoom}
       orbitalShowSatellites={orbitalShowSatellites} setOrbitalShowSatellites={setOrbitalShowSatellites}
@@ -2388,7 +2496,8 @@ export default function App({ tier = 'full', onChangeTier }) {
     : intelPanelEl;
 
   const mapEl = (
-    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} sitesLayerRef={sitesLayerRef} onZoomChange={setMapZoom} />
+    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} sitesLayerRef={sitesLayerRef} onZoomChange={setMapZoom}
+      streetViewMode={streetViewMode} onMapClickForStreetView={handleMapClickForStreetView} />
   );
 
   // Single tree for both layouts — the map element's position/type never changes
@@ -2455,6 +2564,34 @@ export default function App({ tier = 'full', onChangeTier }) {
           bottom of the viewport, same as the sidebar/map/intel panel
           claim their own columns above it. */}
       {!isMobile && <ErrorBoundary fallback={null}><CommodityTicker apiUrl={API_URL} /></ErrorBoundary>}
+
+      {streetViewImage && (
+        <Suspense fallback={
+          <div style={{ position:'fixed', inset:0, zIndex:2000, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', color:S.text2, fontFamily:S.mono, fontSize:13 }}>
+            Loading street view…
+          </div>
+        }>
+          <StreetViewPanel
+            imageId={streetViewImage.id}
+            capturedAt={streetViewImage.capturedAt}
+            accessToken={MAPILLARY_TOKEN}
+            onClose={() => setStreetViewImage(null)}
+          />
+        </Suspense>
+      )}
+
+      {streetViewNotFoundAt && (
+        <div style={{
+          position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', zIndex: 1900,
+          background: S.surface, border: `1px solid ${S.border}`, borderRadius: 4,
+          padding: '10px 16px', fontSize: 12.5, fontFamily: S.mono, color: S.text2,
+          maxWidth: 360, textAlign: 'center', boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+        }}>
+          {streetViewNotFoundAt.reason === 'no_token'
+            ? 'Street View needs a free Mapillary access token — set VITE_MAPILLARY_ACCESS_TOKEN.'
+            : 'No street-level imagery found near this point (Mapillary\u2019s free crowdsourced coverage is uneven — try a denser urban area).'}
+        </div>
+      )}
 
       <Analytics />
     </div>
