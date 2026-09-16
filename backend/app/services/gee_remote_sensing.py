@@ -557,8 +557,17 @@ def compute_change_detection(aoi: Dict, index_id: str, period1_start: str, perio
     stats2 = img2.reduceRegion(
         reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
         geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
-    mean1 = stats1.get(band_name, 0) or 0
-    mean2 = stats2.get(band_name, 0) or 0
+    # BUG FIX: .combine() suffixes each sub-reducer's output band name
+    # (e.g. "NDVI_mean", "NDVI_stdDev") — reduceRegion on a COMBINED
+    # reducer never returns a bare "NDVI" key. The previous code looked
+    # up stats1.get(band_name, 0) (bare "NDVI"), which never existed in
+    # a combined-reducer result, so it silently fell back to the 0
+    # default every time, for every index and every date range —
+    # producing mean1=mean2=0, delta=0, for ALL requests regardless of
+    # real underlying data. std_dev below was already correctly suffixed
+    # (f"{band_name}_stdDev"); mean needed the same fix.
+    mean1 = stats1.get(f"{band_name}_mean", 0) or 0
+    mean2 = stats2.get(f"{band_name}_mean", 0) or 0
     delta = mean2 - mean1
     pct_change = (delta / abs(mean1) * 100) if mean1 != 0 else None
 
