@@ -66,7 +66,7 @@ const TOOL_META = {
   snow_cover: { label: 'Snow Cover', needsDates: true, icon: '❄' },
   sar_backscatter: { label: 'SAR Backscatter', needsDates: true, icon: '∿' },
   change_detection: { label: 'Change Detection', needsDates: false, needsTwoPeriods: true, icon: '⇄' },
-  burn_severity: { label: 'Burn Severity', needsDates: false, needsPrePost: true, icon: '🔥' },
+  burn_severity: { label: 'Burn Severity', needsDates: false, needsPrePost: true, icon: '▲' },
   atmospheric_composition: { label: 'Atmosphere', needsDates: true, icon: '☁' },
 };
 
