@@ -2276,3 +2276,199 @@ def build_agri_risk_report(
     doc.build(flow, onFirstPage=lambda c, d: _footer_canvas(c, d, generated_at),
                onLaterPages=lambda c, d: _footer_canvas(c, d, generated_at))
     return buf.getvalue()
+
+
+# ============================================================================
+# Remote Sensing (Spectra tab) report — generic across all 9 tools in
+# gee_remote_sensing.py, rather than one custom findings-function per
+# analysis type like build_analysis_report/build_agri_risk_report have.
+# Every RS tool already embeds its own method/citation/interpretation
+# text directly in its result dict (by design — see the "method" field
+# on every compute_* function), so a single template surfacing those
+# fields verbatim covers the whole toolkit without duplicating nine
+# separate narratives that would just restate the same method text.
+# ============================================================================
+
+RS_TOOL_LABELS = {
+    "spectral_indices": "Spectral Indices",
+    "terrain": "Terrain Analysis",
+    "lulc": "Land Cover Classification",
+    "snow_cover": "Snow Cover (NDSI)",
+    "sar_backscatter": "SAR Backscatter",
+    "change_detection": "Change Detection",
+    "burn_severity": "Burn Severity (dNBR)",
+    "atmospheric_composition": "Atmospheric Composition",
+    "index_time_series": "Index Time Series",
+}
+
+RS_GLOSSARY = [
+    ("NDVI", "Normalized Difference Vegetation Index = (NIR\u2212Red)/(NIR+Red). Higher values indicate denser/healthier vegetation."),
+    ("NDWI / MNDWI", "Water indices using Green/NIR or Green/SWIR bands. Higher values indicate open water."),
+    ("NDBI", "Normalized Difference Built-up Index, using SWIR/NIR bands. Higher values indicate built-up/impervious surfaces."),
+    ("SAVI / EVI", "Soil/atmosphere-adjusted variants of NDVI, reducing soil-background and atmospheric noise respectively."),
+    ("NDSI", "Normalized Difference Snow Index = (Green\u2212SWIR1)/(Green+SWIR1). Classified as snow above a 0.4 threshold (Hall et al. 1995)."),
+    ("dNBR", "Delta Normalized Burn Ratio \u2014 pre-fire NBR minus post-fire NBR. Standard USGS FIREMON burn-severity metric."),
+    ("RVI", "Radar Vegetation Index, derived from SAR VV/VH polarizations, computed on linear (not dB) backscatter power."),
+    ("SAR / GRD", "Synthetic Aperture Radar; Ground Range Detected \u2014 an all-weather, day/night imaging radar product (Sentinel-1)."),
+    ("Column density", "For atmospheric gases (NO2/SO2/CO): total mass of the gas in a vertical column of atmosphere, not ground-level concentration."),
+    ("Valid pixel fraction", "Share of the AOI actually covered by cloud-free (unmasked) pixels in the composite used for this result."),
+    ("Std. deviation (\u03c3)", "Spread of pixel values within the AOI around the reported mean \u2014 a rough indicator of spatial heterogeneity/uncertainty."),
+]
+
+
+def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, str]]:
+    """Flattens one compute_*() result from gee_remote_sensing.py into
+    (label, value, unit) rows for _metrics_table — the tool-specific
+    equivalent of _vegetation_findings() etc. above, but returning
+    tabular rows instead of narrative paragraphs, since RS results are
+    inherently more numeric/tabular than the Analyze tab's findings."""
+    rows: List[Tuple[str, str, str]] = []
+    try:
+        if tool == "spectral_indices":
+            for d in result.get("indices", {}).values():
+                rows.append((d["label"], _fmt_num(d.get("mean")), ""))
+                rows.append((f"{d['label']} \u2014 std. dev.", _fmt_num(d.get("std_dev")), ""))
+            if result.get("valid_pixel_fraction") is not None:
+                rows.append(("Valid pixel coverage", _fmt_num(result["valid_pixel_fraction"] * 100, 1), "%"))
+            rows.append(("Scenes used", str(result.get("scene_count", "N/A")), ""))
+        elif tool == "terrain":
+            e, s, a = result.get("elevation_m", {}), result.get("slope_degrees", {}), result.get("dominant_aspect", {})
+            rows += [
+                ("Elevation \u2014 mean", _fmt_num(e.get("mean")), "m"),
+                ("Elevation \u2014 min / max", f"{_fmt_num(e.get('min'))} / {_fmt_num(e.get('max'))}", "m"),
+                ("Slope \u2014 mean", _fmt_num(s.get("mean")), "deg"),
+                ("Dominant aspect", f"{_fmt_num(a.get('degrees'), 1)} ({a.get('compass', 'N/A')})", ""),
+            ]
+        elif tool == "lulc":
+            for c in result.get("classes", []):
+                rows.append((c.get("label", ""), _fmt_num(c.get("pct_of_aoi")), "% of AOI"))
+        elif tool == "snow_cover":
+            rows += [
+                ("Snow-covered area", _fmt_num(result.get("snow_covered_km2")), "km\u00b2"),
+                ("% of AOI", _fmt_num(result.get("snow_cover_pct")), "%"),
+                ("NDSI \u2014 mean / max / \u03c3", f"{_fmt_num(result.get('ndsi_mean'))} / {_fmt_num(result.get('ndsi_max'))} / {_fmt_num(result.get('ndsi_std_dev'))}", ""),
+            ]
+        elif tool == "sar_backscatter":
+            vv, vh = result.get("vv_db", {}), result.get("vh_db", {})
+            rows += [
+                ("VV backscatter \u2014 mean / \u03c3", f"{_fmt_num(vv.get('mean'))} / {_fmt_num(vv.get('std_dev'))}", "dB"),
+                ("VH backscatter \u2014 mean / \u03c3", f"{_fmt_num(vh.get('mean'))} / {_fmt_num(vh.get('std_dev'))}", "dB"),
+                ("Radar Vegetation Index", _fmt_num(result.get("radar_vegetation_index")), ""),
+            ]
+        elif tool == "change_detection":
+            p1, p2 = result.get("period1", {}), result.get("period2", {})
+            rows += [
+                (f"Period 1 mean ({p1.get('start', '')}\u2013{p1.get('end', '')})", f"{_fmt_num(p1.get('mean'))} (\u03c3 {_fmt_num(p1.get('std_dev'))})", ""),
+                (f"Period 2 mean ({p2.get('start', '')}\u2013{p2.get('end', '')})", f"{_fmt_num(p2.get('mean'))} (\u03c3 {_fmt_num(p2.get('std_dev'))})", ""),
+                ("Delta (P2 \u2212 P1)", _fmt_num(result.get("delta")), ""),
+                ("% change", _fmt_num(result.get("pct_change")) if result.get("pct_change") is not None else "N/A", "%"),
+            ]
+        elif tool == "burn_severity":
+            rows += [
+                ("dNBR \u2014 mean / \u03c3", f"{_fmt_num(result.get('dnbr_mean'))} / {_fmt_num(result.get('dnbr_std_dev'))}", ""),
+                ("dNBR \u2014 min / max", f"{_fmt_num(result.get('dnbr_min'))} / {_fmt_num(result.get('dnbr_max'))}", ""),
+                ("Overall classification", str(result.get("overall_classification", "N/A")), ""),
+            ]
+            for sev_label, km2 in (result.get("area_by_severity_km2") or {}).items():
+                rows.append((sev_label, _fmt_num(km2), "km\u00b2"))
+        elif tool == "atmospheric_composition":
+            for key, label in [("no2", "NO2"), ("so2", "SO2"), ("co", "CO"), ("aerosol_index", "Aerosol Index")]:
+                g = result.get(key, {}) or {}
+                if g.get("mean") is not None:
+                    rows.append((label, f"{g['mean']} (\u03c3 {g.get('std_dev', 'N/A')})", g.get("unit", "")))
+                else:
+                    rows.append((label, "No data (no cloud-free overpasses in window)", ""))
+    except Exception as e:
+        logger.warning(f"_rs_metric_rows failed for tool={tool}: {type(e).__name__}: {e}")
+    return rows
+
+
+def build_remote_sensing_report(
+    tool: str,
+    aoi_geojson: Dict[str, Any],
+    result: Dict[str, Any],
+    thumbnail_bytes: Optional[bytes] = None,
+    region_name: Optional[str] = None,
+) -> bytes:
+    """Builds a Spectra (remote sensing) PDF report from an already-
+    computed compute_*() result (see gee_remote_sensing.py) — mirrors
+    build_analysis_report/build_agri_risk_report's overall shape (cover
+    page, TOC, methodology, glossary, citations, limitations) but stays
+    generic across all 9 RS tools rather than one findings function per
+    tool, since each result already carries its own method/citation
+    text.
+    """
+    styles = _styles()
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=20 * mm,
+                             leftMargin=20 * mm, rightMargin=20 * mm)
+
+    label = RS_TOOL_LABELS.get(tool, tool)
+    method_text = result.get("method", "")
+    aoi_area = result.get("aoi_area_km2")
+
+    flow = []
+    flow += _cover_page(styles, f"Remote Sensing Report \u2014 {label}", "Vayu Spectra", [
+        ("Report Generated", generated_at),
+        ("Region", region_name or "Unnamed AOI"),
+        ("Tool", label),
+        ("AOI Area", f"{aoi_area} km\u00b2" if aoi_area is not None else "N/A"),
+    ])
+    flow += _table_of_contents(styles, [
+        ("1. Executive Summary", "What this tool measured and the headline result"),
+        ("2. Study Area", "AOI geometry and coordinates"),
+        ("3. Imagery", "Rendered map of the underlying raster, where applicable"),
+        ("4. Results", "Full set of computed values"),
+        ("5. Methodology", "Dataset, formula, and technique used"),
+        ("6. Glossary", "Terms used in this report"),
+        ("7. Limitations & Caveats", "What this result does not tell you"),
+    ])
+
+    exec_paragraphs = [p for p in [
+        f"This report covers a {label} analysis over the AOI shown below, computed via Google Earth Engine.",
+        method_text,
+    ] if p]
+    flow += _executive_summary_section(styles, exec_paragraphs, section_num=1)
+    flow.append(PageBreak())
+
+    flow += _study_area_section(styles, aoi_geojson, section_num=2)
+    flow.append(PageBreak())
+
+    section_num = 3
+    if thumbnail_bytes:
+        flow += _imagery_grid_section(styles, [
+            {"label": label, "bytes": thumbnail_bytes,
+             "caption": "Rendered from the same Earth Engine computation as the results in the next section."},
+        ], section_num=section_num)
+        flow.append(PageBreak())
+    section_num += 1
+
+    flow += _results_section(styles, _rs_metric_rows(tool, result), section_num=section_num)
+    flow.append(Spacer(1, 6))
+    section_num += 1
+
+    flow += _methodology_section(styles, [label], [method_text] if method_text else [], section_num=section_num)
+    flow.append(PageBreak())
+    section_num += 1
+
+    flow += _glossary_section(styles, RS_GLOSSARY, section_num=section_num)
+    section_num += 1
+
+    flow.append(Paragraph(f"{section_num}. Limitations & Caveats", styles["section_head"]))
+    flow.append(Paragraph(
+        "This result reflects satellite-derived remote sensing data processed via Google Earth Engine, "
+        "subject to sensor resolution, cloud/atmospheric interference (for optical sensors), and the "
+        "specific compositing window requested. It has not been independently validated against "
+        "ground-truth field data for this specific AOI and date range \u2014 treat it as a starting point "
+        "for further investigation, not a final determination.",
+        styles["caveat"]))
+    flow.append(Paragraph(
+        "This report is generated from satellite remote-sensing data and automated processing. It is "
+        "intended to support, not replace, field verification and professional judgment for operational, "
+        "legal, or financial decisions.",
+        styles["caveat"]))
+
+    doc.build(flow, onFirstPage=lambda c, d: _footer_canvas(c, d, generated_at),
+               onLaterPages=lambda c, d: _footer_canvas(c, d, generated_at))
+    return buf.getvalue()
