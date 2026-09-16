@@ -80,6 +80,7 @@ const SATELLITE_LAYERS = {
   // note wherever this layer is toggled (see EOX_ATTRIBUTION).
   true_color: { label: 'True Color',      icon: 'map',    opacity: 0.9,  desc: 'Sentinel-2 cloudless global mosaic (EOX), any zoom' },
   true_color_live: { label: 'True Color (Live)', icon: 'map', opacity: 0.9, desc: 'Recent cloud-free Sentinel-2 imagery, sharper and more current than the mosaic above' },
+  high_res: { label: 'High-Res Close-Up', icon: 'map', opacity: 1, desc: 'Sub-meter imagery for building/street-level detail — zoom in close. Not spectral/multi-date like the Sentinel-2 layers above.' },
   worldview:  { label: 'Daily Worldview', icon: 'globe',  opacity: 0.9,  desc: "NASA GIBS daily satellite view (MODIS Terra), any zoom" },
   ndvi:       { label: 'NDVI Vegetation', icon: 'leaf',   opacity: 0.75, desc: 'Vegetation health index' },
   sar:        { label: 'SAR / Microwave', icon: 'radio',  opacity: 0.75, desc: 'Sentinel-1, sees through cloud cover' },
@@ -91,6 +92,19 @@ const SATELLITE_LAYERS = {
 // other three GEE-backed layers). See SATELLITE_LAYERS.true_color comment.
 const EOX_TRUE_COLOR_URL = 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg';
 const EOX_ATTRIBUTION = 'Sentinel-2 cloudless \u2013 s2maps.eu by EOX IT Services GmbH';
+
+// Esri World Imagery — free, keyless, pre-tiled, and CRITICALLY not
+// Sentinel-2-based like every other True Color option above: Sentinel-2's
+// 10m/pixel native resolution physically cannot resolve individual
+// buildings (a typical house is one pixel, at best) at any zoom level,
+// live or static, no matter how the tiles are stretched/rendered — that's
+// a sensor limit, not a rendering bug. Esri's imagery is commercial
+// (Maxar/etc.) sourced and commonly sub-meter in populated areas, so
+// rooftops/streets/individual structures actually resolve when zoomed in
+// close, which is specifically what this layer is for — it's not meant
+// to replace the Sentinel-2 layers above for anything wide-area/spectral.
+const ESRI_HIGH_RES_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const ESRI_ATTRIBUTION = 'Esri, Maxar, Earthstar Geographics, and the GIS community';
 
 // NASA GIBS ("Global Imagery Browse Services") — the same free, keyless,
 // pre-tiled WMTS service that actually powers nasa.gov's own Worldview
@@ -1589,7 +1603,7 @@ export default function App({ tier = 'full', onChangeTier }) {
   const [jobStatus, setJobStatus] = useState(null);
   const [, setHistory]     = useState([]);   // history tab removed from UI for now — still tracked in case it comes back
   const [weatherLayers, setWeatherLayers] = useState({ temp:false, wind:false, pressure:false });
-  const [satelliteLayers, setSatelliteLayers] = useState({ true_color:false, true_color_live:false, ndvi:false, sar:false, thermal:false, worldview:false });
+  const [satelliteLayers, setSatelliteLayers] = useState({ true_color:false, true_color_live:false, high_res:false, ndvi:false, sar:false, thermal:false, worldview:false });
   const [satelliteLoadingKey, setSatelliteLoadingKey] = useState(null);
   const [mapZoom, setMapZoom] = useState(null);
   const [aqiOn, setAqiOn] = useState(false);
@@ -2052,6 +2066,23 @@ export default function App({ tier = 'full', onChangeTier }) {
       }).addTo(mapRef.current);
       satelliteTileRefs.current.worldview = tl;
       setSatelliteLayers(prev => ({ ...prev, worldview: true }));
+      return;
+    }
+
+    // High-Res Close-Up (Esri) — also pre-tiled/keyless/no backend, same
+    // as True Color and Worldview above. Not in GEE_GATED_LAYERS: unlike
+    // NDVI/SAR/Thermal/True Color (Live), there's no per-tile GEE compute
+    // cost to gate — this is just a different (much higher native
+    // resolution) tile server, usable at any zoom the same way the other
+    // two pre-tiled layers are.
+    if (key === 'high_res') {
+      const meta = SATELLITE_LAYERS.high_res;
+      const tl = L.tileLayer(ESRI_HIGH_RES_URL, {
+        opacity: meta.opacity, zIndex: 4, maxZoom: 20,
+        attribution: ESRI_ATTRIBUTION,
+      }).addTo(mapRef.current);
+      satelliteTileRefs.current.high_res = tl;
+      setSatelliteLayers(prev => ({ ...prev, high_res: true }));
       return;
     }
 
