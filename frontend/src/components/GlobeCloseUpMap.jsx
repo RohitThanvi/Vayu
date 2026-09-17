@@ -20,9 +20,7 @@ import { useEffect, useRef } from 'react';
 // Leaflet is loaded globally via a <script> CDN tag in index.html (see
 // App.jsx's VayuMap, which uses the same global `L` for the main map) —
 // not an npm package, so no import here, same as everywhere else.
-
-const ESRI_HIGH_RES_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-const ESRI_ATTRIBUTION = 'Esri, Maxar, Earthstar Geographics, and the GIS community';
+import { ESRI_HIGH_RES_URL, ESRI_ATTRIBUTION, attachEsriZoomGuard } from '../lib/esriZoomGuard.js';
 
 const START_ZOOM = 15;
 const EXIT_ZOOM = 3; // zooming out past this hands control back to the 3D globe
@@ -37,10 +35,16 @@ export default function GlobeCloseUpMap({ lat, lon, onExit }) {
     if (!containerRef.current) return;
     const map = L.map(containerRef.current, {
       center: [lat, lon], zoom: START_ZOOM,
-      minZoom: 2, maxZoom: 20, maxNativeZoom: 19,
+      // Matches the Weather tab's "High-Res Close-Up" satellite layer
+      // exactly (see App.jsx's SATELLITE_LAYERS.high_res) — same source,
+      // same nominal zoom ceiling, so the two don't feel like different
+      // products. attachEsriZoomGuard below then tightens maxZoom further
+      // per-location, dynamically, the moment real data runs out.
+      minZoom: 2, maxZoom: 22, maxNativeZoom: 19,
       zoomControl: true, attributionControl: true,
     });
-    L.tileLayer(ESRI_HIGH_RES_URL, { attribution: ESRI_ATTRIBUTION, maxZoom: 20, maxNativeZoom: 19 }).addTo(map);
+    const tileLayer = L.tileLayer(ESRI_HIGH_RES_URL, { attribution: ESRI_ATTRIBUTION, maxZoom: 22, maxNativeZoom: 19 }).addTo(map);
+    attachEsriZoomGuard(map, tileLayer);
     L.marker([lat, lon]).addTo(map);
     map.on('zoomend', () => {
       if (map.getZoom() <= EXIT_ZOOM) onExitRef.current?.();

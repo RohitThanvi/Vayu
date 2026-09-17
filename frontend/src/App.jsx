@@ -20,6 +20,7 @@ const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
 // when a user actually opens Street View, same reasoning as OrbitalGlobe.
 const StreetViewPanel = lazy(() => import('./components/StreetViewPanel'));
 import GlobeCloseUpMap from './components/GlobeCloseUpMap';
+import { ESRI_HIGH_RES_URL, ESRI_ATTRIBUTION, attachEsriZoomGuard } from './lib/esriZoomGuard.js';
 import { useVesselTracker } from './hooks/useVesselTracker';
 import { useStrategicSites } from './hooks/useStrategicSites';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -112,8 +113,9 @@ const EOX_ATTRIBUTION = 'Sentinel-2 cloudless \u2013 s2maps.eu by EOX IT Service
 // rooftops/streets/individual structures actually resolve when zoomed in
 // close, which is specifically what this layer is for — it's not meant
 // to replace the Sentinel-2 layers above for anything wide-area/spectral.
-const ESRI_HIGH_RES_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-const ESRI_ATTRIBUTION = 'Esri, Maxar, Earthstar Geographics, and the GIS community';
+// URL/attribution/zoom-guard now live in lib/esriZoomGuard.js, shared
+// with GlobeCloseUpMap.jsx's identical layer for the Orbital tab's
+// close-zoom handoff, so both stay in sync automatically.
 
 // NASA GIBS ("Global Imagery Browse Services") — the same free, keyless,
 // pre-tiled WMTS service that actually powers nasa.gov's own Worldview
@@ -2205,23 +2207,19 @@ export default function App({ tier = 'full', onChangeTier }) {
       const meta = SATELLITE_LAYERS.high_res;
       const tl = L.tileLayer(ESRI_HIGH_RES_URL, {
         opacity: meta.opacity, zIndex: 4,
-        // Esri's actual native tile resolution varies wildly by location —
-        // most populated areas have real imagery up to z19, some areas
-        // (Esri's own "5cm ultra-high-res" coverage) go as high as z22-23,
-        // and sparse/remote areas may have less than 19. There's no
-        // per-location "what's the real max here" API for this free tile
-        // service, so maxNativeZoom:19 is the safe, broadly-available
-        // baseline — Leaflet will request real tiles up to z19 everywhere
-        // that has them, and for zoom levels beyond that, AUTO-UPSCALES
-        // (magnifies) the sharpest tile it has instead of requesting a
-        // nonexistent z20+ tile, which would otherwise come back blank.
-        // maxZoom is the ceiling the user can actually zoom the map to —
-        // raised well past maxNativeZoom specifically so upscaling kicks
-        // in and the user gets a bigger, still-recognizable image instead
-        // of hitting a hard stop at 19/20.
+        // maxNativeZoom:19/maxZoom:22 is a starting baseline, not a
+        // per-location guarantee — real Esri coverage varies wildly (some
+        // areas genuinely have imagery to z22+, many stop well below 19).
+        // attachEsriZoomGuard below is what actually prevents landing on
+        // a "no data" tile: it listens for the real HTTP 404 Esri's
+        // blankTile=false param produces once genuine data runs out at
+        // THIS location, and dynamically tightens maxZoom right there —
+        // so zooming just stops, rather than showing a blank/placeholder
+        // tile. See lib/esriZoomGuard.js for the full explanation.
         maxNativeZoom: 19, maxZoom: 22,
         attribution: ESRI_ATTRIBUTION,
       }).addTo(mapRef.current);
+      attachEsriZoomGuard(mapRef.current, tl);
       satelliteTileRefs.current.high_res = tl;
       setSatelliteLayers(prev => ({ ...prev, high_res: true }));
       return;
