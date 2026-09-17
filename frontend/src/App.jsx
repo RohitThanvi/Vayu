@@ -19,6 +19,7 @@ const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
 // bundle when statically imported — lazy-loaded so it only downloads
 // when a user actually opens Street View, same reasoning as OrbitalGlobe.
 const StreetViewPanel = lazy(() => import('./components/StreetViewPanel'));
+import GlobeCloseUpMap from './components/GlobeCloseUpMap';
 import { useVesselTracker } from './hooks/useVesselTracker';
 import { useStrategicSites } from './hooks/useStrategicSites';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -1756,6 +1757,19 @@ export default function App({ tier = 'full', onChangeTier }) {
   // fixes the reported abrupt transition, not just an animation).
   const [orbitalMounted, setOrbitalMounted] = useState(false);
   useEffect(() => { if (tab === 'Orbital') setOrbitalMounted(true); }, [tab]);
+  // High-res 2D handoff when the 3D globe is zoomed in close — see
+  // OrbitalGlobe.jsx's CLOSE_ZOOM_ENTER_DISTANCE/onEnterCloseZoom and
+  // GlobeCloseUpMap.jsx. exitCloseZoomSignal is a simple changing counter
+  // (not a boolean) specifically so OrbitalGlobe's effect can tell "the
+  // user just exited" apart from "nothing has happened yet" on first
+  // render, and so it fires even if the exit happens at the exact same
+  // lat/lon as some earlier entry.
+  const [globeCloseUp, setGlobeCloseUp] = useState(null); // {lat, lon} | null
+  const [exitCloseZoomSignal, setExitCloseZoomSignal] = useState(0);
+  const handleExitCloseZoom = useCallback(() => {
+    setGlobeCloseUp(null);
+    setExitCloseZoomSignal(s => s + 1);
+  }, []);
   const [orbitalShowAircraft, setOrbitalShowAircraft] = useState(false);
   const [orbitalSelected, setOrbitalSelected] = useState(null);
   const [orbitalSearch, setOrbitalSearch] = useState('');
@@ -2552,9 +2566,14 @@ export default function App({ tier = 'full', onChangeTier }) {
                   stations={orbitalStations} otherSats={orbitalOtherSats} aircraft={orbitalAircraftValid}
                   showSatellites={orbitalShowSatellites} showAircraft={orbitalShowAircraft}
                   onSelect={setOrbitalSelected}
-                  active={tab === 'Orbital'}
+                  active={tab === 'Orbital' && !globeCloseUp}
+                  onEnterCloseZoom={(lat, lon) => setGlobeCloseUp({ lat, lon })}
+                  exitCloseZoomSignal={exitCloseZoomSignal}
                 />
               </Suspense>
+              {globeCloseUp && (
+                <GlobeCloseUpMap lat={globeCloseUp.lat} lon={globeCloseUp.lon} onExit={handleExitCloseZoom} />
+              )}
             </div>
           )}
         </div>

@@ -69,6 +69,22 @@ function latLonRadiusToVec3(lat, lon, r) {
   );
 }
 
+// Inverse of latLonRadiusToVec3 — given a direction from the globe's
+// center (any length; only the direction matters), recovers the lat/lon
+// of the point on the sphere's surface in that direction. Used to find
+// what the camera is currently looking at (the near-side surface point
+// along the camera-to-center line) for the close-zoom high-res handoff.
+function vec3ToLatLon(v) {
+  const r = v.length();
+  const phi = Math.acos(v.y / r);
+  const theta = Math.atan2(v.z, -v.x);
+  const lat = 90 - phi * (180 / Math.PI);
+  let lon = theta * (180 / Math.PI) - 180;
+  if (lon < -180) lon += 360;
+  if (lon > 180) lon -= 360;
+  return { lat, lon };
+}
+
 function makeGlyphTexture(kind, colorHex) {
   const size = 64;
   const canvas = document.createElement('canvas');
@@ -134,7 +150,7 @@ function makeGlyphTexture(kind, colorHex) {
  *   showSatellites, showAircraft — visibility toggles (state lives in Sidebar)
  *   onSelect(kindAndData | null) — called when a point is clicked
  */
-export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft = [], showSatellites, showAircraft, onSelect, active = true }) {
+export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft = [], showSatellites, showAircraft, onSelect, active = true, onEnterCloseZoom, exitCloseZoomSignal }) {
   const containerRef = useRef(null);
   const stationPointsRef = useRef(null);
   const satellitePointsRef = useRef(null);
@@ -150,6 +166,17 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
   // doesn't re-run on every prop change.
   const activeRef = useRef(active);
   useEffect(() => { activeRef.current = active; }, [active]);
+  // Close-zoom (high-res 2D handoff) machinery — see the animate loop and
+  // the exitCloseZoomSignal effect below for how these are used. Refs
+  // (not local vars in the mount effect) because a SEPARATE effect
+  // (reacting to exitCloseZoomSignal changing) needs to reach the same
+  // camera/animation state without re-running the whole mount/WebGL-setup
+  // effect.
+  const cameraObjRef = useRef(null);
+  const cameraAnimRef = useRef(null); // {startTime, startDist, endDist, duration} | null
+  const closeZoomFiredRef = useRef(false);
+  const onEnterCloseZoomRef = useRef(onEnterCloseZoom);
+  useEffect(() => { onEnterCloseZoomRef.current = onEnterCloseZoom; }, [onEnterCloseZoom]);
   onSelectRef.current = onSelect;   // always current inside the click handler without re-binding the listener
 
   // ── Scene setup (once) ──────────────────────────────────────────────────
@@ -177,11 +204,15 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     // center feels broken (you can end up looking at empty space with no
     // way back except zooming out); rotate+zoom only keeps it behaving
     // like Google Earth's "drag to spin, scroll to dive in" interaction
-    // instead of a free camera. Honest limitation: the Earth texture is
-    // a single static 2048px image, not tiled multi-resolution imagery
-    // like a real map service, so extreme close zoom will look soft
-    // rather than revealing more real detail — minDistance is set to
-    // stop shy of where that becomes obviously blurry.
+    // instead of a free camera. The Earth texture is a single static
+    // 2048px image, not tiled multi-resolution imagery, so close zoom on
+    // the 3D globe itself still looks soft — CLOSE_ZOOM_ENTER_DISTANCE
+    // below hands off to a real high-res 2D map (GlobeCloseUpMap in
+    // App.jsx) before the user reaches that blurriness, rather than
+    // just capping how close they can get. minDistance stays as a hard
+    // floor slightly past the handoff point, mostly to keep OrbitControls
+    // well-behaved (avoids near-plane clipping weirdness) rather than as
+    // the primary blur-avoidance mechanism it used to be.
     controls.enablePan = false;
     controls.minDistance = EARTH_RADIUS * 1.08;
     controls.maxDistance = EARTH_RADIUS * 8;
@@ -287,22 +318,26 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     };
     renderer.domElement.addEventListener('click', onClick);
 
-    // Camera fly-in: previously the camera snapped instantly to its
-    // resting distance the moment the globe mounted, which — combined
-    // with the globe fully rebuilding from scratch on every tab switch
-    // (fixed separately, see App.jsx's orbitalMounted) — was a big part
-    // of what made switching to Orbital feel abrupt. Starting further out
-    // and easing in over ~900ms gives it actual motion instead of a hard
-    // cut. This runs once, on true first mount, not on every tab
-    // re-activation — OrbitalGlobe now stays mounted across tab switches,
-    // so re-entering the tab should show the camera exactly where the
-    // user left it (like unpausing a video), not re-trigger the intro.
+    // Camera fly-in on first mount (eased, not an instant snap) — see
+    // the animate loop for how cameraAnimRef drives this, and the
+    // exitCloseZoomSignal effect below for the second use of the same
+    // mechanism (easing back out after a high-res close-zoom handoff).
     const REST_DISTANCE = EARTH_RADIUS * 3.2;
     const FLY_IN_START_DISTANCE = EARTH_RADIUS * 7;
     const FLY_IN_MS = 900;
     camera.position.set(0, 0, FLY_IN_START_DISTANCE);
-    const flyInStart = performance.now();
+    cameraObjRef.current = camera;
+    cameraAnimRef.current = { startTime: performance.now(), startDist: FLY_IN_START_DISTANCE, endDist: REST_DISTANCE, duration: FLY_IN_MS };
     const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+    // Close-zoom thresholds for the high-res 2D handoff (see App.jsx's
+    // globeCloseUp state + GlobeCloseUpMap): ENTER fires once when the
+    // camera gets this close; the "already fired" latch only resets once
+    // the camera has pulled back out past REARM (a wider gap than ENTER,
+    // not the same value) — otherwise a camera sitting exactly at the
+    // boundary would flicker the 2D overlay on/off every frame.
+    const CLOSE_ZOOM_ENTER_DISTANCE = EARTH_RADIUS * 1.35;
+    const CLOSE_ZOOM_REARM_DISTANCE = EARTH_RADIUS * 1.9;
 
     let raf;
     const animate = () => {
@@ -325,18 +360,31 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       // tick instead of surfacing to the ErrorBoundary — one bad frame
       // should not kill the whole loop.
       try {
-        const elapsed = performance.now() - flyInStart;
-        if (elapsed < FLY_IN_MS) {
-          const t = easeOutCubic(Math.min(elapsed / FLY_IN_MS, 1));
-          const dist = FLY_IN_START_DISTANCE + (REST_DISTANCE - FLY_IN_START_DISTANCE) * t;
-          // Only drive the distance (camera stays pointed at the globe's
-          // center throughout, via controls.target which defaults to
-          // origin) — once the fly-in finishes, OrbitControls takes over
-          // exactly like before, so user rotate/zoom afterward is
-          // untouched by any of this.
+        if (cameraAnimRef.current) {
+          const { startTime, startDist, endDist, duration } = cameraAnimRef.current;
+          const t = Math.min((performance.now() - startTime) / duration, 1);
+          const dist = startDist + (endDist - startDist) * easeOutCubic(t);
           const dir = camera.position.clone().normalize();
           camera.position.copy(dir.multiplyScalar(dist));
+          if (t >= 1) cameraAnimRef.current = null;
         }
+
+        // Close-zoom detection: edge-triggered (closeZoomFiredRef), not
+        // level-triggered — fires onEnterCloseZoom once per approach, not
+        // every frame the camera happens to be close. Only checked while
+        // no camera animation is in flight (cameraAnimRef null) — doesn't
+        // make sense to trigger a handoff mid fly-in/fly-out.
+        if (!cameraAnimRef.current && onEnterCloseZoomRef.current) {
+          const dist = camera.position.length();
+          if (!closeZoomFiredRef.current && dist < CLOSE_ZOOM_ENTER_DISTANCE) {
+            closeZoomFiredRef.current = true;
+            const { lat, lon } = vec3ToLatLon(camera.position);
+            onEnterCloseZoomRef.current(lat, lon);
+          } else if (closeZoomFiredRef.current && dist > CLOSE_ZOOM_REARM_DISTANCE) {
+            closeZoomFiredRef.current = false;
+          }
+        }
+
         controls.update();
         renderer.render(scene, camera);
       } catch (e) {
@@ -375,6 +423,33 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
     };
   }, []);
+
+  // Eases the camera back out to a comfortable orbital distance whenever
+  // the parent bumps exitCloseZoomSignal (i.e. the user zoomed the 2D
+  // high-res handoff map back out — see App.jsx's globeCloseUp/
+  // GlobeCloseUpMap). Deliberately a SEPARATE effect from the mount one
+  // above: this needs to fire on a later prop change, not at setup time,
+  // and reuses the same camera/cameraAnimRef refs that effect populated.
+  // Skips the very first render (exitCloseZoomSignal starts undefined/0
+  // and shouldn't trigger a reset before any close-zoom ever happened).
+  const isFirstExitSignalRef = useRef(true);
+  useEffect(() => {
+    if (isFirstExitSignalRef.current) { isFirstExitSignalRef.current = false; return; }
+    const camera = cameraObjRef.current;
+    if (!camera) return;
+    cameraAnimRef.current = {
+      startTime: performance.now(),
+      startDist: camera.position.length(),
+      endDist: EARTH_RADIUS * 3.2,
+      duration: 700,
+    };
+    // Re-arm immediately (not waiting for the natural REARM_DISTANCE
+    // crossing) — the whole point of this reset is that the user just
+    // finished a close-zoom cycle and is back at globe scale, so the
+    // next approach should be able to trigger a fresh handoff without
+    // first needing to pull back further than the reset distance itself.
+    closeZoomFiredRef.current = false;
+  }, [exitCloseZoomSignal]);
 
   // ── Update station/satellite point positions whenever props change ─────
   useEffect(() => {
