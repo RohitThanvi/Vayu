@@ -1751,6 +1751,11 @@ export default function App({ tier = 'full', onChangeTier }) {
   // OrbitalGlobe.jsx is a pure renderer, the info card/list/toggles all
   // live in the actual left sidebar instead of floating over the canvas.
   const [orbitalShowSatellites, setOrbitalShowSatellites] = useState(true);
+  // Mounts OrbitalGlobe on first visit to the tab, then never unmounts it
+  // again — see the render-site comment for why (this is what actually
+  // fixes the reported abrupt transition, not just an animation).
+  const [orbitalMounted, setOrbitalMounted] = useState(false);
+  useEffect(() => { if (tab === 'Orbital') setOrbitalMounted(true); }, [tab]);
   const [orbitalShowAircraft, setOrbitalShowAircraft] = useState(false);
   const [orbitalSelected, setOrbitalSelected] = useState(null);
   const [orbitalSearch, setOrbitalSearch] = useState('');
@@ -2520,8 +2525,23 @@ export default function App({ tier = 'full', onChangeTier }) {
             <PlaceSearchBar mapRef={mapRef} drawGroupRef={drawGroupRef} aoiBoundsRef={aoiBoundsRef} onAreaDrawn={handlePlaceSelected} isMobile={isMobile} />
             <MapOverlay result={result} isLoading={isLoading} drawnAOI={drawnAOI} isMobile={isMobile} />
           </div>
-          {tab === 'Orbital' && (
-            <div style={{ position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1 }}>
+          {/* orbitalMounted: lazy-mounts OrbitalGlobe the first time the
+              user opens the Orbital tab (so the ~1MB Three.js chunk never
+              loads for people who never visit it), then — unlike before —
+              NEVER unmounts it again on subsequent tab switches. Previously
+              this whole block was gated on `tab === 'Orbital'` directly,
+              which fully destroyed the WebGL context/camera/controls on
+              every exit and rebuilt them from scratch on every re-entry —
+              the actual cause of the reported jarring transition, not just
+              a missing animation. Visibility is now handled by opacity/
+              pointer-events below instead of mount/unmount. */}
+          {orbitalMounted && (
+            <div style={{
+              position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1,
+              opacity: tab === 'Orbital' ? 1 : 0,
+              pointerEvents: tab === 'Orbital' ? 'auto' : 'none',
+              transition: 'opacity 320ms ease',
+            }}>
               <Suspense fallback={
                 <div style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center',
                   fontFamily:'monospace', fontSize:13, color:'#7a8088', background:'#05070a' }}>
@@ -2532,6 +2552,7 @@ export default function App({ tier = 'full', onChangeTier }) {
                   stations={orbitalStations} otherSats={orbitalOtherSats} aircraft={orbitalAircraftValid}
                   showSatellites={orbitalShowSatellites} showAircraft={orbitalShowAircraft}
                   onSelect={setOrbitalSelected}
+                  active={tab === 'Orbital'}
                 />
               </Suspense>
             </div>
