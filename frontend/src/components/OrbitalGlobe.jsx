@@ -134,7 +134,7 @@ function makeGlyphTexture(kind, colorHex) {
  *   showSatellites, showAircraft — visibility toggles (state lives in Sidebar)
  *   onSelect(kindAndData | null) — called when a point is clicked
  */
-export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft = [], showSatellites, showAircraft, onSelect }) {
+export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft = [], showSatellites, showAircraft, onSelect, active = true }) {
   const containerRef = useRef(null);
   const stationPointsRef = useRef(null);
   const satellitePointsRef = useRef(null);
@@ -143,6 +143,13 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
   const satelliteDataRef = useRef([]);
   const aircraftDataRef = useRef([]);
   const onSelectRef = useRef(onSelect);
+  // The render loop below is set up once in the mount effect and closes
+  // over this ref rather than the `active` prop directly, for the same
+  // reason streetViewModeRef exists in App.jsx: a prop captured at effect-
+  // setup time goes stale the moment it changes, since the effect itself
+  // doesn't re-run on every prop change.
+  const activeRef = useRef(active);
+  useEffect(() => { activeRef.current = active; }, [active]);
   onSelectRef.current = onSelect;   // always current inside the click handler without re-binding the listener
 
   // ── Scene setup (once) ──────────────────────────────────────────────────
@@ -280,9 +287,33 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     };
     renderer.domElement.addEventListener('click', onClick);
 
+    // Camera fly-in: previously the camera snapped instantly to its
+    // resting distance the moment the globe mounted, which — combined
+    // with the globe fully rebuilding from scratch on every tab switch
+    // (fixed separately, see App.jsx's orbitalMounted) — was a big part
+    // of what made switching to Orbital feel abrupt. Starting further out
+    // and easing in over ~900ms gives it actual motion instead of a hard
+    // cut. This runs once, on true first mount, not on every tab
+    // re-activation — OrbitalGlobe now stays mounted across tab switches,
+    // so re-entering the tab should show the camera exactly where the
+    // user left it (like unpausing a video), not re-trigger the intro.
+    const REST_DISTANCE = EARTH_RADIUS * 3.2;
+    const FLY_IN_START_DISTANCE = EARTH_RADIUS * 7;
+    const FLY_IN_MS = 900;
+    camera.position.set(0, 0, FLY_IN_START_DISTANCE);
+    const flyInStart = performance.now();
+    const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
     let raf;
     const animate = () => {
       raf = requestAnimationFrame(animate);
+      // Skip rendering entirely while this tab isn't the active one —
+      // the component stays mounted (so its state/camera persist), but
+      // there's no reason to keep spending GPU cycles on a canvas nobody
+      // can see. controls.update() also skipped: with damping enabled it
+      // has its own per-frame decay, and there's nothing to damp toward
+      // while no user input is happening on a hidden canvas.
+      if (!activeRef.current) return;
       // Deliberately NOT spinning the Earth mesh independently — positions
       // are computed in a fixed Earth-fixed reference frame (satellite
       // positions specifically already account for Earth's true rotation
@@ -294,6 +325,18 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       // tick instead of surfacing to the ErrorBoundary — one bad frame
       // should not kill the whole loop.
       try {
+        const elapsed = performance.now() - flyInStart;
+        if (elapsed < FLY_IN_MS) {
+          const t = easeOutCubic(Math.min(elapsed / FLY_IN_MS, 1));
+          const dist = FLY_IN_START_DISTANCE + (REST_DISTANCE - FLY_IN_START_DISTANCE) * t;
+          // Only drive the distance (camera stays pointed at the globe's
+          // center throughout, via controls.target which defaults to
+          // origin) — once the fly-in finishes, OrbitControls takes over
+          // exactly like before, so user rotate/zoom afterward is
+          // untouched by any of this.
+          const dir = camera.position.clone().normalize();
+          camera.position.copy(dir.multiplyScalar(dist));
+        }
         controls.update();
         renderer.render(scene, camera);
       } catch (e) {
