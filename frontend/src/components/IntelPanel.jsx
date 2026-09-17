@@ -110,9 +110,9 @@ export default function IntelPanel({ apiUrl, aoi, onEventClick, onNewEvent, sele
             key={src}
             style={{
               ...styles.filterChip,
-              color: "#ffffff",
+              color: "var(--vayu-text)",
               opacity: activeSources.has(src) ? 1 : 0.35,
-              borderColor: activeSources.has(src) ? (SOURCE_COLORS[src] || "#6b7a8d") : "#2a3040",
+              borderColor: activeSources.has(src) ? (SOURCE_COLORS[src] || "var(--vayu-text3)") : "var(--vayu-border)",
             }}
             onClick={() => toggleSource(src)}
           >
@@ -128,9 +128,9 @@ export default function IntelPanel({ apiUrl, aoi, onEventClick, onNewEvent, sele
             key={sev}
             style={{
               ...styles.filterChip,
-              color: "#ffffff",
+              color: "var(--vayu-text)",
               opacity: activeSeverities.has(sev) ? 1 : 0.35,
-              borderColor: activeSeverities.has(sev) ? SEVERITY_COLORS[sev] : "#2a3040",
+              borderColor: activeSeverities.has(sev) ? SEVERITY_COLORS[sev] : "var(--vayu-border)",
             }}
             onClick={() => toggleSeverity(sev)}
           >
@@ -250,7 +250,7 @@ function EventCard({ event, onClick }) {
         <span style={{ color: srcColor, fontSize: 13, letterSpacing: 1.5, fontWeight: 700 }}>
           {event.tag}
         </span>
-        <span style={{ color: "#ffffff", fontSize: 12, opacity: 0.5 }}>
+        <span style={{ color: "var(--vayu-text)", fontSize: 12, opacity: 0.5 }}>
           {timeAgo(event.ts)}
         </span>
       </div>
@@ -274,20 +274,20 @@ function EventCard({ event, onClick }) {
 
 const styles = {
   panel: {
-    background: "#0a0c0f",
-    borderLeft: "1px solid #1e2530",
+    background: "var(--vayu-bg)",
+    borderLeft: "1px solid var(--vayu-border)",
     display: "flex",
     flexDirection: "column",
     height: "100%",
     fontFamily: "'JetBrains Mono', 'Courier New', monospace",
     fontSize: 14,
-    color: "#ffffff",
+    color: "var(--vayu-text)",
     minWidth: 260,
     maxWidth: 320,
   },
   header: {
-    background: "#0d1117",
-    borderBottom: "1px solid #1e2530",
+    background: "var(--vayu-surface)",
+    borderBottom: "1px solid var(--vayu-border)",
     padding: "8px 12px",
     display: "flex",
     alignItems: "center",
@@ -296,64 +296,64 @@ const styles = {
   },
   headerLeft: { display: "flex", alignItems: "center", gap: 10 },
   headerRight: { display: "flex", alignItems: "center", gap: 8 },
-  title: { fontSize: 14, letterSpacing: 2, color: "#ffffff", textTransform: "uppercase", fontWeight: 700 },
-  badge: { fontSize: 13, letterSpacing: 1.5, color: "#ffffff" },
-  countBadge: { fontSize: 13, color: "#ffffff", letterSpacing: 1 },
+  title: { fontSize: 14, letterSpacing: 2, color: "var(--vayu-text)", textTransform: "uppercase", fontWeight: 700 },
+  badge: { fontSize: 13, letterSpacing: 1.5, color: "var(--vayu-text)" },
+  countBadge: { fontSize: 13, color: "var(--vayu-text)", letterSpacing: 1 },
   clearBtn: {
-    fontSize: 13, color: "#ffffff", letterSpacing: 1,
-    background: "transparent", border: "1px solid #3a4250",
+    fontSize: 13, color: "var(--vayu-text)", letterSpacing: 1,
+    background: "transparent", border: "1px solid var(--vayu-border2)",
     padding: "2px 8px", cursor: "pointer",
     fontFamily: "inherit",
   },
   closeBtn: {
-    fontSize: 14, color: "#ffffff",
-    background: "transparent", border: "1px solid #3a4250",
+    fontSize: 14, color: "var(--vayu-text)",
+    background: "transparent", border: "1px solid var(--vayu-border2)",
     padding: "3px 8px", cursor: "pointer",
     fontFamily: "inherit", borderRadius: 4,
   },
   filterRow: {
     display: "flex", flexWrap: "wrap", gap: 5,
-    padding: "6px 10px", borderBottom: "1px solid #111519",
+    padding: "6px 10px", borderBottom: "1px solid var(--vayu-border)",
     flexShrink: 0,
   },
   filterChip: {
     fontSize: 13, letterSpacing: 1, padding: "2px 7px",
     background: "transparent", border: "1px solid",
     cursor: "pointer", fontFamily: "inherit",
-    textTransform: "uppercase", color: "#ffffff",
+    textTransform: "uppercase", color: "var(--vayu-text)",
   },
   searchRow: {
     display: "flex", alignItems: "center", gap: 6,
-    padding: "5px 10px", borderBottom: "1px solid #111519",
+    padding: "5px 10px", borderBottom: "1px solid var(--vayu-border)",
     flexShrink: 0,
   },
-  searchPrompt: { fontSize: 13, color: "#ffffff", letterSpacing: 1 },
+  searchPrompt: { fontSize: 13, color: "var(--vayu-text)", letterSpacing: 1 },
   searchInput: {
     flex: 1, background: "transparent", border: "none",
-    color: "#ffffff", fontFamily: "inherit", fontSize: 13,
+    color: "var(--vayu-text)", fontFamily: "inherit", fontSize: 13,
     outline: "none", letterSpacing: 0.5,
   },
   metricsRow: {
     display: "flex", flexWrap: "wrap", gap: 0,
-    borderBottom: "1px solid #111519", flexShrink: 0,
+    borderBottom: "1px solid var(--vayu-border)", flexShrink: 0,
   },
   metricCell: {
     display: "flex", flexDirection: "column",
-    padding: "5px 10px", borderRight: "1px solid #111519",
+    padding: "5px 10px", borderRight: "1px solid var(--vayu-border)",
     minWidth: 70,
   },
-  metricLabel: { fontSize: 12, color: "#ffffff", letterSpacing: 1, opacity: 0.7 },
-  metricVal: { fontSize: 14, fontWeight: 700, letterSpacing: 0.5, color: "#ffffff" },
+  metricLabel: { fontSize: 12, color: "var(--vayu-text)", letterSpacing: 1, opacity: 0.7 },
+  metricVal: { fontSize: 14, fontWeight: 700, letterSpacing: 0.5, color: "var(--vayu-text)" },
   eventList: {
     overflowY: "auto", flex: 1, minHeight: 0,
   },
   emptyState: {
     padding: "24px 12px", textAlign: "center",
-    fontSize: 13, color: "#ffffff", letterSpacing: 1.5, opacity: 0.5,
+    fontSize: 13, color: "var(--vayu-text)", letterSpacing: 1.5, opacity: 0.5,
   },
   card: {
     padding: "8px 12px 8px 10px",
-    borderBottom: "1px solid #0f1419",
+    borderBottom: "1px solid var(--vayu-border)",
     cursor: "pointer",
   },
   cardTag: {
@@ -361,46 +361,46 @@ const styles = {
     marginBottom: 4,
   },
   cardTitle: {
-    fontSize: 14, color: "#ffffff", lineHeight: 1.5, marginBottom: 3, fontWeight: 500,
+    fontSize: 14, color: "var(--vayu-text)", lineHeight: 1.5, marginBottom: 3, fontWeight: 500,
   },
   cardDetail: {
-    fontSize: 13, color: "#ffffff", lineHeight: 1.6, marginBottom: 4, opacity: 0.85,
+    fontSize: 13, color: "var(--vayu-text)", lineHeight: 1.6, marginBottom: 4, opacity: 0.85,
   },
-  cardCoord: { fontSize: 12, color: "#ffffff", letterSpacing: 0.5, opacity: 0.55 },
+  cardCoord: { fontSize: 12, color: "var(--vayu-text)", letterSpacing: 0.5, opacity: 0.55 },
   detailPanel: {
     display: "flex", flexDirection: "column",
     flex: "1 1 50%", minHeight: 0, overflow: "hidden",
-    background: "#0d1117",
+    background: "var(--vayu-surface)",
   },
   detailHeader: {
     display: "flex", alignItems: "center", justifyContent: "space-between",
-    padding: "8px 12px", borderBottom: "1px solid #1e2530", flexShrink: 0,
+    padding: "8px 12px", borderBottom: "1px solid var(--vayu-border)", flexShrink: 0,
   },
   detailBody: {
     overflowY: "auto", padding: "10px 12px", flex: 1,
   },
   detailTitle: {
-    fontSize: 15, color: "#ffffff", lineHeight: 1.5, marginBottom: 4, fontWeight: 600,
+    fontSize: 15, color: "var(--vayu-text)", lineHeight: 1.5, marginBottom: 4, fontWeight: 600,
   },
   detailMeta: {
-    fontSize: 12, color: "#ffffff", opacity: 0.55, letterSpacing: 0.5, marginBottom: 10,
+    fontSize: 12, color: "var(--vayu-text)", opacity: 0.55, letterSpacing: 0.5, marginBottom: 10,
   },
   detailText: {
-    fontSize: 13, color: "#ffffff", lineHeight: 1.7, opacity: 0.9, marginBottom: 12,
+    fontSize: 13, color: "var(--vayu-text)", lineHeight: 1.7, opacity: 0.9, marginBottom: 12,
   },
   detailFieldsGrid: {
     display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 10px",
-    borderTop: "1px solid #111519", paddingTop: 10, marginBottom: 10,
+    borderTop: "1px solid var(--vayu-border)", paddingTop: 10, marginBottom: 10,
   },
   detailField: { display: "flex", flexDirection: "column" },
   detailFieldLabel: {
-    fontSize: 11, color: "#ffffff", opacity: 0.5, letterSpacing: 0.8, textTransform: "uppercase",
+    fontSize: 11, color: "var(--vayu-text)", opacity: 0.5, letterSpacing: 0.8, textTransform: "uppercase",
   },
   detailFieldValue: {
-    fontSize: 13, color: "#ffffff", marginTop: 2, wordBreak: "break-word",
+    fontSize: 13, color: "var(--vayu-text)", marginTop: 2, wordBreak: "break-word",
   },
   detailLink: {
-    display: "inline-block", fontSize: 13, color: "#6fb6ff",
+    display: "inline-block", fontSize: 13, color: "var(--vayu-accent)",
     textDecoration: "none", letterSpacing: 0.5, marginTop: 4,
   },
 };
