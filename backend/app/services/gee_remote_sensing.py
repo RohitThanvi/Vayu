@@ -891,6 +891,90 @@ def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) 
     }
 
 
+def compute_surface_water_dynamics(aoi: Dict) -> Dict[str, Any]:
+    """Surface water extent and permanence from JRC Global Surface Water
+    v1.4 (Pekel et al. 2016, Nature) — directly relevant to NRSC's
+    reservoir/water-resources monitoring work: how much of this AOI is
+    permanent water, how much is seasonal, and how reliably does water
+    return to each spot year over year.
+
+    No start/end dates: this is a fixed historical product covering
+    1984-2021 (Landsat 5/7/8 derived, ~4.7M scenes), not a queryable
+    live dataset — the "date range" is baked into the product itself,
+    stated plainly in the method field below rather than left implicit.
+
+    Deliberately does NOT use the dataset's 10-class `transition` band
+    (permanent/new permanent/lost permanent/seasonal/etc.) — its class
+    NAMES are well documented, but this implementation could not verify
+    the exact numeric code each name maps to from an authoritative
+    source, and shipping a mislabeled classification would misinform
+    exactly the kind of careful reader this tool is for. Built instead
+    from `occurrence` (0-100, unambiguous) and `max_extent` (binary,
+    unambiguous), using a permanent/seasonal split at the 90% occurrence
+    threshold JRC's own materials commonly cite — stated explicitly as
+    this implementation's own choice, not an unstated assumption.
+    """
+    logger.info("GEE (remote sensing): surface_water_dynamics")
+    region = _polygon_geometry(aoi)
+
+    gsw = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").clip(region)
+    occurrence = gsw.select("occurrence")
+    max_extent = gsw.select("max_extent")
+    seasonality = gsw.select("seasonality")
+
+    permanent_mask = occurrence.gte(90)
+    seasonal_mask = occurrence.gt(0).And(occurrence.lt(90))
+
+    permanent_km2 = _calc_area_km2(permanent_mask, region, scale=30)
+    seasonal_km2 = _calc_area_km2(seasonal_mask, region, scale=30)
+    max_extent_km2 = _calc_area_km2(max_extent, region, scale=30)
+    aoi_km2 = _region_area_km2(region)
+
+    # Occurrence/seasonality stats computed only over pixels where water
+    # was EVER observed (max_extent masks out permanently-dry land) —
+    # averaging occurrence over the whole AOI including dry land would
+    # just report near-zero everywhere for most polygons, which isn't
+    # a useful "how does the water here behave" answer.
+    water_only = occurrence.updateMask(max_extent)
+    occ_stats = water_only.reduceRegion(
+        reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
+        geometry=region, scale=30, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
+    seasonality_stats = seasonality.updateMask(max_extent).reduceRegion(
+        reducer=ee.Reducer.mean(), geometry=region, scale=30, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
+
+    return {
+        "permanent_water_km2": round(permanent_km2, 4),
+        "seasonal_water_km2": round(seasonal_km2, 4),
+        "max_ever_water_km2": round(max_extent_km2, 4),
+        "aoi_area_km2": round(aoi_km2, 3),
+        "occurrence_pct": {
+            "mean": round(occ_stats.get("occurrence_mean", 0) or 0, 2),
+            "std_dev": round(occ_stats.get("occurrence_stdDev", 0) or 0, 2),
+        },
+        "avg_months_per_year_water_present": round(seasonality_stats.get("seasonality", 0) or 0, 2),
+        "permanent_threshold_used": "occurrence >= 90%",
+        "map_layer": _tile_layer(occurrence, {
+            "min": 0, "max": 100,
+            # JRC's own official palette for the occurrence band —
+            # matching it means anyone who's used this dataset in GEE's
+            # own code editor or the JRC Explorer recognizes it instantly.
+            "palette": ["#ffffff", "#ffbbbb", "#0000ff"],
+        }),
+        "download_url": _download_url(occurrence, region, scale=30),
+        "method": (
+            "JRC Global Surface Water v1.4 (Pekel, Cottam, Gorelick & Belward 2016, Nature; "
+            "ee.Image('JRC/GSW1_4/GlobalSurfaceWater')), 30m, derived from 4.7M+ Landsat 5/7/8 scenes "
+            "covering 1984-2021 — a fixed historical product, not imagery of the current date. "
+            "Permanent water = occurrence >= 90% of valid observations (this tool's own threshold "
+            "choice, not a value baked into the dataset); seasonal = occurrence > 0% and < 90%. "
+            "avg_months_per_year_water_present is the mean of the seasonality band (0-12) over "
+            "ever-wet pixels only. Free, no restriction of use, under the Copernicus Programme."
+        ),
+    }
+
+
 def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
     """Static PNG thumbnail for a Spectra PDF report — reconstructs the
     minimal image for `tool` (same underlying data/visualization as its
@@ -971,6 +1055,9 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
                 return None
             lst = col.map(lambda img: img.select("ST_B10").multiply(0.00341802).add(149.0).subtract(273.15).rename("LST_C")).mean().clip(region)
             return _fetch_thumb_bytes(lst, region, {"min": 0, "max": 45, "palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"]})
+        if tool == "surface_water_dynamics":
+            occurrence = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").clip(region)
+            return _fetch_thumb_bytes(occurrence, region, {"min": 0, "max": 100, "palette": ["#ffffff", "#ffbbbb", "#0000ff"]})
         return None  # atmospheric_composition, index_time_series (a chart, not a raster)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")
