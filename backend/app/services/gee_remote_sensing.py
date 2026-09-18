@@ -805,7 +805,93 @@ def compute_index_time_series(aoi: Dict, index_id: str, start_date: str, end_dat
     }
 
 
-def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
+def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) -> Dict[str, Any]:
+    """Land Surface Temperature from Landsat 8/9 Collection 2 Level-2
+    thermal band (ST_B10) — one of the most routinely used products in
+    Indian remote sensing work (urban heat island studies, agricultural
+    drought stress, pre-monsoon heat mapping), and a real gap in this
+    toolkit until now: every other tool here is optical/SAR/atmospheric,
+    none directly measured surface temperature.
+
+    Uses the exact same scale/offset already vetted elsewhere in this
+    codebase (satellite_imagery.py's get_lst_thumbnail, used in Analyze-
+    tab PDF reports) — USGS's official Collection 2 Level-2 Surface
+    Temperature conversion: DN * 0.00341802 + 149.0 = Kelvin.
+    """
+    logger.info(f"GEE (remote sensing): land_surface_temperature {start_date} -> {end_date}")
+    _validate_date_range(start_date, end_date)
+    _require_start_after(start_date, "2013-04-01", "Landsat 8")
+    region = _polygon_geometry(aoi)
+    end_ee = _cap_end_date(end_date)
+
+    def _collection(coll_id):
+        return (
+            ee.ImageCollection(coll_id)
+            .filterBounds(region).filterDate(ee.Date(start_date), end_ee)
+            .filter(ee.Filter.lt("CLOUD_COVER", 20))
+        )
+
+    col = _collection("LANDSAT/LC08/C02/T1_L2")
+    scene_count = col.size().getInfo()
+    source = "Landsat 8"
+    if scene_count == 0:
+        col = _collection("LANDSAT/LC09/C02/T1_L2")
+        scene_count = col.size().getInfo()
+        source = "Landsat 9"
+    if scene_count == 0:
+        return {
+            "lst_celsius": None, "scene_count": 0, "source": None,
+            "method": (
+                "Landsat 8/9 Collection 2 Level-2 thermal (ST_B10), <20% scene cloud cover. "
+                "No cloud-free Landsat 8 or 9 scene found for this AOI/date range — try widening the "
+                "date window (Landsat's 16-day revisit means a short window can easily miss every pass)."
+            ),
+        }
+
+    lst = col.map(
+        lambda img: img.select("ST_B10").multiply(0.00341802).add(149.0).subtract(273.15).rename("LST_C")
+    ).mean().clip(region)
+
+    stats = lst.reduceRegion(
+        reducer=ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True),
+        geometry=region, scale=30, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
+
+    valid_px = col.select("ST_B10").mosaic().mask().reduceRegion(
+        reducer=ee.Reducer.mean(), geometry=region, scale=30, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
+    valid_pixel_fraction = round((valid_px.get("ST_B10", 0) or 0), 4)
+
+    return {
+        "lst_celsius": {
+            "mean": round(stats.get("LST_C_mean", 0) or 0, 2),
+            "min": round(stats.get("LST_C_min", 0) or 0, 2),
+            "max": round(stats.get("LST_C_max", 0) or 0, 2),
+            "std_dev": round(stats.get("LST_C_stdDev", 0) or 0, 2),
+        },
+        "scene_count": scene_count,
+        "source": source,
+        "valid_pixel_fraction": valid_pixel_fraction,
+        "aoi_area_km2": round(_region_area_km2(region), 3),
+        # Same blue-to-red thermal ramp already used for LST elsewhere in
+        # this codebase (satellite_imagery.py) — kept identical on
+        # purpose so the same temperature range reads consistently
+        # whether someone sees it in Analyze's PDF report or here.
+        "map_layer": _tile_layer(lst, {"min": 0, "max": 45, "palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"]}),
+        "download_url": _download_url(lst, region, scale=30),
+        "method": (
+            f"Land Surface Temperature from {source} Collection 2 Level-2 thermal band (ST_B10), "
+            f"<20% scene cloud cover, mean of {scene_count} scene(s), 30m native resolution. "
+            f"Conversion: DN \u00d7 0.00341802 + 149.0 = Kelvin (USGS Collection 2 Level-2 Science Product "
+            f"Guide), converted to Celsius. This is SURFACE (skin/canopy-top) temperature, not 2m air "
+            f"temperature — the two can differ substantially, especially over bare soil, pavement, or "
+            f"under strong sun, and should not be directly compared to weather-station air-temperature "
+            f"readings without accounting for that difference."
+        ),
+    }
+
+
+
     """Static PNG thumbnail for a Spectra PDF report — reconstructs the
     minimal image for `tool` (same underlying data/visualization as its
     live map_layer, see the matching compute_* function above) and
@@ -871,6 +957,20 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
             nbr_post = c_post.normalizedDifference(["B8", "B12"]).rename("NBR")
             dnbr = nbr_pre.subtract(nbr_post).rename("dNBR")
             return _fetch_thumb_bytes(dnbr, region, {"min": -0.25, "max": 0.66, "palette": ["#1a9850", "#66bd63", "#ffffbf", "#fdae61", "#f46d43", "#a50026"]})
+        if tool == "land_surface_temperature":
+            start_date, end_date = params["start_date"], params["end_date"]
+            end_ee = _cap_end_date(end_date)
+
+            def _lst_collection(coll_id):
+                return (ee.ImageCollection(coll_id).filterBounds(region)
+                        .filterDate(ee.Date(start_date), end_ee).filter(ee.Filter.lt("CLOUD_COVER", 20)))
+            col = _lst_collection("LANDSAT/LC08/C02/T1_L2")
+            if col.size().getInfo() == 0:
+                col = _lst_collection("LANDSAT/LC09/C02/T1_L2")
+            if col.size().getInfo() == 0:
+                return None
+            lst = col.map(lambda img: img.select("ST_B10").multiply(0.00341802).add(149.0).subtract(273.15).rename("LST_C")).mean().clip(region)
+            return _fetch_thumb_bytes(lst, region, {"min": 0, "max": 45, "palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"]})
         return None  # atmospheric_composition, index_time_series (a chart, not a raster)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")
