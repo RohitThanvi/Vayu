@@ -21,6 +21,7 @@ const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
 const StreetViewPanel = lazy(() => import('./components/StreetViewPanel'));
 import GlobeCloseUpMap from './components/GlobeCloseUpMap';
 import { ESRI_HIGH_RES_URL, ESRI_ATTRIBUTION, attachEsriZoomGuard } from './lib/esriZoomGuard.js';
+import LiveGoesPanel from './components/LiveGoesPanel';
 import { useVesselTracker } from './hooks/useVesselTracker';
 import { useStrategicSites } from './hooks/useStrategicSites';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -689,6 +690,8 @@ function OrbitalSidebarPanel({
           </div>
         )}
       </div>
+
+      <LiveGoesPanel />
 
       {selected && (
         <div style={{ margin:'0 14px 10px', padding:'10px 12px', background:S.surface2, border:`1px solid ${S.border}`, borderRadius:3 }}>
