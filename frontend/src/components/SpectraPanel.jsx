@@ -69,6 +69,7 @@ const TOOL_META = {
   burn_severity: { label: 'Burn Severity', needsDates: false, needsPrePost: true, icon: '▲' },
   atmospheric_composition: { label: 'Atmosphere', needsDates: true, icon: '☁' },
   land_surface_temperature: { label: 'Surface Temp', needsDates: true, icon: '◉' },
+  surface_water_dynamics: { label: 'Surface Water', needsDates: false, icon: '≋' },
 };
 
 const INDEX_CHOICES = [
@@ -314,6 +315,21 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         </div>
         <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="surface temperature" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'land_surface_temperature'} onActivate={() => setActiveLayerId?.('land_surface_temperature')} />
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'surface_water_dynamics') {
+    return (
+      <div>
+        <StatRow label="Permanent water" value={`${result.permanent_water_km2} km²`} />
+        <StatRow label="Seasonal water" value={`${result.seasonal_water_km2} km²`} />
+        <StatRow label="Max water ever observed (1984–2021)" value={`${result.max_ever_water_km2} km²`} />
+        <StatRow label="Occurrence (mean / σ, ever-wet area)" value={`${result.occurrence_pct.mean}% / ${result.occurrence_pct.std_dev}%`} />
+        <StatRow label="Avg. months/year water present" value={result.avg_months_per_year_water_present} />
+        <StatRow label="Permanent threshold" value={result.permanent_threshold_used} />
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="water occurrence" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'surface_water_dynamics'} onActivate={() => setActiveLayerId?.('surface_water_dynamics')} />
         <MethodNote text={result.method} />
       </div>
     );

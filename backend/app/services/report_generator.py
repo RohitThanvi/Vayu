@@ -2300,6 +2300,7 @@ RS_TOOL_LABELS = {
     "atmospheric_composition": "Atmospheric Composition",
     "index_time_series": "Index Time Series",
     "land_surface_temperature": "Land Surface Temperature",
+    "surface_water_dynamics": "Surface Water Dynamics",
 }
 
 RS_GLOSSARY = [
@@ -2391,6 +2392,15 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
                 ]
             else:
                 rows.append(("Land Surface Temperature", "No cloud-free Landsat scene found for this AOI/date range", ""))
+        elif tool == "surface_water_dynamics":
+            rows += [
+                ("Permanent water", _fmt_num(result.get("permanent_water_km2")), "km\u00b2"),
+                ("Seasonal water", _fmt_num(result.get("seasonal_water_km2")), "km\u00b2"),
+                ("Max water ever observed (1984\u20132021)", _fmt_num(result.get("max_ever_water_km2")), "km\u00b2"),
+                ("Occurrence \u2014 mean / \u03c3 (over ever-wet area)", f"{_fmt_num(result.get('occurrence_pct', {}).get('mean'))} / {_fmt_num(result.get('occurrence_pct', {}).get('std_dev'))}", "%"),
+                ("Avg. months/year water present", _fmt_num(result.get("avg_months_per_year_water_present")), ""),
+                ("Permanent-water threshold used", str(result.get("permanent_threshold_used", "N/A")), ""),
+            ]
     except Exception as e:
         logger.warning(f"_rs_metric_rows failed for tool={tool}: {type(e).__name__}: {e}")
     return rows
