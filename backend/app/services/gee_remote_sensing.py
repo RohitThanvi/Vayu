@@ -891,7 +891,7 @@ def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) 
     }
 
 
-
+def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
     """Static PNG thumbnail for a Spectra PDF report — reconstructs the
     minimal image for `tool` (same underlying data/visualization as its
     live map_layer, see the matching compute_* function above) and
