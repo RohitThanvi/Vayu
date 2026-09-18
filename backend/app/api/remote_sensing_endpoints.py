@@ -65,6 +65,10 @@ TOOLS = {
         "label": "Index Time Series", "needs_dates": True,
         "description": "Chart a spectral index across monthly/quarterly sub-periods — Sentinel-2, 20m.",
     },
+    "land_surface_temperature": {
+        "label": "Land Surface Temperature", "needs_dates": True,
+        "description": "Surface (not air) temperature from thermal imagery — Landsat 8/9, 30m.",
+    },
 }
 
 
@@ -121,6 +125,10 @@ def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
             if not all([req.index, req.start_date, req.end_date]):
                 raise ValueError("index_time_series requires index, start_date, end_date.")
             result = rs.compute_index_time_series(req.aoi_geojson, req.index, req.start_date, req.end_date, req.interval or "month")
+        elif req.tool == "land_surface_temperature":
+            if not req.start_date or not req.end_date:
+                raise ValueError("land_surface_temperature requires start_date and end_date.")
+            result = rs.compute_land_surface_temperature(req.aoi_geojson, req.start_date, req.end_date)
         else:
             job_store.update(request_id, {"status": "failed", "error": f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}"})
             return

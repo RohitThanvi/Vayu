@@ -68,6 +68,7 @@ const TOOL_META = {
   change_detection: { label: 'Change Detection', needsDates: false, needsTwoPeriods: true, icon: '⇄' },
   burn_severity: { label: 'Burn Severity', needsDates: false, needsPrePost: true, icon: '▲' },
   atmospheric_composition: { label: 'Atmosphere', needsDates: true, icon: '☁' },
+  land_surface_temperature: { label: 'Surface Temp', needsDates: true, icon: '◉' },
 };
 
 const INDEX_CHOICES = [
@@ -282,6 +283,37 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         )}
         <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="dNBR severity" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'burn_severity'} onActivate={() => setActiveLayerId?.('burn_severity')} />
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'land_surface_temperature') {
+    const lst = result.lst_celsius;
+    if (!lst || lst.mean == null) {
+      return (
+        <div>
+          <div style={{ fontSize: 12, color: S.text3, padding: '10px 0' }}>
+            No cloud-free Landsat 8/9 scene found for this AOI/date range — Landsat's 16-day revisit means a short window can easily miss every pass. Try widening the dates.
+          </div>
+          <MethodNote text={result.method} />
+        </div>
+      );
+    }
+    return (
+      <div>
+        <StatRow label="Surface temperature (mean)" value={`${lst.mean}°C`} />
+        <StatRow label="Min / Max" value={`${lst.min}°C / ${lst.max}°C`} />
+        <StatRow label="σ (spatial spread)" value={`${lst.std_dev}°C`} />
+        <StatRow label="Source" value={result.source} />
+        <StatRow label="Scenes used" value={result.scene_count} />
+        {result.valid_pixel_fraction != null && (
+          <StatRow label="Valid pixel coverage" value={`${Math.round(result.valid_pixel_fraction * 100)}%`} />
+        )}
+        <div style={{ fontSize: 10.5, color: S.text3, marginTop: 6, lineHeight: 1.4 }}>
+          This is surface (skin/canopy-top) temperature, not 2m air temperature — don't compare directly to a weather station reading.
+        </div>
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="surface temperature" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'land_surface_temperature'} onActivate={() => setActiveLayerId?.('land_surface_temperature')} />
         <MethodNote text={result.method} />
       </div>
     );

@@ -2299,6 +2299,7 @@ RS_TOOL_LABELS = {
     "burn_severity": "Burn Severity (dNBR)",
     "atmospheric_composition": "Atmospheric Composition",
     "index_time_series": "Index Time Series",
+    "land_surface_temperature": "Land Surface Temperature",
 }
 
 RS_GLOSSARY = [
@@ -2378,6 +2379,18 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
                     rows.append((label, f"{g['mean']} (\u03c3 {g.get('std_dev', 'N/A')})", g.get("unit", "")))
                 else:
                     rows.append((label, "No data (no cloud-free overpasses in window)", ""))
+        elif tool == "land_surface_temperature":
+            lst = result.get("lst_celsius") or {}
+            if lst.get("mean") is not None:
+                rows += [
+                    ("LST \u2014 mean", _fmt_num(lst.get("mean")), "\u00b0C"),
+                    ("LST \u2014 min / max", f"{_fmt_num(lst.get('min'))} / {_fmt_num(lst.get('max'))}", "\u00b0C"),
+                    ("LST \u2014 std. dev.", _fmt_num(lst.get("std_dev")), "\u00b0C"),
+                    ("Source", str(result.get("source", "N/A")), ""),
+                    ("Scenes used", str(result.get("scene_count", "N/A")), ""),
+                ]
+            else:
+                rows.append(("Land Surface Temperature", "No cloud-free Landsat scene found for this AOI/date range", ""))
     except Exception as e:
         logger.warning(f"_rs_metric_rows failed for tool={tool}: {type(e).__name__}: {e}")
     return rows
