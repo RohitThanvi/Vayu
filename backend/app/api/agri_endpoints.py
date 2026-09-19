@@ -11,6 +11,9 @@ from ..services.agri.risk_scoring import compute_risk_score, compute_drought_tre
 from ..services.agri.baseline import compute_seasonal_baseline
 from ..services.agri.rollup import get_rollup
 from ..services.agri.whatsapp import build_twiml_reply, handle_inbound_message
+from ..services.agri.phenology import compute_phenology
+from ..services.agri.irrigation_advisory import compute_irrigation_advisory
+from ..services import gee_remote_sensing as rs
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agri", tags=["Agriculture"])
@@ -43,6 +46,20 @@ class FeedbackRequest(BaseModel):
     alert_id: str
     accurate: bool
     comment: Optional[str] = None
+
+
+class PhenologyRequest(BaseModel):
+    aoi_geojson: Dict[str, Any]
+    as_of: Optional[str] = None
+    months_back: int = 12
+
+
+class CropExtentRequest(BaseModel):
+    aoi_geojson: Dict[str, Any]
+    start_date: str
+    end_date: str
+    training_samples: list  # [{lat, lon, class_id, class_label}, ...] — same shape as Spectra's ML Classify
+    num_trees: Optional[int] = None
 
 
 # ── Core intelligence ────────────────────────────────────────────────────────
@@ -183,6 +200,65 @@ async def groundwater_trend(req: BaselineRequest):
     except Exception as e:
         logger.error(f"groundwater_trend endpoint failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Groundwater trend failed: {e}")
+
+
+@router.post("/phenology", summary="Crop-stage (green-up/peak/senescence) read from an AOI's own NDVI seasonal curve")
+async def phenology(req: PhenologyRequest):
+    try:
+        return await asyncio.to_thread(compute_phenology, aoi=req.aoi_geojson, as_of=req.as_of, months_back=req.months_back)
+    except Exception as e:
+        logger.error(f"phenology endpoint failed: {e}", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Phenology computation failed: {e}")
+
+
+@router.post("/ndvi-trend", summary="Monthly NDVI trend for an AOI, for the Agri Analysis tab — direct call, not Spectra's async job queue")
+async def ndvi_trend(req: PhenologyRequest):
+    """Thin sync wrapper around gee_remote_sensing.compute_index_time_series
+    — reused rather than reimplemented, same as phenology.py above. A
+    separate endpoint from Spectra's /remote-sensing/analyze because that
+    one is async-job-polling (built for potentially slow/large-tile Spectra
+    jobs), while every other Agri endpoint is a direct synchronous call —
+    matching that existing pattern is simpler for the Agri Analysis tab
+    than adding job-polling to a dashboard that doesn't need it elsewhere."""
+    end_date = req.as_of or None
+    from datetime import datetime, timedelta
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.utcnow()
+    start_date = (end_dt - timedelta(days=30 * req.months_back)).strftime("%Y-%m-%d")
+    try:
+        return await asyncio.to_thread(rs.compute_index_time_series, req.aoi_geojson, "ndvi", start_date, end_dt.strftime("%Y-%m-%d"), "month")
+    except Exception as e:
+        logger.error(f"ndvi_trend endpoint failed: {e}", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"NDVI trend failed: {e}")
+
+
+@router.post("/irrigation-advisory", summary="Irrigate now / monitor / hold off, from soil moisture + rainfall context")
+async def irrigation_advisory(req: RiskScoreRequest):
+    try:
+        return await asyncio.to_thread(compute_irrigation_advisory, aoi=req.aoi_geojson, as_of=req.as_of)
+    except Exception as e:
+        logger.error(f"irrigation_advisory endpoint failed: {e}", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Irrigation advisory failed: {e}")
+
+
+@router.post("/crop-extent", summary="ML crop-extent classification (Random Forest) for an AOI — thin Agri wrapper around Spectra's supervised_classification")
+async def crop_extent(req: CropExtentRequest):
+    """Reuses gee_remote_sensing.compute_supervised_classification directly
+    rather than reimplementing RF classification here — same tool, same
+    class_id/class_label/lat/lon training-sample shape as Spectra's ML
+    Classify, just under an Agri-domain endpoint name and with the
+    dashboard's own AOI-drawing flow rather than Spectra's job-polling
+    flow (this is a small, synchronous-enough call for that, same as
+    every other Agri endpoint)."""
+    try:
+        return await asyncio.to_thread(
+            rs.compute_supervised_classification, req.aoi_geojson, req.start_date, req.end_date,
+            req.training_samples, req.num_trees or rs.DEFAULT_NUM_TREES,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"crop_extent endpoint failed: {e}", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Crop-extent classification failed: {e}")
 
 
 # ── WhatsApp bot (last-mile delivery) ────────────────────────────────────────
