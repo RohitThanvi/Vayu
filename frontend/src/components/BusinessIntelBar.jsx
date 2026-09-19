@@ -263,6 +263,90 @@ function AnalysisView({ apiUrl }) {
             : 'No data returned for this range.'}
         />
       )}
+
+      {category === 'chokepoint' && (
+        <ChokepointMarketCorrelation apiUrl={apiUrl} chokepoint={series} days={days} />
+      )}
+    </div>
+  );
+}
+
+// Shows, for the currently-selected chokepoint, whether its bellwether
+// stocks actually moved on that chokepoint's highest traffic-anomaly
+// days — see backend chokepoint_market_correlation.py. Lives inside
+// AnalysisView (below the traffic SparkChart, only in the 'chokepoint'
+// category) rather than as a sibling component, since it shares that
+// view's chokepoint/days selection instead of having its own.
+function PctMove({ value }) {
+  if (value == null) return <span style={{ color: S.text3 }}>—</span>;
+  return <span style={{ color: value >= 0 ? '#7fd48a' : '#ff8080' }}>{value >= 0 ? '+' : ''}{value}%</span>;
+}
+
+function ChokepointMarketCorrelation({ apiUrl, chokepoint, days }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setData(null);
+    fetch(`${apiUrl}/api/v1/intel/chokepoint-market-correlation?chokepoint=${chokepoint}&days=${days}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setData(d); })
+      .catch(() => { if (!cancelled) setData({ status: 'error', top_anomaly_days: [] }); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [apiUrl, chokepoint, days]);
+
+  const cellStyle = { padding: '5px 10px', fontSize: 11, fontFamily: S.mono, borderBottom: `1px solid ${S.border}` };
+
+  return (
+    <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${S.border}` }}>
+      <div style={{ fontSize: 10.5, fontFamily: S.mono, color: S.text3, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 }}>
+        Bellwether Stock Moves On Highest-Anomaly Days
+      </div>
+
+      {loading && <Empty>Loading…</Empty>}
+
+      {!loading && data?.status === 'insufficient_history' && (
+        <Empty>Not enough traffic history yet ({data.days_of_data ?? 0} days recorded) — needs a few more days of 15-min snapshots before anomaly days can be ranked.</Empty>
+      )}
+      {!loading && data?.status === 'error' && <Empty>Request failed.</Empty>}
+
+      {!loading && data?.status === 'ok' && (
+        <>
+          <div style={{ fontSize: 11, color: S.text3, marginBottom: 10 }}>
+            On the {data.top_anomaly_days.length} highest-anomaly traffic days for {data.chokepoint_display} in this window ({data.days_of_data} days of data), here's how its watched bellwethers ({data.bellwethers.join(', ')}) moved:
+          </div>
+          {data.top_anomaly_days.map(day => (
+            <div key={day.date} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11.5, color: S.text2, marginBottom: 4 }}>
+                <span style={{ color: S.gold }}>{day.date}</span>
+                {' — '}traffic z-score {day.z_score >= 0 ? '+' : ''}{day.z_score} (mean vessel count {day.daily_mean_vessel_count})
+              </div>
+              <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...cellStyle, textAlign: 'left', color: S.text3, fontWeight: 400 }}>Stock</th>
+                    <th style={{ ...cellStyle, textAlign: 'right', color: S.text3, fontWeight: 400 }}>Same-day</th>
+                    <th style={{ ...cellStyle, textAlign: 'right', color: S.text3, fontWeight: 400 }}>Next-day</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {day.stock_moves.map(sm => (
+                    <tr key={sm.symbol}>
+                      <td style={{ ...cellStyle, color: S.text2 }}>{sm.name}</td>
+                      <td style={{ ...cellStyle, textAlign: 'right' }}><PctMove value={sm.same_day_change_pct} /></td>
+                      <td style={{ ...cellStyle, textAlign: 'right' }}><PctMove value={sm.next_day_change_pct} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+          <div style={{ fontSize: 10, color: S.text3, fontStyle: 'italic', marginTop: 4 }}>{data.methodology_note}</div>
+        </>
+      )}
     </div>
   );
 }
