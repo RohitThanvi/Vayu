@@ -10,6 +10,8 @@ REST:
   GET  /api/v1/intel/aircraft/stats  — aviation tracking statistics
   GET  /api/v1/intel/satellites/tle  — cached satellite orbital elements (CelesTrak)
   GET  /api/v1/intel/commodities     — cached global commodity prices (Yahoo Finance)
+  GET  /api/v1/intel/markets         — cached global stock indices + bellwether equities (Yahoo Finance)
+  GET  /api/v1/intel/markets/history — historical daily closes for a market index/stock
   GET  /api/v1/intel/air-quality/cpcb-stations — cached real-time CPCB Air Quality Index (India)
   GET  /api/v1/intel/supply-chain-correlation — chokepoint traffic status vs. related commodity moves
   GET  /api/v1/intel/wind-field      — animated wind vector grid (U/V components)
@@ -47,6 +49,7 @@ from ..services.intel.vessel_store import vessel_store, CATEGORY_LABELS, CHOKEPO
 from ..services.intel.aircraft_store import aircraft_store
 from ..services.intel import satellite_tle
 from ..services.intel import commodity_prices
+from ..services.intel import market_indices
 from ..services.intel import air_quality
 from ..services.intel import supply_chain
 from ..services.intel import dark_vessels
@@ -343,6 +346,23 @@ async def get_commodities():
     instead (real futures prices, ~15-20min delayed). Refreshed every
     few hours server-side and cached — see services/intel/commodity_prices.py."""
     return commodity_prices.get_commodities()
+
+
+@router.get("/markets", summary="Cached global stock indices + bellwether equities")
+async def get_markets():
+    """Global stock market indices (S&P 500, Nifty 50, Sensex, etc.) plus
+    a curated set of bellwether equities chosen for relevance to Vayu's
+    own chokepoint/supply-chain/sanctions signals, not a generic
+    watchlist — see services/intel/market_indices.py for the full
+    reasoning behind each pick. Same Yahoo Finance unofficial chart API
+    as /commodities (keyless, ~15-20min delayed, refreshed every few
+    hours server-side and cached)."""
+    return market_indices.get_markets()
+
+
+@router.get("/markets/history", summary="Historical daily closes for a market index/stock, for charting")
+async def get_market_history(symbol: str, range: str = "3mo"):  # noqa: A002 (matches query param name)
+    return await market_indices.get_history(symbol, range)
 
 
 # ── Air quality (CPCB, India-only, free data.gov.in key) ───────────────────

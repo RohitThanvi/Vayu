@@ -30,6 +30,7 @@ from .vessel_store import vessel_store, CHOKEPOINTS
 from .aircraft_store import aircraft_store
 from . import satellite_tle
 from . import commodity_prices
+from . import market_indices
 from . import air_quality
 from . import timeseries_store
 from ..reporting.report_job import run_daily_report
@@ -56,6 +57,7 @@ INTERVAL_COMMODITIES = 3 * 60 * 60   # matches commodity_prices.CACHE_TTL_SECOND
                                        # daily cap (unlike the Alpha Vantage source
                                        # this replaced), so this can run more often
                                        # while staying a good citizen about it
+INTERVAL_MARKETS = 3 * 60 * 60       # matches market_indices.CACHE_TTL_SECONDS — same reasoning as commodities (same underlying API)
 INTERVAL_AQI    = 60 * 60   # matches air_quality.CACHE_TTL_SECONDS — CPCB stations
 INTERVAL_CHOKEPOINT_SNAPSHOT = 15 * 60   # matches timeseries_store's baseline sampling assumption
                              # themselves only report hourly, no benefit polling tighter
@@ -113,6 +115,7 @@ class IntelScheduler:
             asyncio.create_task(self._poll_wind(),   name="poll-wind"),
             asyncio.create_task(self._poll_tle(),    name="poll-tle"),
             asyncio.create_task(self._poll_commodities(), name="poll-commodities"),
+            asyncio.create_task(self._poll_markets(), name="poll-markets"),
             asyncio.create_task(self._poll_aqi(), name="poll-aqi"),
             asyncio.create_task(self._poll_chokepoint_snapshots(), name="poll-chokepoint-snapshots"),
             asyncio.create_task(self._daily_report_loop(), name="daily-report-loop"),
@@ -278,6 +281,18 @@ class IntelScheduler:
             except Exception as e:
                 logger.error(f"Commodity poll error: {type(e).__name__}: {e}")
             await asyncio.sleep(INTERVAL_COMMODITIES)
+
+    async def _poll_markets(self):
+        # Same Yahoo Finance endpoint as commodities, separate cache/task —
+        # see market_indices.py.
+        await asyncio.sleep(20)   # staggered slightly after commodities' own 15s, avoids both hammering Yahoo in the same instant on startup
+        while self._running:
+            try:
+                count = await market_indices.refresh()
+                logger.info(f"Market poll: {count} indices/stocks cached")
+            except Exception as e:
+                logger.error(f"Market poll error: {type(e).__name__}: {e}")
+            await asyncio.sleep(INTERVAL_MARKETS)
 
     async def _poll_aqi(self):
         # CPCB (India) real-time AQI — see air_quality.py module docstring.
