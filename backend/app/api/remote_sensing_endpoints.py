@@ -73,6 +73,10 @@ TOOLS = {
         "label": "Surface Water Dynamics", "needs_dates": False,
         "description": "Permanent vs seasonal water extent, 1984-2021 — JRC Global Surface Water, 30m.",
     },
+    "supervised_classification": {
+        "label": "Supervised Classification (ML)", "needs_dates": True, "needs_training_samples": True,
+        "description": "Random Forest classification trained on your own training points, into your own classes — Sentinel-2, 10m.",
+    },
 }
 
 
@@ -92,6 +96,8 @@ class RemoteSensingRequest(BaseModel):
     post_start: Optional[str] = None
     post_end: Optional[str] = None
     interval: Optional[str] = "month"  # index_time_series
+    training_samples: Optional[List[Dict[str, Any]]] = None  # supervised_classification: [{lat, lon, class_id, class_label}]
+    num_trees: Optional[int] = None  # supervised_classification, defaults to rs.DEFAULT_NUM_TREES if omitted
 
 
 def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
@@ -135,6 +141,15 @@ def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
             result = rs.compute_land_surface_temperature(req.aoi_geojson, req.start_date, req.end_date)
         elif req.tool == "surface_water_dynamics":
             result = rs.compute_surface_water_dynamics(req.aoi_geojson)
+        elif req.tool == "supervised_classification":
+            if not req.start_date or not req.end_date:
+                raise ValueError("supervised_classification requires start_date and end_date.")
+            if not req.training_samples:
+                raise ValueError("supervised_classification requires training_samples: [{lat, lon, class_id, class_label}, ...].")
+            result = rs.compute_supervised_classification(
+                req.aoi_geojson, req.start_date, req.end_date, req.training_samples,
+                req.num_trees or rs.DEFAULT_NUM_TREES,
+            )
         else:
             job_store.update(request_id, {"status": "failed", "error": f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}"})
             return
