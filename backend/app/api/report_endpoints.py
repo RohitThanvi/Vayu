@@ -356,6 +356,8 @@ class RemoteSensingReportRequest(BaseModel):
     pre_end: Optional[str] = None
     post_start: Optional[str] = None
     post_end: Optional[str] = None
+    training_samples: Optional[List[Dict[str, Any]]] = None  # supervised_classification
+    num_trees: Optional[int] = None  # supervised_classification
 
 
 @router.post("/remote-sensing", summary="Generate a scientific PDF report for a Spectra (remote sensing) result")
@@ -371,6 +373,7 @@ async def remote_sensing_report(req: RemoteSensingReportRequest):
                 period2_start=req.period2_start, period2_end=req.period2_end,
                 pre_start=req.pre_start, pre_end=req.pre_end,
                 post_start=req.post_start, post_end=req.post_end,
+                training_samples=req.training_samples, num_trees=req.num_trees,
             )
         except Exception as e:
             # Thumbnail is a nice-to-have for the report, not load-bearing —

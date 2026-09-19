@@ -975,6 +975,224 @@ def compute_surface_water_dynamics(aoi: Dict) -> Dict[str, Any]:
     }
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Supervised classification — Random Forest (ee.Classifier.smileRandomForest),
+# trained on user-drawn training points rather than a fixed pretrained
+# product like lulc's ESA WorldCover above. This is the "classify into
+# whatever categories THIS analysis actually needs" tool (custom land-use
+# schemes, crop types, anything not covered by WorldCover's 11 fixed
+# classes) — the ML/DL addition chosen after reviewing IIRS's "AI/ML for
+# Geodata Analytics" outreach course syllabus (RF/SVM classification via
+# GEE was the one piece of that syllabus that fit this project's existing
+# GEE-native architecture directly; DL object detection and RNN
+# forecasting were considered and deliberately NOT built — see
+# memory/discussion — because they need labeled training data or history
+# this project doesn't have yet).
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Raw Sentinel-2 bands + the 3 indices already defined in INDEX_DEFINITIONS
+# that separate vegetation/water/built-up well — enough signal for a small
+# user-drawn training set without so many correlated bands that overfitting
+# on a handful of points gets worse instead of better.
+FEATURE_BANDS = ["B2", "B3", "B4", "B8", "B11", "B12", "NDVI", "NDWI", "NDBI"]
+
+# Distinct qualitative colors (trimmed from Sasha Trubetskoy's "20 distinct
+# colors" palette), assigned to classes in the order they first appear in
+# training_samples — these are arbitrary user-defined classes, not tied to
+# an external classification scheme the way WORLDCOVER_PALETTE is.
+CLASS_PALETTE = ["#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+                  "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"]
+
+# A held-out test split only means something if there are enough points per
+# class to hold any out at all; capped at len(CLASS_PALETTE) classes since
+# a Random Forest trained on a handful of user-drawn points per class
+# doesn't hold up meaningfully past this many categories anyway.
+MIN_SAMPLES_PER_CLASS = 4
+MIN_CLASSES = 2
+MAX_CLASSES = len(CLASS_PALETTE)
+DEFAULT_NUM_TREES = 50
+_TEST_SPLIT_SEED = 42
+
+
+def _validate_training_samples(training_samples: list):
+    if not training_samples:
+        raise ValueError("At least one training sample is required — add training points and assign each a class.")
+    by_class: Dict[int, list] = {}
+    for s in training_samples:
+        by_class.setdefault(int(s["class_id"]), []).append(s)
+    if len(by_class) < MIN_CLASSES:
+        raise ValueError(f"At least {MIN_CLASSES} distinct classes are needed for classification (got {len(by_class)}).")
+    if len(by_class) > MAX_CLASSES:
+        raise ValueError(f"At most {MAX_CLASSES} classes are supported (got {len(by_class)}) — a Random Forest trained on a small user-drawn set this small doesn't hold up meaningfully past this many categories.")
+    thin = {cid: len(pts) for cid, pts in by_class.items() if len(pts) < MIN_SAMPLES_PER_CLASS}
+    if thin:
+        raise ValueError(
+            f"Each class needs at least {MIN_SAMPLES_PER_CLASS} training points (some are held out "
+            f"for an honest accuracy estimate, not used for training). Add more points for class id(s): {list(thin)}."
+        )
+
+
+def _stratified_split(training_samples: list, test_frac: float = 0.3, seed: int = _TEST_SPLIT_SEED) -> list:
+    """Splits WITHIN each class (not one global random split) so every
+    class contributes to both the training set and the held-out test
+    set — a single global random split could easily leave a whole class
+    with zero test points by chance, especially at the small n this tool
+    is designed for. Returns the same dicts with a 'split' key added."""
+    import random
+    rng = random.Random(seed)
+    by_class: Dict[int, list] = {}
+    for s in training_samples:
+        by_class.setdefault(int(s["class_id"]), []).append(s)
+
+    out = []
+    for pts in by_class.values():
+        pts = list(pts)
+        rng.shuffle(pts)
+        n_test = max(1, round(len(pts) * test_frac))
+        n_test = min(n_test, len(pts) - 2)  # always leave >=2 points to train on
+        for i, p in enumerate(pts):
+            out.append({**p, "split": "test" if i < n_test else "train"})
+    return out
+
+
+def _feature_image(composite: ee.Image) -> ee.Image:
+    raw = composite.select(["B2", "B3", "B4", "B8", "B11", "B12"])
+    ndvi, ndwi, ndbi = _index_image(composite, "ndvi"), _index_image(composite, "ndwi"), _index_image(composite, "ndbi")
+    return raw.addBands([ndvi, ndwi, ndbi])
+
+
+def _train_rf_classifier(region: ee.Geometry, start_date: str, end_date: str, training_samples: list, num_trees: int):
+    """Shared by compute_supervised_classification (full stats + map) and
+    get_report_thumbnail (just the classified image) — trains once, both
+    callers reuse the result rather than re-deriving the classifier
+    independently. Returns a dict of everything either caller needs."""
+    composite, img_count = _s2_composite(region, start_date, end_date)
+    feature_img = _feature_image(composite)
+
+    class_labels: Dict[int, str] = {}
+    for s in training_samples:
+        class_labels.setdefault(int(s["class_id"]), s.get("class_label") or f"Class {s['class_id']}")
+
+    samples_with_split = _stratified_split(training_samples)
+    training_fc = ee.FeatureCollection([
+        ee.Feature(ee.Geometry.Point([s["lon"], s["lat"]]), {"class": int(s["class_id"]), "split": s["split"]})
+        for s in samples_with_split
+    ])
+
+    sampled = feature_img.sampleRegions(collection=training_fc, properties=["class", "split"], scale=10, tileScale=4)
+    # Points on a cloud-masked pixel come back with null band values —
+    # drop them rather than let a null poison training; report how many
+    # were dropped so a caller can see if a lot of points fell in cloud.
+    sampled = sampled.filter(ee.Filter.notNull(FEATURE_BANDS))
+    n_sampled = sampled.size().getInfo()
+
+    train_fc = sampled.filter(ee.Filter.eq("split", "train"))
+    test_fc = sampled.filter(ee.Filter.eq("split", "test"))
+    n_train, n_test = train_fc.size().getInfo(), test_fc.size().getInfo()
+    if n_train == 0:
+        raise ValueError("No training points had valid (cloud-free) pixel data in this date range — widen the date range or check the points fall inside the AOI.")
+
+    classifier = ee.Classifier.smileRandomForest(numberOfTrees=num_trees, seed=_TEST_SPLIT_SEED).train(
+        features=train_fc, classProperty="class", inputProperties=FEATURE_BANDS,
+    )
+    classified_image = feature_img.classify(classifier)
+
+    return {
+        "classified_image": classified_image, "classifier": classifier, "test_fc": test_fc,
+        "class_labels": class_labels, "n_provided": len(training_samples), "n_sampled": n_sampled,
+        "n_train": n_train, "n_test": n_test, "img_count": img_count,
+    }
+
+
+def compute_supervised_classification(aoi: Dict, start_date: str, end_date: str, training_samples: list, num_trees: int = DEFAULT_NUM_TREES) -> Dict[str, Any]:
+    """Random Forest supervised classification (ee.Classifier.smileRandomForest
+    — Breiman 2001; GEE's implementation via the SMILE Java ML library) on a
+    cloud-masked Sentinel-2 median composite, trained on user-supplied
+    training points — for classifying into whatever categories THIS
+    analysis needs (crop types, a custom land-use scheme), not a fixed
+    global product like the lulc tool's ESA WorldCover.
+
+    Accuracy is reported two ways and the two are NOT interchangeable:
+    training_resubstitution_accuracy is the classifier scored against the
+    same points it trained on — always optimistic, reported for
+    transparency only. test_accuracy is computed on a held-out ~30% split
+    (stratified per class — see _stratified_split) the classifier never
+    saw — this is the honest number, though with the small training sets
+    this tool is designed for it still carries real uncertainty, especially
+    below ~10 test points per class.
+    """
+    logger.info("GEE (remote sensing): supervised_classification")
+    _validate_training_samples(training_samples)
+    region = _polygon_geometry(aoi)
+
+    trained = _train_rf_classifier(region, start_date, end_date, training_samples, num_trees)
+    classified_image, classifier = trained["classified_image"], trained["classifier"]
+    class_labels, test_fc, n_test = trained["class_labels"], trained["test_fc"], trained["n_test"]
+
+    train_accuracy = round(classifier.confusionMatrix().accuracy().getInfo(), 3)
+    train_kappa = round(classifier.confusionMatrix().kappa().getInfo(), 3)
+
+    test_accuracy = test_kappa = None
+    if n_test > 0:
+        test_classified = test_fc.classify(classifier)
+        test_matrix = test_classified.errorMatrix("class", "classification")
+        test_accuracy = round(test_matrix.accuracy().getInfo(), 3)
+        test_kappa = round(test_matrix.kappa().getInfo(), 3)
+
+    area_img = ee.Image.pixelArea().divide(1_000_000).addBands(classified_image)
+    hist = area_img.reduceRegion(
+        reducer=ee.Reducer.sum().group(groupField=1, groupName="class"),
+        geometry=region, scale=10, maxPixels=1e10, bestEffort=True, tileScale=4,
+    ).getInfo()
+    groups = hist.get("groups", [])
+    total_km2 = sum(g["sum"] for g in groups) or 1
+    classes_out = []
+    for g in groups:
+        cid = int(g["class"])
+        classes_out.append({
+            "class_id": cid, "label": class_labels.get(cid, f"Class {cid}"),
+            "area_km2": round(g["sum"], 3), "pct_of_aoi": round(g["sum"] / total_km2 * 100, 2),
+        })
+    classes_out.sort(key=lambda c: c["area_km2"], reverse=True)
+
+    ordered_class_ids = sorted(class_labels.keys())
+    dense = classified_image.remap(ordered_class_ids, list(range(len(ordered_class_ids))))
+    palette = CLASS_PALETTE[:len(ordered_class_ids)]
+
+    return {
+        "classes": classes_out,
+        "class_legend": [{"class_id": cid, "label": class_labels[cid], "color": palette[i]} for i, cid in enumerate(ordered_class_ids)],
+        "total_classified_km2": round(total_km2, 3),
+        "aoi_area_km2": round(_region_area_km2(region), 3),
+        "training": {
+            "points_provided": trained["n_provided"], "points_used": trained["n_sampled"],
+            "points_dropped_cloud_masked": trained["n_provided"] - trained["n_sampled"],
+            "train_points": trained["n_train"], "test_points": n_test, "num_trees": num_trees,
+        },
+        "accuracy": {
+            "training_resubstitution_accuracy": train_accuracy,
+            "training_resubstitution_kappa": train_kappa,
+            "test_accuracy": test_accuracy,
+            "test_kappa": test_kappa,
+            "note": (
+                "training_resubstitution_accuracy is scored on the same points the model trained on "
+                "and is always optimistic — test_accuracy, on a held-out ~30% split the model never "
+                "saw, is the honest estimate. test_accuracy is null if too few points survived "
+                "cloud-masking to hold any out."
+            ),
+        },
+        "map_layer": _tile_layer(dense, {"min": 0, "max": max(len(ordered_class_ids) - 1, 1), "palette": palette}),
+        "download_url": _download_url(classified_image, region, scale=10),
+        "method": (
+            f"Random Forest supervised classification (ee.Classifier.smileRandomForest, {num_trees} trees, "
+            f"seed={_TEST_SPLIT_SEED}; Breiman 2001), trained on {trained['n_train']} user-provided training "
+            f"points across {len(ordered_class_ids)} classes (held out {n_test} points for testing). "
+            f"Feature bands: {', '.join(FEATURE_BANDS)} from a cloud-masked Sentinel-2 SR median composite "
+            f"({trained['img_count']} scenes, {start_date} to {end_date}), 10m."
+        ),
+    }
+
+
 def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
     """Static PNG thumbnail for a Spectra PDF report — reconstructs the
     minimal image for `tool` (same underlying data/visualization as its
@@ -1058,6 +1276,13 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
         if tool == "surface_water_dynamics":
             occurrence = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").clip(region)
             return _fetch_thumb_bytes(occurrence, region, {"min": 0, "max": 100, "palette": ["#ffffff", "#ffbbbb", "#0000ff"]})
+        if tool == "supervised_classification":
+            training_samples = params["training_samples"]
+            trained = _train_rf_classifier(region, params["start_date"], params["end_date"], training_samples, params.get("num_trees") or DEFAULT_NUM_TREES)
+            ordered_class_ids = sorted(trained["class_labels"].keys())
+            dense = trained["classified_image"].remap(ordered_class_ids, list(range(len(ordered_class_ids))))
+            palette = CLASS_PALETTE[:len(ordered_class_ids)]
+            return _fetch_thumb_bytes(dense, region, {"min": 0, "max": max(len(ordered_class_ids) - 1, 1), "palette": palette})
         return None  # atmospheric_composition, index_time_series (a chart, not a raster)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")

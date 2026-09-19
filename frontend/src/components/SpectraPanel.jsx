@@ -70,7 +70,15 @@ const TOOL_META = {
   atmospheric_composition: { label: 'Atmosphere', needsDates: true, icon: '☁' },
   land_surface_temperature: { label: 'Surface Temp', needsDates: true, icon: '◉' },
   surface_water_dynamics: { label: 'Surface Water', needsDates: false, icon: '≋' },
+  supervised_classification: { label: 'ML Classify', needsDates: true, needsTrainingPoints: true, icon: '⊛' },
 };
+
+// Matches backend gee_remote_sensing.py's MIN_SAMPLES_PER_CLASS/MIN_CLASSES —
+// surfaced here too so the Run button and an inline hint can catch an
+// under-specified training set before spending a request on it, rather
+// than only finding out from the backend's error message.
+const MIN_SAMPLES_PER_CLASS = 4;
+const MIN_CLASSES = 2;
 
 const INDEX_CHOICES = [
   ['ndvi', 'NDVI'], ['ndwi', 'NDWI'], ['mndwi', 'MNDWI'], ['ndbi', 'NDBI'],
@@ -334,6 +342,42 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
       </div>
     );
   }
+  if (tool === 'supervised_classification') {
+    const acc = result.accuracy;
+    return (
+      <div>
+        {result.classes.map(c => (
+          <div key={c.class_id} style={{ marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 2 }}>
+              <span style={{ color: S.text2 }}>{c.label}</span>
+              <span style={{ fontFamily: S.mono, color: S.gold }}>{c.pct_of_aoi}%</span>
+            </div>
+            <div style={{ height: 4, background: S.surface2, borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${c.pct_of_aoi}%`, background: S.accent }} />
+            </div>
+            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 1 }}>{c.area_km2} km²</div>
+          </div>
+        ))}
+
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Accuracy</div>
+          <StatRow label="Test accuracy (held-out points)" value={acc.test_accuracy != null ? `${Math.round(acc.test_accuracy * 100)}% (κ ${acc.test_kappa})` : 'n/a — no points held out'} />
+          <StatRow label="Training (resubstitution) accuracy" value={`${Math.round(acc.training_resubstitution_accuracy * 100)}% (κ ${acc.training_resubstitution_kappa})`} />
+          <StatRow label="Training / test points used" value={`${result.training.train_points} / ${result.training.test_points}`} />
+          {result.training.points_dropped_cloud_masked > 0 && (
+            <StatRow label="Points dropped (cloud-masked pixel)" value={result.training.points_dropped_cloud_masked} />
+          )}
+        </div>
+        <div style={{ fontSize: 10.5, color: S.text3, marginTop: 6, lineHeight: 1.4 }}>
+          Test accuracy is the honest number — scored on points the model never trained on. Training accuracy is always optimistic; it's shown for transparency, not as the headline figure.
+        </div>
+
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="classification" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'supervised_classification'} onActivate={() => setActiveLayerId?.('supervised_classification')} />
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
   if (tool === 'atmospheric_composition') {
     return (
       <div>
@@ -362,6 +406,11 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
   const [preEnd, setPreEnd] = useState(todayMinus(90));
   const [postStart, setPostStart] = useState(todayMinus(30));
   const [postEnd, setPostEnd] = useState(todayMinus(0));
+  const [trainingSamples, setTrainingSamples] = useState([]); // supervised_classification: [{lat, lon, class_id, class_label}]
+  const [ptLat, setPtLat] = useState('');
+  const [ptLon, setPtLon] = useState('');
+  const [ptLabel, setPtLabel] = useState('');
+  const [numTrees, setNumTrees] = useState(50);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -379,6 +428,32 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
   const toggleIndex = (id) => {
     setSelectedIndices(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
+
+  // Class ids are assigned automatically from the typed label — the same
+  // label (trimmed, case-insensitive) reuses its existing class_id rather
+  // than making the user track numeric ids themselves.
+  const addTrainingPoint = () => {
+    const lat = parseFloat(ptLat), lon = parseFloat(ptLon);
+    const label = ptLabel.trim();
+    if (Number.isNaN(lat) || Number.isNaN(lon) || !label) return;
+    setTrainingSamples(prev => {
+      const existing = prev.find(p => p.class_label.toLowerCase() === label.toLowerCase());
+      const class_id = existing ? existing.class_id : (prev.reduce((max, p) => Math.max(max, p.class_id), 0) + 1);
+      return [...prev, { lat, lon, class_id, class_label: existing ? existing.class_label : label }];
+    });
+    setPtLat(''); setPtLon(''); setPtLabel('');
+  };
+
+  const removeTrainingPoint = (idx) => {
+    setTrainingSamples(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const trainingByClass = trainingSamples.reduce((acc, p, idx) => {
+    (acc[p.class_id] ||= { label: p.class_label, points: [] }).points.push({ ...p, idx });
+    return acc;
+  }, {});
+  const trainingClassCount = Object.keys(trainingByClass).length;
+  const trainingReady = trainingClassCount >= MIN_CLASSES && Object.values(trainingByClass).every(c => c.points.length >= MIN_SAMPLES_PER_CLASS);
 
   const generateReport = useCallback(async () => {
     if (!result || !lastParams) return;
@@ -419,6 +494,10 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
       body.pre_start = preStart; body.pre_end = preEnd;
       body.post_start = postStart; body.post_end = postEnd;
     }
+    if (meta.needsTrainingPoints) {
+      body.training_samples = trainingSamples;
+      body.num_trees = numTrees;
+    }
     setLastParams(body);
 
     try {
@@ -449,7 +528,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
     } catch (e) {
       setError(`Failed to submit: ${e.message}`); setLoading(false);
     }
-  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices, changeIndex, period1Start, period1End, period2Start, period2End, preStart, preEnd, postStart, postEnd]);
+  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices, changeIndex, period1Start, period1End, period2Start, period2End, preStart, preEnd, postStart, postEnd, trainingSamples, numTrees]);
 
   const meta = TOOL_META[tool];
 
@@ -560,7 +639,62 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
         </>
       )}
 
-      <button onClick={run} disabled={loading || (tool === 'spectral_indices' && selectedIndices.length === 0)} style={{
+      {meta.needsTrainingPoints && (
+        <>
+          <Field label="Training points">
+            <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.4, marginBottom: 8 }}>
+              Add points inside your AOI, labeling each with the class it belongs to (e.g. "water", "crop", "urban"). Needs at least {MIN_CLASSES} classes with {MIN_SAMPLES_PER_CLASS}+ points each — a share of each class's points is held out to score real accuracy, not just resubstitution.
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+              <input type="number" step="any" placeholder="Lat" value={ptLat} onChange={e => setPtLat(e.target.value)}
+                style={{ width: 70, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 6px', borderRadius: 3 }} />
+              <input type="number" step="any" placeholder="Lon" value={ptLon} onChange={e => setPtLon(e.target.value)}
+                style={{ width: 70, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 6px', borderRadius: 3 }} />
+              <input type="text" placeholder="Class label" value={ptLabel} onChange={e => setPtLabel(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addTrainingPoint()}
+                style={{ flex: 1, minWidth: 0, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
+              <button onClick={addTrainingPoint} disabled={!ptLat || !ptLon || !ptLabel.trim()} style={{
+                background: 'rgba(126,184,212,0.12)', border: `1px solid ${S.accent}`, color: S.accent, fontSize: 10.5,
+                fontFamily: S.mono, padding: '6px 10px', borderRadius: 3, cursor: 'pointer', flexShrink: 0,
+              }}>
+                + Add
+              </button>
+            </div>
+
+            {trainingClassCount > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {Object.entries(trainingByClass).map(([cid, c]) => (
+                  <div key={cid} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '6px 8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
+                      <span style={{ color: c.points.length >= MIN_SAMPLES_PER_CLASS ? S.gold : '#e0c23c' }}>{c.label}</span>
+                      <span style={{ color: S.text3, fontFamily: S.mono }}>{c.points.length} pt{c.points.length !== 1 ? 's' : ''} {c.points.length < MIN_SAMPLES_PER_CLASS ? `(need ${MIN_SAMPLES_PER_CLASS}+)` : ''}</span>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {c.points.map(p => (
+                        <span key={p.idx} onClick={() => removeTrainingPoint(p.idx)} title="Click to remove" style={{
+                          fontSize: 9.5, fontFamily: S.mono, color: S.text3, background: S.surface, border: `1px solid ${S.border}`,
+                          borderRadius: 3, padding: '2px 5px', cursor: 'pointer',
+                        }}>
+                          {p.lat.toFixed(3)},{p.lon.toFixed(3)} ✕
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {trainingClassCount > 0 && trainingClassCount < MIN_CLASSES && (
+              <div style={{ fontSize: 10.5, color: '#e0c23c', marginTop: 6 }}>Add at least {MIN_CLASSES} distinct classes.</div>
+            )}
+          </Field>
+          <Field label="Random Forest trees">
+            <input type="number" min="10" max="500" value={numTrees} onChange={e => setNumTrees(Number(e.target.value) || 50)}
+              style={{ width: 100, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
+          </Field>
+        </>
+      )}
+
+      <button onClick={run} disabled={loading || (tool === 'spectral_indices' && selectedIndices.length === 0) || (meta.needsTrainingPoints && !trainingReady)} style={{
         background: 'rgba(126,184,212,0.12)', border: `1px solid ${S.accent}`, color: S.accent, fontFamily: S.mono,
         fontSize: 12, letterSpacing: 1, textTransform: 'uppercase', padding: '9px 16px', borderRadius: 4, cursor: 'pointer', marginTop: 4,
       }}>
