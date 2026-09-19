@@ -122,6 +122,16 @@ const COMMODITY_OPTIONS = [
   ['HG=F', 'Copper'], ['GC=F', 'Gold'], ['ZW=F', 'Wheat'], ['ZC=F', 'Corn'],
   ['CT=F', 'Cotton'], ['SB=F', 'Sugar'], ['KC=F', 'Coffee'],
 ];
+// Mirrors backend/app/services/intel/market_indices.py's INDICES +
+// BELLWETHER_STOCKS symbol list exactly — keep these two in sync if
+// that list ever changes.
+const MARKET_OPTIONS = [
+  ['^GSPC', 'S&P 500'], ['^DJI', 'Dow Jones'], ['^IXIC', 'Nasdaq Composite'],
+  ['^NSEI', 'Nifty 50'], ['^BSESN', 'BSE Sensex'], ['^FTSE', 'FTSE 100'],
+  ['^N225', 'Nikkei 225'], ['000001.SS', 'Shanghai Composite'],
+  ['RELIANCE.NS', 'Reliance Industries'], ['XOM', 'ExxonMobil'], ['CVX', 'Chevron'],
+  ['ZIM', 'ZIM Integrated Shipping'], ['FDX', 'FedEx'], ['LMT', 'Lockheed Martin'], ['RTX', 'RTX Corp'],
+];
 const FRED_OPTIONS = [
   ['fed_funds_rate', 'US Fed Funds Rate'], ['cpi_yoy', 'US CPI (index)'], ['treasury_10y', 'US 10Y Treasury Yield'],
 ];
@@ -132,7 +142,7 @@ const COMMODITY_RANGES = [['1mo', '1M'], ['3mo', '3M'], ['6mo', '6M'], ['1y', '1
 const CHOKEPOINT_DAY_RANGES = [[7, '7D'], [14, '14D'], [28, '28D']];
 
 const ANALYSIS_CATEGORIES = [
-  ['commodity', 'Commodity'], ['fred', 'US Macro'], ['global_macro', 'Global Macro'],
+  ['commodity', 'Commodity'], ['market', 'Markets'], ['fred', 'US Macro'], ['global_macro', 'Global Macro'],
   ['india_macro', 'India Macro'], ['chokepoint', 'Chokepoint Traffic'],
 ];
 
@@ -158,6 +168,7 @@ function AnalysisView({ apiUrl }) {
 
   const optionsForCategory = () => {
     if (category === 'commodity') return COMMODITY_OPTIONS;
+    if (category === 'market') return MARKET_OPTIONS;
     if (category === 'fred') return FRED_OPTIONS;
     if (category === 'global_macro' || category === 'india_macro') return WORLD_BANK_OPTIONS;
     return CHOKEPOINTS;
@@ -167,6 +178,7 @@ function AnalysisView({ apiUrl }) {
     setCategory(id);
     setResult(null);
     if (id === 'commodity') setSeries(COMMODITY_OPTIONS[0][0]);
+    else if (id === 'market') setSeries(MARKET_OPTIONS[0][0]);
     else if (id === 'fred') setSeries(FRED_OPTIONS[0][0]);
     else if (id === 'global_macro' || id === 'india_macro') setSeries(WORLD_BANK_OPTIONS[0][0]);
     else setSeries(CHOKEPOINTS[0][0]);
@@ -177,6 +189,7 @@ function AnalysisView({ apiUrl }) {
     setResult(null);
     let url;
     if (category === 'commodity') url = `${apiUrl}/api/v1/intel/commodities/history?symbol=${encodeURIComponent(series)}&range=${range}`;
+    else if (category === 'market') url = `${apiUrl}/api/v1/intel/markets/history?symbol=${encodeURIComponent(series)}&range=${range}`;
     else if (category === 'fred') url = `${apiUrl}/api/v1/intel/macro/history?series=${series}&months=24`;
     else if (category === 'global_macro') url = `${apiUrl}/api/v1/intel/macro/history/worldbank?indicator=${series}&region=global&years=15`;
     else if (category === 'india_macro') url = `${apiUrl}/api/v1/intel/macro/history/worldbank?indicator=${series}&region=india&years=15`;
@@ -219,7 +232,7 @@ function AnalysisView({ apiUrl }) {
           {optionsForCategory().map(([id, label]) => <option key={id} value={id}>{label}</option>)}
         </select>
 
-        {category === 'commodity' && (
+        {(category === 'commodity' || category === 'market') && (
           <select value={range} onChange={e => setRange(e.target.value)} style={selectStyle}>
             {COMMODITY_RANGES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
           </select>
@@ -262,6 +275,7 @@ export default function BusinessIntelBar({ apiUrl }) {
   const sanc = useJson(apiUrl, '/api/v1/intel/sanctions-screen');
   const macro = useJson(apiUrl, '/api/v1/intel/macro', 30 * 60 * 1000);
   const tone = useJson(apiUrl, '/api/v1/intel/geo-tone');
+  const markets = useJson(apiUrl, '/api/v1/intel/markets', 30 * 60 * 1000);
 
   const worstBand = risk.data?.chokepoints?.[0]?.band; // already sorted worst-first by the API
 
@@ -385,6 +399,60 @@ export default function BusinessIntelBar({ apiUrl }) {
                     <span style={{ fontFamily: S.mono, color: r.avg_tone < 0 ? '#ff8080' : '#7fd48a' }}>{r.avg_tone}</span>
                   </div>
                 ))}
+              </div>
+            )}
+          </Column>
+
+          <Column title="Markets (indices + bellwethers)" width={260}>
+            {markets.error && <Empty>Unavailable right now.</Empty>}
+            {!markets.error && !markets.data && <Empty>Loading...</Empty>}
+            {markets.data && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {markets.data.indices?.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 9.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Indices</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {markets.data.indices.map(m => (
+                        <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 3, padding: '5px 9px' }}>
+                          <span style={{ fontSize: 11, color: S.text2 }}>{m.name}</span>
+                          <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                            <span style={{ fontSize: 12, fontFamily: S.mono, color: S.text }}>{m.value.toLocaleString()}</span>
+                            {m.change_pct != null && (
+                              <span style={{ fontSize: 10.5, fontFamily: S.mono, color: m.change_pct >= 0 ? '#7fd48a' : '#ff8080' }}>
+                                {m.change_pct >= 0 ? '+' : ''}{m.change_pct}%
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {markets.data.stocks?.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 9.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                      Bellwethers (energy/shipping/defense)
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {markets.data.stocks.map(m => (
+                        <div key={m.symbol} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 3, padding: '5px 9px' }}>
+                          <span style={{ fontSize: 11, color: S.text2 }}>{m.name}</span>
+                          <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                            <span style={{ fontSize: 12, fontFamily: S.mono, color: S.text }}>{m.value.toLocaleString()}</span>
+                            {m.change_pct != null && (
+                              <span style={{ fontSize: 10.5, fontFamily: S.mono, color: m.change_pct >= 0 ? '#7fd48a' : '#ff8080' }}>
+                                {m.change_pct >= 0 ? '+' : ''}{m.change_pct}%
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {markets.data.last_error && (
+                  <div style={{ fontSize: 9.5, color: S.text3, fontStyle: 'italic' }}>{markets.data.last_error}</div>
+                )}
               </div>
             )}
           </Column>
