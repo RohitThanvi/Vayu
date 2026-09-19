@@ -117,6 +117,7 @@ def compute_groundwater_trend(aoi: Dict[str, Any], years_back: int = 5) -> Dict[
         "latest_anomaly_cm": round(ys[-1], 3),
         "latest_date": series[-1][0],
         "points_used": n,
+        "series": [{"date": d, "value": round(v, 3)} for d, v in series],  # for trend charting (Agri Analysis tab)
         "resolution_note": "GRACE/GRACE-FO ~300km grid — regional trend only, not parcel-level precision.",
         "source": "NASA/GRACE/MASS_GRIDS_V04/LAND (lwe_thickness_csr)",
     }
