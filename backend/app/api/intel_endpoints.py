@@ -61,6 +61,7 @@ from ..services.intel import macro as macro_mod
 from ..services.intel import economic_blocs
 from ..services.intel import timeseries_store
 from ..services.intel import business_risk
+from ..services.intel import chokepoint_market_correlation
 from ..services.intel import strategic_sites
 from ..services.weather.wind_field import wind_field_store
 
@@ -500,6 +501,16 @@ async def get_chokepoint_traffic_history_endpoint(chokepoint: str, days: int = 1
     if chokepoint not in CHOKEPOINTS:
         raise HTTPException(status_code=404, detail=f"Unknown chokepoint. Valid: {list(CHOKEPOINTS)}")
     return {"chokepoint": chokepoint, "points": timeseries_store.get_chokepoint_history(chokepoint, days)}
+
+
+@router.get("/chokepoint-market-correlation", summary="On this chokepoint's highest traffic-anomaly days, how did its bellwether stocks move?")
+async def get_chokepoint_market_correlation_endpoint(chokepoint: str, days: int = 28):
+    """See services/intel/chokepoint_market_correlation.py — reports
+    same-day/next-day bellwether price moves on the highest-anomaly
+    traffic days, not a manufactured correlation coefficient."""
+    if chokepoint not in CHOKEPOINTS:
+        raise HTTPException(status_code=404, detail=f"Unknown chokepoint. Valid: {list(CHOKEPOINTS)}")
+    return await chokepoint_market_correlation.correlate_chokepoint_with_markets(chokepoint, days)
 
 
 # ── Economic blocs (G7/G20/BRICS/ASEAN) — built on data already integrated above ──
