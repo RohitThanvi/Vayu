@@ -206,23 +206,34 @@ def get_precipitation_thumbnail(aoi: Dict[str, Any], center_date: str, days_wind
 
 
 def get_groundwater_thumbnail(aoi: Dict[str, Any], center_date: str) -> Optional[bytes]:
-    """Colored GRACE terrestrial-water-storage-anomaly map — coarse
-    (~300km grid), so this shows the regional trend context, not
-    parcel-level detail. Brown = depleted anomaly, blue = surplus anomaly."""
+    """Colored GRACE/GRACE-FO Mascon terrestrial-water-storage-anomaly map
+    — coarse (~300km native resolution), so this shows the regional trend
+    context, not parcel-level detail. Brown = depleted anomaly, blue =
+    surplus anomaly. Uses the MASCON product (data through 2024-09-30 as of
+    this writing, checked against the GEE catalog directly), not the older
+    LAND product — LAND's GEE asset is frozen at 2017-01-07 and silently
+    returns nothing for any recent center_date, which is exactly what this
+    function was doing before this fix, for every AOI, for years.
+
+    center_date is usually "today" in practice (report_endpoints.py's as_of
+    defaults to the risk score's own latest period), which given the
+    dataset's real end date will regularly miss the requested +/-180-day
+    window entirely even now that the dataset itself is correct. Falls back
+    to the collection's single most recent available image for this AOI
+    (any date) rather than returning nothing in that case — a slightly
+    stale anomaly map is still useful context; silence isn't."""
     from datetime import datetime as _dt
     region = _polygon_geometry(aoi)
     center_dt = _dt.strptime(center_date, "%Y-%m-%d")
     start = (center_dt - timedelta(days=180)).strftime("%Y-%m-%d")
     end = center_dt.strftime("%Y-%m-%d")
 
-    col = (
-        ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/LAND")
-        .filterBounds(region)
-        .filterDate(start, end)
-        .select("lwe_thickness_csr")
-    )
+    base = ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/MASCON").filterBounds(region).select("lwe_thickness")
+    col = base.filterDate(start, end)
     if col.size().getInfo() == 0:
-        return None
+        col = base  # fall back to the whole collection, sorted below to the latest available
+    if col.size().getInfo() == 0:
+        return None  # no Mascon coverage at all for this AOI (bounds fall outside the product's footprint)
     latest = col.sort("system:time_start", False).first().clip(region)
     return _fetch_thumb_bytes(latest, region, {
         "min": -20, "max": 20,
