@@ -9,6 +9,7 @@ import SpectraIntelBar from './components/SpectraIntelBar';
 import SubscribeWidget from './components/SubscribeWidget';
 import ErrorBoundary from './components/ErrorBoundary';
 import AgriPanel from './components/AgriPanel';
+import AgriIntelBar from './components/AgriIntelBar';
 import DroughtDashboard from './components/DroughtDashboard';
 // Lazy-loaded: three.js is a large dependency (pulls the main bundle from
 // ~290KB to ~830KB) that only the Orbital tab needs — code-splitting it
@@ -772,23 +773,26 @@ function OrbitalSidebarPanel({
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────────
-function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, sitesLayerRef, onZoomChange, streetViewMode, onMapClickForStreetView }) {
+function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, sitesLayerRef, onZoomChange, streetViewMode, onMapClickForStreetView, pointPickMode, onMapClickForPointPick }) {
   const divRef = useRef(null);
   // The map-creation effect below runs once ([] deps) — it can't read a
   // prop value that changes later without going stale, so streetViewMode
   // is mirrored into a ref the click handler (registered once, in that
   // same effect) reads from instead. Same pattern as filterRef in
-  // useIntelFeed.js.
+  // useIntelFeed.js. pointPickMode (training-point picking for the ML
+  // classification tools) follows the identical pattern.
   const streetViewModeRef = useRef(streetViewMode);
   useEffect(() => { streetViewModeRef.current = streetViewMode; }, [streetViewMode]);
-  // Crosshair cursor while in Street View mode — a real effect (not
-  // inside the [] map-creation one) since it needs to re-run whenever
-  // streetViewMode itself changes, using the already-created map.
+  const pointPickModeRef = useRef(pointPickMode);
+  useEffect(() => { pointPickModeRef.current = pointPickMode; }, [pointPickMode]);
+  // Crosshair cursor while in Street View or point-pick mode — a real
+  // effect (not inside the [] map-creation one) since it needs to re-run
+  // whenever either prop changes, using the already-created map.
   useEffect(() => {
     if (!mapRef.current) return;
     const el = mapRef.current.getContainer();
-    el.style.cursor = streetViewMode ? 'crosshair' : '';
-  }, [streetViewMode, mapRef]);
+    el.style.cursor = (streetViewMode || pointPickMode) ? 'crosshair' : '';
+  }, [streetViewMode, pointPickMode, mapRef]);
   useEffect(() => {
     if (mapRef.current) return;
     const map = L.map(divRef.current, {
@@ -865,10 +869,15 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     // Street View mode: a click looks up nearby Mapillary coverage instead
     // of the draw tool's normal click-to-place behavior. Only acts when
     // streetViewModeRef.current is true (toggled from the Weather tab),
-    // so it's a no-op the rest of the time.
+    // so it's a no-op the rest of the time. Point-pick mode (adding an ML
+    // training point by clicking, instead of typing lat/lon) follows the
+    // same registered-once/ref-checked pattern, independently.
     map.on('click', (e) => {
       if (streetViewModeRef.current && onMapClickForStreetView) {
         onMapClickForStreetView(e.latlng.lat, e.latlng.lng);
+      }
+      if (pointPickModeRef.current && onMapClickForPointPick) {
+        onMapClickForPointPick(e.latlng.lat, e.latlng.lng);
       }
     });
     mapRef.current = map;
@@ -1317,7 +1326,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
   orbitalSatellites, orbitalSatLoaded, orbitalSatDebug, orbitalAircraftStats, orbitalAircraftValid,
   orbitalSearch, setOrbitalSearch, orbitalFilteredList, orbitalSelected, setOrbitalSelected,
   onShowSpectraOverlay, onClearSpectraOverlay, theme, onToggleTheme,
-  streetViewMode, onToggleStreetView }) {
+  streetViewMode, onToggleStreetView, pointPickActive, onSetPointPickHandler }) {
   const [eIdx, setEIdx] = useState(0);
   const cycleExample = () => { const n=(eIdx+1)%EXAMPLES.length; setEIdx(n); setQueryText(EXAMPLES[n]); };
   const ALL_TABS = [
@@ -1560,7 +1569,8 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
           />
         )}
         {tab === 'Spectra' && (
-          <SpectraPanel apiUrl={apiUrl} drawnAOI={drawnAOI} onShowOverlay={onShowSpectraOverlay} onClearOverlay={onClearSpectraOverlay} />
+          <SpectraPanel apiUrl={apiUrl} drawnAOI={drawnAOI} onShowOverlay={onShowSpectraOverlay} onClearOverlay={onClearSpectraOverlay}
+            pointPickActive={pointPickActive} onSetPointPickHandler={onSetPointPickHandler} />
         )}
       </div>
       <div style={{ flexShrink:0, padding:'10px 14px', borderTop:`1px solid ${S.border}` }}>
@@ -1645,6 +1655,18 @@ export default function App({ tier = 'full', onChangeTier }) {
   const [streetViewImage, setStreetViewImage] = useState(null);
   const [streetViewLoading, setStreetViewLoading] = useState(false);
   const [streetViewNotFoundAt, setStreetViewNotFoundAt] = useState(null);
+
+  // Point-pick mode — lets an ML training-point UI (Spectra's ML Classify,
+  // Agri's Crop Extent) register a callback here and have map clicks fed
+  // to it directly, instead of the user having to type lat/lon by hand.
+  // Holds the callback itself (or null when no picker is active) rather
+  // than a separate boolean, so "is picking active" and "who receives the
+  // click" can never go out of sync with each other.
+  const [pointPickHandler, setPointPickHandler] = useState(null); // (lat, lng) => void, or null
+  const pointPickActive = !!pointPickHandler;
+  const handleMapClickForPointPick = useCallback((lat, lng) => {
+    pointPickHandler?.(lat, lng);
+  }, [pointPickHandler]);
 
   useEffect(() => {
     if (!streetViewNotFoundAt) return;
@@ -2483,6 +2505,7 @@ export default function App({ tier = 'full', onChangeTier }) {
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
       onShowSpectraOverlay={showSpectraOverlay} onClearSpectraOverlay={clearSpectraOverlay}
       streetViewMode={streetViewMode} onToggleStreetView={() => setStreetViewMode(v => !v)}
+      pointPickActive={pointPickActive} onSetPointPickHandler={setPointPickHandler}
       theme={theme} onToggleTheme={toggleTheme}
       satelliteLoadingKey={satelliteLoadingKey} mapZoom={mapZoom}
       orbitalShowSatellites={orbitalShowSatellites} setOrbitalShowSatellites={setOrbitalShowSatellites}
@@ -2517,7 +2540,8 @@ export default function App({ tier = 'full', onChangeTier }) {
 
   const mapEl = (
     <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} sitesLayerRef={sitesLayerRef} onZoomChange={setMapZoom}
-      streetViewMode={streetViewMode} onMapClickForStreetView={handleMapClickForStreetView} />
+      streetViewMode={streetViewMode} onMapClickForStreetView={handleMapClickForStreetView}
+      pointPickMode={pointPickActive} onMapClickForPointPick={handleMapClickForPointPick} />
   );
 
   // Single tree for both layouts — the map element's position/type never changes
@@ -2585,6 +2609,11 @@ export default function App({ tier = 'full', onChangeTier }) {
       {!isMobile && tab === 'Business' && <BusinessIntelBar apiUrl={API_URL} />}
 
       {!isMobile && tab === 'Spectra' && <SpectraIntelBar apiUrl={API_URL} drawnAOI={drawnAOI} />}
+
+      {!isMobile && tab === 'Agri' && (
+        <AgriIntelBar apiUrl={API_URL} drawnAOI={drawnAOI}
+          pointPickActive={pointPickActive} onSetPointPickHandler={setPointPickHandler} />
+      )}
 
       {isMobile && mobilePanel === 'analyze' && (
         <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:S.surface, overflow:'hidden' }}>

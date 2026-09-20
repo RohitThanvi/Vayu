@@ -392,7 +392,7 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
   return null;
 }
 
-export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearOverlay }) {
+export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearOverlay, onSetPointPickHandler }) {
   const [tool, setTool] = useState('spectral_indices');
   const [startDate, setStartDate] = useState(todayMinus(90));
   const [endDate, setEndDate] = useState(todayMinus(0));
@@ -443,6 +443,40 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
     });
     setPtLat(''); setPtLon(''); setPtLabel('');
   };
+
+  // Click-on-map alternative to typing lat/lon: the class label field
+  // stays as-is (still typed once), but each map click adds a point at
+  // the clicked coordinates under whatever label is currently typed —
+  // type a class name, click several points for it, change the name,
+  // click more. addPointFromMapClick is recreated whenever ptLabel
+  // changes so the registered handler (below) is never reading a stale
+  // label, without needing a ref.
+  const addPointFromMapClick = useCallback((lat, lon) => {
+    const label = ptLabel.trim();
+    if (!label) return; // no class typed yet — nothing to label the point with
+    setTrainingSamples(prev => {
+      const existing = prev.find(p => p.class_label.toLowerCase() === label.toLowerCase());
+      const class_id = existing ? existing.class_id : (prev.reduce((max, p) => Math.max(max, p.class_id), 0) + 1);
+      return [...prev, { lat, lon, class_id, class_label: existing ? existing.class_label : label }];
+    });
+  }, [ptLabel]);
+
+  const [pickingPoints, setPickingPoints] = useState(false);
+  // Registers/re-registers addPointFromMapClick with App.jsx's shared
+  // point-pick slot whenever picking is on (so a ptLabel change is
+  // reflected immediately), and always clears it on toggle-off or
+  // unmount (switching tools/tabs) — an orphaned handler would keep
+  // adding points to a tool the user has since left.
+  useEffect(() => {
+    if (!pickingPoints || !onSetPointPickHandler) return;
+    onSetPointPickHandler(() => addPointFromMapClick);
+    return () => onSetPointPickHandler(null);
+  }, [pickingPoints, addPointFromMapClick, onSetPointPickHandler]);
+  // Also stop picking if the user switches away from the ML tool — no
+  // reason to keep the map in crosshair mode for an unrelated tool.
+  useEffect(() => {
+    if (tool !== 'supervised_classification' && pickingPoints) setPickingPoints(false);
+  }, [tool, pickingPoints]);
 
   const removeTrainingPoint = (idx) => {
     setTrainingSamples(prev => prev.filter((_, i) => i !== idx));
@@ -643,16 +677,31 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
         <>
           <Field label="Training points">
             <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.4, marginBottom: 8 }}>
-              Add points inside your AOI, labeling each with the class it belongs to (e.g. "water", "crop", "urban"). Needs at least {MIN_CLASSES} classes with {MIN_SAMPLES_PER_CLASS}+ points each — a share of each class's points is held out to score real accuracy, not just resubstitution.
+              Type a class name below, then click points on the map for it — or type lat/lon directly. Needs at least {MIN_CLASSES} classes with {MIN_SAMPLES_PER_CLASS}+ points each — a share of each class's points is held out to score real accuracy, not just resubstitution.
             </div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
+              <input type="text" placeholder="Class label (e.g. water)" value={ptLabel} onChange={e => setPtLabel(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addTrainingPoint()}
+                style={{ flex: 1, minWidth: 0, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
+              <button onClick={() => setPickingPoints(p => !p)} disabled={!ptLabel.trim() && !pickingPoints} style={{
+                background: pickingPoints ? 'rgba(126,184,212,0.25)' : 'rgba(126,184,212,0.12)',
+                border: `1px solid ${S.accent}`, color: S.accent, fontSize: 10.5, fontFamily: S.mono,
+                padding: '6px 10px', borderRadius: 3, cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap',
+              }}>
+                {pickingPoints ? '● click map…' : '⊕ click map to add'}
+              </button>
+            </div>
+            {pickingPoints && (
+              <div style={{ fontSize: 10.5, color: S.accent, marginBottom: 8 }}>
+                Click anywhere on the map to add a point labeled "{ptLabel.trim() || '…'}". Change the class name above to switch classes, or click the button again to stop.
+              </div>
+            )}
+            <div style={{ fontSize: 10, color: S.text3, marginBottom: 4 }}>...or type coordinates directly:</div>
             <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
               <input type="number" step="any" placeholder="Lat" value={ptLat} onChange={e => setPtLat(e.target.value)}
                 style={{ width: 70, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 6px', borderRadius: 3 }} />
               <input type="number" step="any" placeholder="Lon" value={ptLon} onChange={e => setPtLon(e.target.value)}
                 style={{ width: 70, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 6px', borderRadius: 3 }} />
-              <input type="text" placeholder="Class label" value={ptLabel} onChange={e => setPtLabel(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addTrainingPoint()}
-                style={{ flex: 1, minWidth: 0, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
               <button onClick={addTrainingPoint} disabled={!ptLat || !ptLon || !ptLabel.trim()} style={{
                 background: 'rgba(126,184,212,0.12)', border: `1px solid ${S.accent}`, color: S.accent, fontSize: 10.5,
                 fontFamily: S.mono, padding: '6px 10px', borderRadius: 3, cursor: 'pointer', flexShrink: 0,
