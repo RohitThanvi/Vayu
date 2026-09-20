@@ -63,6 +63,7 @@ const TOOL_META = {
   spectral_indices: { label: 'Spectral Indices', needsDates: true, icon: '≈' },
   terrain: { label: 'Terrain Analysis', needsDates: false, icon: '△' },
   lulc: { label: 'Land Cover', needsDates: false, icon: '▦' },
+  dynamic_world: { label: 'Dynamic World (ML)', needsDates: true, icon: '⬡' },
   snow_cover: { label: 'Snow Cover', needsDates: true, icon: '❄' },
   sar_backscatter: { label: 'SAR Backscatter', needsDates: true, icon: '∿' },
   change_detection: { label: 'Change Detection', needsDates: false, needsTwoPeriods: true, icon: '⇄' },
@@ -213,6 +214,31 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         ))}
         <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="classification" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'lulc'} onActivate={() => setActiveLayerId?.('lulc')} />
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'dynamic_world') {
+    const DW_COLORS = { 0: '#419bdf', 1: '#397d49', 2: '#88b053', 3: '#7a87c6', 4: '#e49635', 5: '#dfc35a', 6: '#c4281b', 7: '#a59b8f', 8: '#b39fe1' };
+    return (
+      <div>
+        <div style={{ fontSize: 10.5, color: S.text3, marginBottom: 10, lineHeight: 1.4 }}>
+          Pretrained, shared model (Google/WRI Dynamic World) — no training points needed, same result for everyone. {result.scenes_used} scene(s) in range.
+        </div>
+        {result.classes.map(c => (
+          <div key={c.code} style={{ marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 2 }}>
+              <span style={{ color: S.text2 }}><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 2, background: DW_COLORS[c.code], marginRight: 6, verticalAlign: 'middle' }} />{c.label}</span>
+              <span style={{ fontFamily: S.mono, color: S.gold }}>{c.pct_of_aoi}%</span>
+            </div>
+            <div style={{ height: 4, background: S.surface2, borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${c.pct_of_aoi}%`, background: DW_COLORS[c.code] }} />
+            </div>
+            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 1 }}>{c.area_km2} km²</div>
+          </div>
+        ))}
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="land cover" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'dynamic_world'} onActivate={() => setActiveLayerId?.('dynamic_world')} />
         <MethodNote text={result.method} />
       </div>
     );

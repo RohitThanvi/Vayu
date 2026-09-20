@@ -1193,6 +1193,89 @@ def compute_supervised_classification(aoi: Dict, start_date: str, end_date: str,
     }
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Dynamic World — Google/WRI's pretrained, global, near-real-time land-cover
+# model (Brown et al. 2022). The complement to compute_supervised_classification
+# above: that tool is for classes only the analyst defines (nothing pretrained
+# could exist for those); this one is for the common, fixed set of categories
+# most people actually want most of the time — instant, zero training points,
+# same result for every user since it's one shared model, not one trained per
+# request.
+# ═════════════════════════════════════════════════════════════════════════════
+
+DYNAMIC_WORLD_CLASSES = {
+    0: "Water", 1: "Trees", 2: "Grass", 3: "Flooded vegetation", 4: "Crops",
+    5: "Shrub & scrub", 6: "Built area", 7: "Bare ground", 8: "Snow & ice",
+}
+
+# Dynamic World's own official label-band colors (dataset catalog page) —
+# using these, not an invented palette, so the map matches what Google's
+# own Dynamic World app and documentation show. Already a dense 0-8
+# sequence matching the class codes directly, unlike WorldCover's
+# 10/20/.../100 codes — no remap needed before visualizing.
+DYNAMIC_WORLD_PALETTE = [
+    "419bdf", "397d49", "88b053", "7a87c6", "e49635", "dfc35a", "c4281b", "a59b8f", "b39fe1",
+]
+
+
+def compute_dynamic_world_classification(aoi: Dict, start_date: str, end_date: str) -> Dict[str, Any]:
+    """Google/WRI Dynamic World (GOOGLE/DYNAMICWORLD/V1) — a pretrained deep
+    learning model run by Google on every cloud-free Sentinel-2 scene
+    globally, near-real-time (Brown, C.F., Brumby, S.P., Guzder-Williams, B.
+    et al. 2022, Sci Data 9, 251, doi:10.1038/s41597-022-01307-4). 10m, 9
+    classes. Unlike compute_supervised_classification, nothing is trained
+    per-request here — every caller gets the same underlying model, just
+    composited over whatever date range they pick.
+
+    Multiple Dynamic World images typically fall in a date range (a new one
+    every 2-5 days per location) — takes the per-pixel MODE (most frequent
+    class) of the "label" band across all of them in range, the aggregation
+    method Google's own Dynamic World tutorial recommends for a
+    multi-temporal composite, rather than picking a single scene."""
+    logger.info("GEE (remote sensing): dynamic_world_classification")
+    region = _polygon_geometry(aoi)
+
+    col = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterBounds(region).filterDate(start_date, end_date)
+    n = col.size().getInfo()
+    if n == 0:
+        raise ValueError(f"No Dynamic World coverage for this AOI between {start_date} and {end_date} — try widening the date range.")
+
+    label_mode = col.select("label").mode().clip(region)
+    area_img = ee.Image.pixelArea().divide(1_000_000).addBands(label_mode)
+    hist = area_img.reduceRegion(
+        reducer=ee.Reducer.sum().group(groupField=1, groupName="class"),
+        geometry=region, scale=10, maxPixels=1e10, bestEffort=True, tileScale=4,
+    ).getInfo()
+
+    groups = hist.get("groups", [])
+    total_km2 = sum(g["sum"] for g in groups) or 1
+    classes = []
+    for g in groups:
+        code = int(g["class"])
+        classes.append({
+            "code": code, "label": DYNAMIC_WORLD_CLASSES.get(code, f"Unknown class {code}"),
+            "area_km2": round(g["sum"], 3), "pct_of_aoi": round(g["sum"] / total_km2 * 100, 2),
+        })
+    classes.sort(key=lambda c: c["area_km2"], reverse=True)
+
+    return {
+        "classes": classes,
+        "total_classified_km2": round(total_km2, 3),
+        "aoi_area_km2": round(_region_area_km2(region), 3),
+        "scenes_used": n,
+        "map_layer": _tile_layer(label_mode, {"min": 0, "max": 8, "palette": DYNAMIC_WORLD_PALETTE}),
+        "download_url": _download_url(label_mode, region, scale=10),
+        "method": (
+            f"Google/WRI Dynamic World V1 (GOOGLE/DYNAMICWORLD/V1), 10m, near-real-time deep-learning "
+            f"land cover, 9 fixed classes (Brown et al. 2022, doi:10.1038/s41597-022-01307-4). Per-pixel "
+            f"mode of the label band across {n} scene(s) between {start_date} and {end_date}. Pretrained "
+            f"and shared — the same model classifies every request, unlike the custom Random Forest tool, "
+            f"which trains fresh per-request on your own points. CC-BY 4.0: produced for the Dynamic World "
+            f"Project by Google in partnership with National Geographic Society and the World Resources Institute."
+        ),
+    }
+
+
 def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
     """Static PNG thumbnail for a Spectra PDF report — reconstructs the
     minimal image for `tool` (same underlying data/visualization as its
@@ -1283,6 +1366,10 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
             dense = trained["classified_image"].remap(ordered_class_ids, list(range(len(ordered_class_ids))))
             palette = CLASS_PALETTE[:len(ordered_class_ids)]
             return _fetch_thumb_bytes(dense, region, {"min": 0, "max": max(len(ordered_class_ids) - 1, 1), "palette": palette})
+        if tool == "dynamic_world":
+            col = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterBounds(region).filterDate(params["start_date"], params["end_date"])
+            label_mode = col.select("label").mode().clip(region)
+            return _fetch_thumb_bytes(label_mode, region, {"min": 0, "max": 8, "palette": DYNAMIC_WORLD_PALETTE})
         return None  # atmospheric_composition, index_time_series (a chart, not a raster)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")
