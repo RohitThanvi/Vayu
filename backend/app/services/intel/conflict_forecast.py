@@ -71,11 +71,30 @@ async def fetch_conflict_forecast(client: httpx.AsyncClient, email: str, passwor
         resp.raise_for_status()
         rows = resp.json().get("data", [])
     except httpx.HTTPStatusError as e:
-        if e.response.status_code == 403:
-            logger.warning(f"ACLED CAST: 403 for country={country!r} — this account's API access likely doesn't include CAST specifically (granted separately from base event-feed access).")
+        # Log the response BODY, not just the bare exception — ACLED's
+        # error responses are usually JSON with a real explanation, and
+        # the previous version was only logging str(e) (just the status
+        # line), which is why a 401 here showed no more detail than "401
+        # Unauthorized" with nothing to actually debug from.
+        body_snippet = e.response.text[:300] if e.response is not None else ""
+        logger.warning(f"ACLED CAST: {e.response.status_code} for country={country!r} — body: {body_snippet}")
+        if e.response.status_code in (401, 403):
+            # Per ACLED's own error-code table (acleddata.com/api-documentation/
+            # elements-acleds-api), 401 = "incorrect auth token" and 403 =
+            # "Access denied" (account isn't in the API access group, or
+            # similar). Both observed here with a token that DOES work for
+            # the main event feed (fetch_acled) — the most likely read is
+            # that CAST specifically isn't enabled for this myACLED
+            # account (ACLED describes CAST as a separately-granted
+            # access), but a bare 401/403 alone can't fully distinguish
+            # that from a token/scope mismatch specific to this endpoint.
+            # Stated as the likely explanation, not a certainty.
             return {"status": "no_cast_access",
-                    "note": "This ACLED account can read the event feed but not the CAST forecast endpoint — "
-                            "CAST access is granted separately by ACLED's Access Team."}
+                    "note": f"ACLED rejected this request to the CAST endpoint ({e.response.status_code}), "
+                            f"even though the same account's credentials work for the main event feed. Most "
+                            f"likely explanation: CAST access isn't enabled for this myACLED account — ACLED "
+                            f"grants it separately from base API access, via their Access Team. Worth checking "
+                            f"your myACLED dashboard, or asking ACLED support to confirm CAST is enabled."}
         logger.error(f"ACLED CAST fetch error: {e}")
         return {"status": "error", "note": str(e)}
     except Exception as e:
