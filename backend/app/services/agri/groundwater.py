@@ -3,11 +3,25 @@ groundwater.py — groundwater trend overlay, meant to be layered against the
 risk score's moisture/drought signal (surface stress can be a groundwater-
 depletion story, not just a rainfall one — worth surfacing together).
 
-Uses GRACE/GRACE-FO terrestrial water storage anomaly via GEE, which is
-coarse (~300km resolution) but global and free — good enough for a
-regional trend line, not for parcel-level precision. Documented as such
-here rather than overstating precision (same "no false precision" principle
-as the risk score's confidence field).
+Uses the GRACE/GRACE-FO Mascon terrestrial water storage anomaly via GEE
+(NASA/GRACE/MASS_GRIDS_V04/MASCON, Watkins et al. 2015), coarse (~300km
+native mascon resolution) but global and free — good enough for a regional
+trend line, not for parcel-level precision. Documented as such here rather
+than overstating precision (same "no false precision" principle as the risk
+score's confidence field).
+
+Uses the MASCON product, NOT the older LAND product (NASA/GRACE/MASS_GRIDS_
+V04/LAND) — the LAND product's GEE asset stops at 2017-01-07 (it was never
+updated with GRACE-FO data after the original GRACE mission ended), so
+querying it for any recent date range returns zero images regardless of
+AOI — that was silently returning "no_data" for every region, everywhere,
+for years, misread as a coverage/resolution limitation when it was actually
+querying a frozen, 9-years-stale collection. MASCON is current through
+2024-09-30 as of this writing (checked against the GEE catalog page
+directly, not assumed) — still not fully current to "now", so very recent
+years_back windows will have a shorter effective series than requested,
+but that shows up honestly as a smaller points_used count, not a hard
+failure.
 """
 
 import logging
@@ -20,6 +34,10 @@ from ..gee_client import _polygon_geometry
 
 logger = logging.getLogger(__name__)
 
+# GEE catalog page confirms this collection's actual coverage; update this
+# if NASA/JPL publish a newer end date and the note below should change too.
+_MASCON_DATA_ENDS = "2024-09-30"
+
 
 def compute_groundwater_trend(aoi: Dict[str, Any], years_back: int = 5) -> Dict[str, Any]:
     region = _polygon_geometry(aoi)
@@ -27,18 +45,21 @@ def compute_groundwater_trend(aoi: Dict[str, Any], years_back: int = 5) -> Dict[
     start_dt = end_dt - timedelta(days=365 * years_back)
 
     col = (
-        ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/LAND")
+        ee.ImageCollection("NASA/GRACE/MASS_GRIDS_V04/MASCON")
         .filterBounds(region)
         .filterDate(start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d"))
-        .select("lwe_thickness_csr")  # liquid water equivalent thickness anomaly, cm
+        .select("lwe_thickness")  # liquid water equivalent thickness anomaly, cm
     )
 
     size = col.size().getInfo()
     if size == 0:
         return {
             "status": "no_data",
-            "note": "GRACE coverage unavailable for this AOI/period (coarse ~300km grid; small or "
-                    "coastal AOIs sometimes fall outside a usable footprint).",
+            "note": f"No GRACE/GRACE-FO Mascon readings for this AOI/period. The dataset itself only "
+                    f"runs through {_MASCON_DATA_ENDS} — a years_back window entirely after that returns "
+                    f"nothing; widen years_back to reach back before it. Coarse ~300km native resolution "
+                    f"means a genuinely tiny or coastal AOI can also fall outside a usable footprint even "
+                    f"within the covered dates.",
         }
 
     # Extract the time series with ONE network round-trip via getRegion(),
@@ -67,7 +88,7 @@ def compute_groundwater_trend(aoi: Dict[str, Any], years_back: int = 5) -> Dict[
         header = rows[0]
         try:
             time_idx = header.index("time")
-            val_idx = header.index("lwe_thickness_csr")
+            val_idx = header.index("lwe_thickness")
         except ValueError:
             rows = None  # unexpected header shape — trigger the fallback below
         else:
@@ -85,7 +106,7 @@ def compute_groundwater_trend(aoi: Dict[str, Any], years_back: int = 5) -> Dict[
             img = ee.Image(img_list.get(i))
             date = img.date().format("YYYY-MM-dd").getInfo()
             val = img.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=100000, maxPixels=1e9).getInfo()
-            lwe = val.get("lwe_thickness_csr")
+            lwe = val.get("lwe_thickness")
             if lwe is not None:
                 series.append((date, lwe))
 
@@ -118,6 +139,6 @@ def compute_groundwater_trend(aoi: Dict[str, Any], years_back: int = 5) -> Dict[
         "latest_date": series[-1][0],
         "points_used": n,
         "series": [{"date": d, "value": round(v, 3)} for d, v in series],  # for trend charting (Agri Analysis tab)
-        "resolution_note": "GRACE/GRACE-FO ~300km grid — regional trend only, not parcel-level precision.",
-        "source": "NASA/GRACE/MASS_GRIDS_V04/LAND (lwe_thickness_csr)",
+        "resolution_note": "GRACE/GRACE-FO Mascon (Watkins et al. 2015) — ~300km native resolution, regional trend only, not parcel-level precision.",
+        "source": "NASA/GRACE/MASS_GRIDS_V04/MASCON (lwe_thickness)",
     }

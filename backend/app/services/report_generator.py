@@ -1503,7 +1503,7 @@ CITATIONS_BY_SOURCE = {
     "smap": "Entekhabi, D., Yueh, S., O'Neill, P.E. et al. NASA Soil Moisture Active Passive (SMAP) Mission, SPL4SMGP Level-4 Surface and Root Zone Soil Moisture. NASA Jet Propulsion Laboratory / Goddard Space Flight Center.",
     "srtm": "Farr, T.G., Rosen, P.A., Caro, E. et al. (2007). The Shuttle Radar Topography Mission. Reviews of Geophysics 45, RG2004. NASA/USGS/JPL.",
     "smap10km_deprecated": "Colliander, A. et al., NASA/USDA SMAP10KM downscaled soil moisture (legacy product, deprecated by data provider).",
-    "grace": "Landerer, F.W. et al. NASA/German Research Centre for Geosciences (GFZ) GRACE and GRACE-FO Mascon products, terrestrial water storage anomaly. Available via Google Earth Engine: NASA/GRACE/MASS_GRIDS_V04/LAND.",
+    "grace": "Watkins, M.M. et al. 2015 (doi:10.1002/2014JB011547). NASA/JPL GRACE and GRACE-FO Mascon terrestrial water storage anomaly. Available via Google Earth Engine: NASA/GRACE/MASS_GRIDS_V04/MASCON.",
     "chirps": "Funk, C., Peterson, P., Landsfeld, M. et al. (2015). The climate hazards infrared precipitation with stations (CHIRPS) record. Scientific Data 2, 150066. UC Santa Barbara Climate Hazards Group. Available via Google Earth Engine: UCSB-CHG/CHIRPS/DAILY.",
 }
 
