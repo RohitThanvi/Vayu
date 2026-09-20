@@ -77,6 +77,10 @@ TOOLS = {
         "label": "Supervised Classification (ML)", "needs_dates": True, "needs_training_samples": True,
         "description": "Random Forest classification trained on your own training points, into your own classes — Sentinel-2, 10m.",
     },
+    "dynamic_world": {
+        "label": "Dynamic World (ML land cover)", "needs_dates": True,
+        "description": "Google/WRI pretrained near-real-time land cover — 9 fixed classes, no training needed, shared model — 10m.",
+    },
 }
 
 
@@ -150,6 +154,10 @@ def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
                 req.aoi_geojson, req.start_date, req.end_date, req.training_samples,
                 req.num_trees or rs.DEFAULT_NUM_TREES,
             )
+        elif req.tool == "dynamic_world":
+            if not req.start_date or not req.end_date:
+                raise ValueError("dynamic_world requires start_date and end_date.")
+            result = rs.compute_dynamic_world_classification(req.aoi_geojson, req.start_date, req.end_date)
         else:
             job_store.update(request_id, {"status": "failed", "error": f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}"})
             return

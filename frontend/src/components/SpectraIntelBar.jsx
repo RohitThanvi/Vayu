@@ -46,6 +46,7 @@ const REFERENCE_DATA = [
   { tool: 'Burn Severity', dataset: 'Sentinel-2 SR (dNBR)', resolution: '20m', note: 'USGS FIREMON standard (Key & Benson 2006). NBR = (B8-B12)/(B8+B12).' },
   { tool: 'Atmospheric Composition', dataset: 'Sentinel-5P / TROPOMI OFFL L3', resolution: '~1.1km', note: 'NO2, SO2, CO column density + aerosol index. Column densities, not ground-level concentrations.' },
   { tool: 'ML Classify', dataset: 'Sentinel-2 SR + user training points', resolution: '10m', note: 'Random Forest (ee.Classifier.smileRandomForest, Breiman 2001), trained per-request on points you supply. Reports held-out test accuracy separately from optimistic training accuracy.' },
+  { tool: 'Dynamic World', dataset: 'GOOGLE/DYNAMICWORLD/V1', resolution: '10m, near-real-time', note: 'Pretrained deep-learning land cover, 9 fixed classes, one shared model for every request — no training points. Brown et al. 2022, Sci Data 9, 251.' },
 ];
 
 function useJobPoll(apiUrl) {
