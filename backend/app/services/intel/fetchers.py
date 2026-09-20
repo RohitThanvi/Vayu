@@ -487,19 +487,40 @@ async def fetch_acled(
     until = datetime.utcnow().strftime("%Y-%m-%d")
     headers = {"Authorization": f"Bearer {token}"}
 
+    # BETWEEN takes ONE value with the two dates pipe-separated
+    # ("event_date=2026-09-01|2026-09-20"), per ACLED's own API docs
+    # (acleddata.com/api-documentation/elements-acleds-api) — NOT two
+    # separate params. The previous version sent event_date=<since> plus
+    # a made-up event_date_end=<until> param that ACLED's API doesn't
+    # recognize at all, so the date filter was silently not being applied
+    # as intended — symptoms matched exactly (a handful of old, seemingly
+    # random-date results instead of a clean last-N-days window).
+    # with_total=true asks the API to report how many events actually
+    # matched, logged below so a future truncation (matched > limit) is
+    # visible instead of silently invisible.
+    date_range = f"{since}|{until}"
     full_params = {
-        "event_date": since,
+        "event_date": date_range,
         "event_date_where": "BETWEEN",
-        "event_date_end": until,
-        "fields": "event_date|event_type|sub_event_type|actor1|location|latitude|longitude|fatalities|notes",
+        # disorder_type (Political violence / Political violence targeting
+        # civilians / Demonstrations / Strategic developments) and
+        # civilian_targeting weren't being requested at all before — both
+        # are free (same request, no extra call) and meaningfully sharpen
+        # severity/categorization below.
+        "fields": "event_date|event_type|sub_event_type|disorder_type|civilian_targeting|actor1|location|latitude|longitude|fatalities|notes",
         "limit": 100,
+        "with_total": "true",
     }
 
     rows = None
     try:
         resp = await client.get(ACLED_READ_URL, params=full_params, headers=headers, timeout=15)
         resp.raise_for_status()
-        rows = resp.json().get("data", [])
+        body = resp.json()
+        rows = body.get("data", [])
+        total = body.get("total_count")
+        if total is not None and total > len(rows):
+            logger.info(f"ACLED: {total} events matched this window, returned {len(rows)} (limit=100) — increase limit or page if this AOI/period needs the rest.")
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 403:
             # "Open"/public-tier myACLED accounts (common with personal Gmail
@@ -515,9 +536,8 @@ async def fetch_acled(
             )
             try:
                 bare_params = {
-                    "event_date": since,
+                    "event_date": date_range,
                     "event_date_where": "BETWEEN",
-                    "event_date_end": until,
                     "limit": 100,
                 }
                 resp2 = await client.get(ACLED_READ_URL, params=bare_params, headers=headers, timeout=15)
@@ -553,22 +573,36 @@ async def fetch_acled(
             lon = float(row.get("longitude", 0))
             fatalities = int(row.get("fatalities", 0) or 0)
             event_type = row.get("event_type", "Unknown")
+            disorder_type = row.get("disorder_type", "")
+            civilian_targeting = row.get("civilian_targeting", "") or ""
             location = row.get("location", "")
             actor = row.get("actor1", "")
             notes = (row.get("notes") or "")[:200]
             date = row.get("event_date", "")
 
-            severity = "critical" if fatalities > 10 else "warn" if fatalities > 0 else "info"
+            # Civilian targeting is itself a severity signal ACLED codes
+            # independently of fatalities (an event can target civilians
+            # with 0 recorded deaths — abduction, property destruction,
+            # forced displacement) — bump it out of "info" even when the
+            # fatality count alone wouldn't, rather than only reading
+            # severity off the body count.
+            if fatalities > 10:
+                severity = "critical"
+            elif fatalities > 0 or civilian_targeting:
+                severity = "warn"
+            else:
+                severity = "info"
             events.append(_event(
                 source="ACLED",
                 tag=f"CONFLICT · {event_type.upper()}",
                 title=f"{event_type} — {location}",
-                detail=f"{actor}. {notes} Fatalities: {fatalities}. Date: {date}.",
+                detail=f"{actor}. {notes} Fatalities: {fatalities}."
+                       f"{' Civilians targeted.' if civilian_targeting else ''} Date: {date}.",
                 lat=lat,
                 lon=lon,
                 severity=severity,
-                meta={"fatalities": fatalities, "event_type": event_type,
-                      "actor": actor, "location": location, "date": date},
+                meta={"fatalities": fatalities, "event_type": event_type, "disorder_type": disorder_type,
+                      "civilian_targeting": bool(civilian_targeting), "actor": actor, "location": location, "date": date},
             ))
         except (ValueError, KeyError, TypeError):
             continue
