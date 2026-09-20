@@ -117,6 +117,68 @@ function EdgarExposureLookup({ apiUrl }) {
   );
 }
 
+function ConflictForecastLookup({ apiUrl }) {
+  const [country, setCountry] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const lookup = () => {
+    if (!country.trim()) return;
+    setLoading(true);
+    setResult(null);
+    fetch(`${apiUrl}/api/v1/intel/conflict-forecast?country=${encodeURIComponent(country.trim())}`)
+      .then(r => r.json())
+      .then(setResult)
+      .catch(() => setResult({ status: 'error', note: 'Request failed.' }))
+      .finally(() => setLoading(false));
+  };
+
+  const monthLabel = m => new Date(m.year, m.month - 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+  const allMonths = result?.status === 'ok' ? [...(result.recent_observed_months || []), ...(result.forecast_months || [])] : [];
+  const maxVal = Math.max(1, ...allMonths.map(m => m.total_observed ?? m.total_forecast ?? 0));
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 5, marginBottom: 8 }}>
+        <input value={country} onChange={e => setCountry(e.target.value)} onKeyDown={e => e.key === 'Enter' && lookup()}
+          placeholder="Country (e.g. Yemen)"
+          style={{ flex: 1, minWidth: 0, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '5px 8px', borderRadius: 3 }} />
+        <button onClick={lookup} disabled={loading || !country.trim()}
+          style={{ background: 'rgba(126,184,212,0.12)', border: `1px solid ${S.accent}`, color: S.accent, fontSize: 10.5, fontFamily: S.mono, padding: '5px 10px', borderRadius: 3, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: 0.5, flexShrink: 0 }}>
+          {loading ? '...' : 'Check'}
+        </button>
+      </div>
+      {result && result.status !== 'ok' && <Empty>{result.note || 'No forecast available.'}</Empty>}
+      {result?.status === 'ok' && (
+        <div>
+          {result.forecast_trend && (
+            <div style={{ fontSize: 12, fontFamily: S.mono, marginBottom: 8, textTransform: 'uppercase', color: result.forecast_trend === 'rising' ? '#ff8080' : result.forecast_trend === 'declining' ? '#7fd48a' : S.text2 }}>
+              Forecast trend: {result.forecast_trend}
+            </div>
+          )}
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 70, marginBottom: 4 }}>
+            {allMonths.map((m, i) => {
+              const isForecast = m.total_observed == null;
+              const v = m.total_observed ?? m.total_forecast ?? 0;
+              return (
+                <div key={i} title={`${monthLabel(m)}: ${v}${isForecast ? ' (forecast)' : ' (observed)'}`}
+                  style={{ flex: 1, height: `${Math.max(4, (v / maxVal) * 100)}%`, background: isForecast ? 'rgba(201,168,106,0.6)' : S.accent, borderRadius: '2px 2px 0 0' }} />
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: S.text3, fontFamily: S.mono }}>
+            <span>{allMonths[0] ? monthLabel(allMonths[0]) : ''}</span>
+            <span>{allMonths.length > 1 ? monthLabel(allMonths[allMonths.length - 1]) : ''}</span>
+          </div>
+          <div style={{ fontSize: 9.5, color: S.text3, marginTop: 6 }}>
+            <span style={{ color: S.accent }}>■</span> observed &nbsp; <span style={{ color: '#c9a86a' }}>■</span> forecast (indicative, not a certainty)
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const COMMODITY_OPTIONS = [
   ['CL=F', 'Crude Oil (WTI)'], ['BZ=F', 'Crude Oil (Brent)'], ['NG=F', 'Natural Gas'],
   ['HG=F', 'Copper'], ['GC=F', 'Gold'], ['ZW=F', 'Wheat'], ['ZC=F', 'Corn'],
@@ -543,6 +605,10 @@ export default function BusinessIntelBar({ apiUrl }) {
 
           <Column title="SEC exposure (EDGAR)" width={250}>
             <EdgarExposureLookup apiUrl={apiUrl} />
+          </Column>
+
+          <Column title="Conflict forecast (ACLED CAST)" width={250}>
+            <ConflictForecastLookup apiUrl={apiUrl} />
           </Column>
         </div>
       )}
