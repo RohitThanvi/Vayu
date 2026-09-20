@@ -502,12 +502,15 @@ async def fetch_acled(
     full_params = {
         "event_date": date_range,
         "event_date_where": "BETWEEN",
-        # disorder_type (Political violence / Political violence targeting
-        # civilians / Demonstrations / Strategic developments) and
-        # civilian_targeting weren't being requested at all before — both
-        # are free (same request, no extra call) and meaningfully sharpen
-        # severity/categorization below.
-        "fields": "event_date|event_type|sub_event_type|disorder_type|civilian_targeting|actor1|location|latitude|longitude|fatalities|notes",
+        # disorder_type, civilian_targeting, actor2/inter1/inter2 (actor
+        # TYPE — State Forces / Rebel Group / Militia / Political Party /
+        # Civilians / External-Other Forces, text-based since ACLED's
+        # 26 Sep 2024 API change, not numeric codes needing a lookup
+        # table), and geo_precision (1=exact site, 2=nearest town,
+        # 3=regional estimate — surfaced so a low-precision marker isn't
+        # shown with false confidence) all weren't being requested before
+        # — every one of these is free in the same request, no extra call.
+        "fields": "event_date|event_type|sub_event_type|disorder_type|civilian_targeting|actor1|inter1|actor2|inter2|location|geo_precision|latitude|longitude|fatalities|notes|tags",
         "limit": 100,
         "with_total": "true",
     }
@@ -577,6 +580,11 @@ async def fetch_acled(
             civilian_targeting = row.get("civilian_targeting", "") or ""
             location = row.get("location", "")
             actor = row.get("actor1", "")
+            actor_type = row.get("inter1", "")  # State Forces / Rebel Group / Militia / etc. — text since ACLED's Sep 2024 change
+            actor2 = row.get("actor2", "") or ""
+            actor2_type = row.get("inter2", "") or ""
+            geo_precision = row.get("geo_precision")
+            tags = row.get("tags", "") or ""
             notes = (row.get("notes") or "")[:200]
             date = row.get("event_date", "")
 
@@ -596,13 +604,18 @@ async def fetch_acled(
                 source="ACLED",
                 tag=f"CONFLICT · {event_type.upper()}",
                 title=f"{event_type} — {location}",
-                detail=f"{actor}. {notes} Fatalities: {fatalities}."
-                       f"{' Civilians targeted.' if civilian_targeting else ''} Date: {date}.",
+                detail=f"{actor}{f' ({actor_type})' if actor_type else ''}"
+                       f"{f' vs {actor2} ({actor2_type})' if actor2 else ''}. {notes} "
+                       f"Fatalities: {fatalities}.{' Civilians targeted.' if civilian_targeting else ''} Date: {date}.",
                 lat=lat,
                 lon=lon,
                 severity=severity,
                 meta={"fatalities": fatalities, "event_type": event_type, "disorder_type": disorder_type,
-                      "civilian_targeting": bool(civilian_targeting), "actor": actor, "location": location, "date": date},
+                      "civilian_targeting": bool(civilian_targeting), "actor": actor, "actor_type": actor_type,
+                      "actor2": actor2 or None, "actor2_type": actor2_type or None, "location": location,
+                      # 1=exact site, 2=nearest town, 3=regional estimate — per ACLED's own geo_precision coding
+                      "location_precision": {1: "exact", 2: "nearest town", 3: "regional estimate"}.get(geo_precision, geo_precision),
+                      "tags": tags or None, "date": date},
             ))
         except (ValueError, KeyError, TypeError):
             continue

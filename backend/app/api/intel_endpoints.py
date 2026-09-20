@@ -41,6 +41,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, HTTPException
 
 from ..services.intel.store import intel_store
@@ -62,8 +63,10 @@ from ..services.intel import economic_blocs
 from ..services.intel import timeseries_store
 from ..services.intel import business_risk
 from ..services.intel import chokepoint_market_correlation
+from ..services.intel import conflict_forecast
 from ..services.intel import strategic_sites
 from ..services.weather.wind_field import wind_field_store
+from ..core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -511,6 +514,22 @@ async def get_chokepoint_market_correlation_endpoint(chokepoint: str, days: int 
     if chokepoint not in CHOKEPOINTS:
         raise HTTPException(status_code=404, detail=f"Unknown chokepoint. Valid: {list(CHOKEPOINTS)}")
     return await chokepoint_market_correlation.correlate_chokepoint_with_markets(chokepoint, days)
+
+
+@router.get("/conflict-forecast", summary="ACLED CAST — monthly political-violence forecast for a country, up to 6 months ahead")
+async def get_conflict_forecast_endpoint(country: str):
+    """See services/intel/conflict_forecast.py — CAST is a country-level
+    forecast product, distinct from the point-event ACLED feed the live
+    map already shows. Requires ACLED credentials (same account as the
+    event feed) AND that account having CAST access specifically, which
+    ACLED grants separately — see the module docstring."""
+    async with httpx.AsyncClient(timeout=20) as client:
+        result = await conflict_forecast.fetch_conflict_forecast(
+            client, getattr(settings, "ACLED_EMAIL", ""), getattr(settings, "ACLED_PASSWORD", ""), country,
+        )
+    if result["status"] == "no_credentials":
+        raise HTTPException(status_code=503, detail=result["note"])
+    return result
 
 
 # ── Economic blocs (G7/G20/BRICS/ASEAN) — built on data already integrated above ──
