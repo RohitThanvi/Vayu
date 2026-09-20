@@ -45,6 +45,7 @@ const REFERENCE_DATA = [
   { tool: 'Change Detection', dataset: 'Sentinel-2 SR', resolution: '20m', note: 'Any of the 7 indices, diffed between two independently-composited periods.' },
   { tool: 'Burn Severity', dataset: 'Sentinel-2 SR (dNBR)', resolution: '20m', note: 'USGS FIREMON standard (Key & Benson 2006). NBR = (B8-B12)/(B8+B12).' },
   { tool: 'Atmospheric Composition', dataset: 'Sentinel-5P / TROPOMI OFFL L3', resolution: '~1.1km', note: 'NO2, SO2, CO column density + aerosol index. Column densities, not ground-level concentrations.' },
+  { tool: 'ML Classify', dataset: 'Sentinel-2 SR + user training points', resolution: '10m', note: 'Random Forest (ee.Classifier.smileRandomForest, Breiman 2001), trained per-request on points you supply. Reports held-out test accuracy separately from optimistic training accuracy.' },
 ];
 
 function useJobPoll(apiUrl) {
