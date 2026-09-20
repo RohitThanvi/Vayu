@@ -31,6 +31,8 @@ from .gee_client import (
     _cap_end_date, _mask_s2_clouds, _region_area_km2, _calc_area_km2,
 )
 from .satellite_imagery import _fetch_thumb_bytes
+from . import trend_stats
+from .trend_stats import mann_kendall_test
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +177,34 @@ def _s2_composite(region: ee.Geometry, start: str, end: str):
     return col.median(), count
 
 
+def _scene_provenance(region: ee.Geometry, start: str, end: str,
+                       collection_id: str = "COPERNICUS/S2_SR_HARMONIZED",
+                       cloud_prop: str = "CLOUDY_PIXEL_PERCENTAGE") -> list:
+    """The actual scene IDs/dates/cloud% that fed a composite for this
+    region+date range — reproducibility metadata a remote sensing
+    scientist expects (exactly which acquisitions went into this
+    composite), not just an aggregate scene count. A second, independent
+    query against the same collection/region/date filter _s2_composite
+    already used, rather than changing _s2_composite's own return value
+    (several existing call sites already depend on its current two-value
+    return) — purely additive, doesn't touch any working composite logic."""
+    try:
+        col = ee.ImageCollection(collection_id).filterBounds(region).filterDate(ee.Date(start), _cap_end_date(end))
+
+        def _meta(img):
+            return ee.Feature(None, {
+                "id": img.get("system:index"),
+                "date": img.date().format("YYYY-MM-dd"),
+                "cloud_pct": img.get(cloud_prop),
+            })
+
+        feats = ee.FeatureCollection(col.map(_meta)).sort("date").getInfo().get("features", [])
+        return [f["properties"] for f in feats]
+    except Exception as e:
+        logger.warning(f"_scene_provenance failed for {start}-{end}: {type(e).__name__}: {e}")
+        return []
+
+
 def compute_spectral_indices(aoi: Dict, start_date: str, end_date: str, indices: list = None) -> Dict[str, Any]:
     """Computes one or more spectral indices (see INDEX_DEFINITIONS) as
     AOI-mean values from a cloud-masked Sentinel-2 SR median composite.
@@ -225,6 +255,7 @@ def compute_spectral_indices(aoi: Dict, start_date: str, end_date: str, indices:
         "scene_count": scene_count,
         "valid_pixel_fraction": valid_pixel_fraction,
         "aoi_area_km2": round(_region_area_km2(region), 3),
+        "scene_provenance": _scene_provenance(region, start_date, end_date),
     }
 
 
@@ -444,6 +475,7 @@ def compute_snow_cover(aoi: Dict, start_date: str, end_date: str) -> Dict[str, A
         "download_url": _download_url(ndsi, region, scale=20),
         "method": f"NDSI = (Green-SWIR1)/(Green+SWIR1) via Sentinel-2 SR (B3/B11), cloud-masked median composite of {scene_count} scene(s), 20m resolution. Classified as snow where NDSI > {NDSI_SNOW_THRESHOLD} (Hall et al. 1995 threshold).",
         "scene_count": scene_count,
+        "scene_provenance": _scene_provenance(region, start_date, end_date),
     }
 
 
@@ -576,8 +608,8 @@ def compute_change_detection(aoi: Dict, index_id: str, period1_start: str, perio
     d = INDEX_DEFINITIONS[index_id]
     return {
         "index": index_id, "label": d["label"],
-        "period1": {"start": period1_start, "end": period1_end, "mean": round(mean1, 4), "std_dev": round(stats1.get(f"{band_name}_stdDev", 0) or 0, 4), "scene_count": count1},
-        "period2": {"start": period2_start, "end": period2_end, "mean": round(mean2, 4), "std_dev": round(stats2.get(f"{band_name}_stdDev", 0) or 0, 4), "scene_count": count2},
+        "period1": {"start": period1_start, "end": period1_end, "mean": round(mean1, 4), "std_dev": round(stats1.get(f"{band_name}_stdDev", 0) or 0, 4), "scene_count": count1, "scene_provenance": _scene_provenance(region, period1_start, period1_end)},
+        "period2": {"start": period2_start, "end": period2_end, "mean": round(mean2, 4), "std_dev": round(stats2.get(f"{band_name}_stdDev", 0) or 0, 4), "scene_count": count2, "scene_provenance": _scene_provenance(region, period2_start, period2_end)},
         "delta": round(delta, 4),
         "pct_change": round(pct_change, 2) if pct_change is not None else None,
         # Diverging red-white-green: negative delta (index decreased) reads
@@ -621,7 +653,20 @@ def compute_burn_severity(aoi: Dict, pre_start: str, pre_end: str, post_start: s
     the standard USGS FIREMON classification (Key & Benson 2006).
     NBR = (NIR - SWIR2) / (NIR + SWIR2) = (B8 - B12) / (B8 + B12);
     dNBR = NBR_pre - NBR_post (a positive dNBR indicates burn severity,
-    consistent with USGS convention)."""
+    consistent with USGS convention).
+
+    Also reports RBR (Relativized Burn Ratio, Parks et al. 2014):
+    RBR = dNBR / (NBR_pre + 1.001). RBR was proposed specifically because
+    dNBR's severity reading is biased by how much vegetation was present
+    BEFORE the fire — the same dNBR value means something different in a
+    dense forest than in sparse scrub. Parks et al. found RBR agrees
+    better with field-measured burn severity (composite burn index) than
+    dNBR across 18 fires. Reported alongside dNBR, not as a replacement
+    for it, since RBR doesn't have a single universal severity-class
+    threshold table the way dNBR's USGS FIREMON breakpoints do (Parks et
+    al. calibrate RBR thresholds per study) — the dNBR classes below are
+    applied to RBR too ONLY for direct side-by-side comparison, not
+    because they're RBR's own literature-validated cutoffs."""
     logger.info(f"GEE (remote sensing): burn_severity pre={pre_start}->{pre_end} post={post_start}->{post_end}")
     region = _polygon_geometry(aoi)
     pre_composite, pre_count = _s2_composite(region, pre_start, pre_end)
@@ -633,14 +678,22 @@ def compute_burn_severity(aoi: Dict, pre_start: str, pre_end: str, post_start: s
     nbr_pre = _nbr(pre_composite)
     nbr_post = _nbr(post_composite)
     dnbr = nbr_pre.subtract(nbr_post).rename("dNBR")
+    # RBR = dNBR / (NBR_pre + 1.001) — the +1.001 offset (not 1.0) is
+    # Parks et al.'s own choice, specifically to guarantee the denominator
+    # never reaches exactly zero (they tested smaller offsets and found
+    # they degraded agreement with field data), not a rounding artifact.
+    rbr = dnbr.divide(nbr_pre.add(1.001)).rename("RBR")
 
     dnbr_stats = dnbr.reduceRegion(
         reducer=ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True),
         geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
     ).getInfo()
+    rbr_stats = rbr.reduceRegion(
+        reducer=ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True),
+        geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
 
     # Area breakdown by severity class
-    area_km2 = ee.Image.pixelArea().divide(1_000_000)
     class_areas = {}
     for lo, hi, label in DNBR_SEVERITY_CLASSES:
         mask = dnbr.gte(lo).And(dnbr.lt(hi))
@@ -648,15 +701,28 @@ def compute_burn_severity(aoi: Dict, pre_start: str, pre_end: str, post_start: s
         if km2 > 0:
             class_areas[label] = round(km2, 3)
 
+    dnbr_mean = dnbr_stats.get("dNBR_mean", 0) or 0
+    rbr_mean = rbr_stats.get("RBR_mean", 0) or 0
+    dnbr_class = _classify_dnbr(dnbr_mean)
+    rbr_class = _classify_dnbr(rbr_mean)  # dNBR's own thresholds applied to RBR for direct comparison only — see docstring
+
     return {
-        "dnbr_mean": round(dnbr_stats.get("dNBR_mean", 0) or 0, 4),
+        "dnbr_mean": round(dnbr_mean, 4),
         "dnbr_min": round(dnbr_stats.get("dNBR_min", 0) or 0, 4),
         "dnbr_max": round(dnbr_stats.get("dNBR_max", 0) or 0, 4),
         "dnbr_std_dev": round(dnbr_stats.get("dNBR_stdDev", 0) or 0, 4),
-        "overall_classification": _classify_dnbr(dnbr_stats.get("dNBR_mean", 0) or 0),
+        "overall_classification": dnbr_class,
+        "rbr_mean": round(rbr_mean, 4),
+        "rbr_min": round(rbr_stats.get("RBR_min", 0) or 0, 4),
+        "rbr_max": round(rbr_stats.get("RBR_max", 0) or 0, 4),
+        "rbr_std_dev": round(rbr_stats.get("RBR_stdDev", 0) or 0, 4),
+        "rbr_classification": rbr_class,
+        "dnbr_rbr_agree": dnbr_class == rbr_class,
         "area_by_severity_km2": class_areas,
         "aoi_area_km2": round(_region_area_km2(region), 3),
         "pre_fire_scenes": pre_count, "post_fire_scenes": post_count,
+        "pre_fire_scene_provenance": _scene_provenance(region, pre_start, pre_end),
+        "post_fire_scene_provenance": _scene_provenance(region, post_start, post_end),
         # USGS FIREMON's own conventional severity color ramp (blue-green
         # regrowth through yellow/orange/red severity) — same breakpoints
         # as DNBR_SEVERITY_CLASSES above, so the map and the tabulated
@@ -665,12 +731,20 @@ def compute_burn_severity(aoi: Dict, pre_start: str, pre_end: str, post_start: s
             "min": -0.25, "max": 0.66,
             "palette": ["#1a9850", "#66bd63", "#ffffbf", "#fdae61", "#f46d43", "#a50026"],
         }),
+        "rbr_map_layer": _tile_layer(rbr, {
+            "min": -0.25, "max": 0.66,
+            "palette": ["#1a9850", "#66bd63", "#ffffbf", "#fdae61", "#f46d43", "#a50026"],
+        }),
         "download_url": _download_url(dnbr, region, scale=20),
+        "rbr_download_url": _download_url(rbr, region, scale=20),
         "method": (
             "dNBR (Key & Benson 2006, USGS FIREMON standard) = NBR_pre - NBR_post, where NBR = (B8-B12)/(B8+B12) "
             "on cloud-masked Sentinel-2 SR composites, 20m. Severity classes are the standard USGS breakpoints, "
-            "not a custom threshold. Requires the pre-fire and post-fire periods to be specified correctly by the "
-            "caller — this function has no way to verify a fire actually occurred in the given window."
+            "not a custom threshold. RBR (Parks, Dillon & Miller 2014, doi:10.3390/rs6031827) = dNBR / (NBR_pre "
+            "+ 1.001), corrects for pre-fire vegetation density bias in dNBR — reported alongside it, classified "
+            "with the SAME dNBR breakpoints purely for side-by-side comparison (RBR's own literature thresholds "
+            "are study-calibrated, not universal). Requires the pre-fire and post-fire periods to be specified "
+            "correctly by the caller — this function has no way to verify a fire actually occurred in the given window."
         ),
     }
 
@@ -798,9 +872,19 @@ def compute_index_time_series(aoi: Dict, index_id: str, start_date: str, end_dat
             points.append({"date": p_start, "value": None, "scene_count": 0})
 
     d = INDEX_DEFINITIONS[index_id]
+
+    # Statistical trend significance (Mann-Kendall + Sen's slope) on the
+    # non-gap points — a chart alone can't say whether an apparent trend
+    # is real or just noise; this can. Silently skipped (not an error) if
+    # too few non-gap points survive cloud gaps to run the test on.
+    valid = [(p["date"], p["value"]) for p in points if p["value"] is not None]
+    trend_analysis = mann_kendall_test([v for _, v in valid], [d_ for d_, _ in valid]) if len(valid) >= trend_stats.MIN_POINTS \
+        else {"status": "insufficient_data", "note": f"Only {len(valid)} non-gap points — Mann-Kendall needs at least {trend_stats.MIN_POINTS}."}
+
     return {
         "index": index_id, "label": d["label"], "interval": interval,
         "points": points,
+        "trend_analysis": trend_analysis,
         "method": f"{d['label']} computed independently for each {interval} from a cloud-masked Sentinel-2 SR median composite, 20m. Periods with zero cloud-free scenes are reported as gaps (value: null), not interpolated or dropped.",
     }
 

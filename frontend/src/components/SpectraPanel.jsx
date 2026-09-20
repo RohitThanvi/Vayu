@@ -119,6 +119,35 @@ function StatRow({ label, value }) {
   );
 }
 
+// Collapsible list of the actual scene IDs/dates/cloud% that fed a
+// composite — reproducibility metadata (exactly which acquisitions,
+// not just a count) a remote sensing scientist expects to be able to
+// check, not just take on faith.
+function SceneProvenance({ scenes, label = 'Scenes used' }) {
+  const [open, setOpen] = useState(false);
+  if (!scenes || scenes.length === 0) return null;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        background: 'none', border: 'none', color: S.accent, fontSize: 10.5, fontFamily: S.mono,
+        cursor: 'pointer', padding: 0, textDecoration: 'underline', textUnderlineOffset: 2,
+      }}>
+        {open ? '▾' : '▸'} {label} ({scenes.length}) — scene-level provenance
+      </button>
+      {open && (
+        <div style={{ maxHeight: 140, overflowY: 'auto', marginTop: 6, background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '6px 8px' }}>
+          {scenes.map((s, i) => (
+            <div key={s.id || i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9.5, fontFamily: S.mono, color: S.text3, padding: '2px 0' }}>
+              <span title={s.id} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '55%' }}>{s.date}</span>
+              <span>{s.cloud_pct != null ? `${Number(s.cloud_pct).toFixed(1)}% cloud` : ''}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RasterControls({ mapLayer, downloadUrl, label, onShowOverlay, active, onActivate }) {
   const hasMap = mapLayer?.tile_url && onShowOverlay;
   const hasDownload = !!downloadUrl;
@@ -179,6 +208,7 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
             Valid (cloud-free) pixel coverage: {Math.round(result.valid_pixel_fraction * 100)}% of AOI
           </div>
         )}
+        <SceneProvenance scenes={result.scene_provenance} />
         <MethodNote text={result.method} />
       </div>
     );
@@ -256,6 +286,7 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         )}
         <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="snow mask" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'snow_cover'} onActivate={() => setActiveLayerId?.('snow_cover')} />
+        <SceneProvenance scenes={result.scene_provenance} />
         <MethodNote text={result.method} />
       </div>
     );
@@ -296,6 +327,8 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         {result.pct_change != null && <StatRow label="% change" value={`${result.pct_change > 0 ? '+' : ''}${result.pct_change}%`} />}
         <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="delta" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'change_detection'} onActivate={() => setActiveLayerId?.('change_detection')} />
+        <SceneProvenance scenes={result.period1.scene_provenance} label="Period 1 scenes" />
+        <SceneProvenance scenes={result.period2.scene_provenance} label="Period 2 scenes" />
         <MethodNote text={result.method} />
       </div>
     );
@@ -306,11 +339,28 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         <StatRow label="dNBR (mean)" value={result.dnbr_mean} />
         <StatRow label="dNBR (min / max)" value={`${result.dnbr_min} / ${result.dnbr_max}`} />
         <StatRow label="dNBR (σ)" value={result.dnbr_std_dev} />
-        <StatRow label="Overall classification" value={result.overall_classification} />
+        <StatRow label="dNBR classification" value={result.overall_classification} />
+        {result.rbr_mean != null && (
+          <>
+            <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 10, marginBottom: 4 }}>
+              RBR (Relativized Burn Ratio, Parks et al. 2014)
+            </div>
+            <StatRow label="RBR (mean)" value={result.rbr_mean} />
+            <StatRow label="RBR (min / max)" value={`${result.rbr_min} / ${result.rbr_max}`} />
+            <StatRow label="RBR classification" value={result.rbr_classification} />
+            <div style={{
+              fontSize: 10.5, marginTop: 4, color: result.dnbr_rbr_agree ? '#2ecc71' : '#e0c23c',
+            }}>
+              {result.dnbr_rbr_agree
+                ? '✓ dNBR and RBR agree on overall classification'
+                : '⚠ dNBR and RBR disagree — likely means pre-fire vegetation density varied enough across this AOI to bias dNBR (RBR corrects for this); worth trusting RBR here.'}
+            </div>
+          </>
+        )}
         <StatRow label="Pre / post fire scenes" value={`${result.pre_fire_scenes} / ${result.post_fire_scenes}`} />
         {Object.keys(result.area_by_severity_km2).length > 0 && (
           <div style={{ marginTop: 10 }}>
-            <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Area by severity class</div>
+            <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Area by severity class (dNBR)</div>
             {Object.entries(result.area_by_severity_km2).map(([label, km2]) => (
               <StatRow key={label} label={label} value={`${km2} km²`} />
             ))}
@@ -318,6 +368,12 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         )}
         <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="dNBR severity" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'burn_severity'} onActivate={() => setActiveLayerId?.('burn_severity')} />
+        {result.rbr_map_layer && (
+          <RasterControls mapLayer={result.rbr_map_layer} downloadUrl={result.rbr_download_url} label="RBR severity" onShowOverlay={onShowOverlay}
+            active={activeLayerId === 'burn_severity_rbr'} onActivate={() => setActiveLayerId?.('burn_severity_rbr')} />
+        )}
+        <SceneProvenance scenes={result.pre_fire_scene_provenance} label="Pre-fire scenes" />
+        <SceneProvenance scenes={result.post_fire_scene_provenance} label="Post-fire scenes" />
         <MethodNote text={result.method} />
       </div>
     );

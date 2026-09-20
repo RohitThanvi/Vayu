@@ -37,13 +37,14 @@ const INDEX_CHOICES = [
 ];
 
 const REFERENCE_DATA = [
-  { tool: 'Spectral Indices', dataset: 'Sentinel-2 SR Harmonized', resolution: '10-20m', note: 'NDVI, NDWI, MNDWI, NDBI, SAVI, EVI, NDSI — cloud-masked median composite. Citations: Rouse 1974, McFeeters 1996, Xu 2006, Zha et al. 2003, Huete 1988/2002, Hall et al. 1995.' },
+  { tool: 'Spectral Indices', dataset: 'Sentinel-2 SR Harmonized', resolution: '10-20m', note: 'NDVI, NDWI, MNDWI, NDBI, SAVI, EVI, NDSI — cloud-masked median composite. Citations: Rouse 1974, McFeeters 1996, Xu 2006, Zha et al. 2003, Huete 1988/2002, Hall et al. 1995. Includes scene-level provenance (exact scene IDs/dates/cloud%).' },
+  { tool: 'Time Series', dataset: 'Sentinel-2 SR Harmonized', resolution: '10-20m', note: 'Any index across monthly/quarterly sub-periods, plus a Mann-Kendall trend test + Sen\'s slope (Mann 1945; Kendall 1975; Sen 1968) — tells you whether an apparent trend is statistically significant, not just what the chart looks like.' },
   { tool: 'Terrain Analysis', dataset: 'Copernicus DEM GLO-30', resolution: '30m', note: 'TanDEM-X-derived DSM (includes buildings/vegetation, not bare-earth). EGM2008 vertical datum. Aspect averaged circularly.' },
   { tool: 'Land Cover', dataset: 'ESA WorldCover v200', resolution: '10m, 2021', note: '11-class classification, 76.7% overall validated accuracy. Zanaga et al. 2022.' },
   { tool: 'Snow Cover', dataset: 'Sentinel-2 SR (NDSI)', resolution: '20m', note: 'NDSI > 0.4 threshold (Hall et al. 1995), same threshold as MODIS\'s operational snow product, at far finer resolution.' },
   { tool: 'SAR Backscatter', dataset: 'Sentinel-1 GRD (IW, dual-pol)', resolution: '20m', note: 'All-weather, day/night. RVI computed on linear backscatter power, not raw dB values.' },
-  { tool: 'Change Detection', dataset: 'Sentinel-2 SR', resolution: '20m', note: 'Any of the 7 indices, diffed between two independently-composited periods.' },
-  { tool: 'Burn Severity', dataset: 'Sentinel-2 SR (dNBR)', resolution: '20m', note: 'USGS FIREMON standard (Key & Benson 2006). NBR = (B8-B12)/(B8+B12).' },
+  { tool: 'Change Detection', dataset: 'Sentinel-2 SR', resolution: '20m', note: 'Any of the 7 indices, diffed between two independently-composited periods. Both periods include scene-level provenance (exact scene IDs/dates/cloud%).' },
+  { tool: 'Burn Severity', dataset: 'Sentinel-2 SR (dNBR + RBR)', resolution: '20m', note: 'USGS FIREMON dNBR (Key & Benson 2006) plus RBR (Parks, Dillon & Miller 2014) side by side — RBR corrects for pre-fire vegetation density bias in dNBR.' },
   { tool: 'Atmospheric Composition', dataset: 'Sentinel-5P / TROPOMI OFFL L3', resolution: '~1.1km', note: 'NO2, SO2, CO column density + aerosol index. Column densities, not ground-level concentrations.' },
   { tool: 'ML Classify', dataset: 'Sentinel-2 SR + user training points', resolution: '10m', note: 'Random Forest (ee.Classifier.smileRandomForest, Breiman 2001), trained per-request on points you supply. Reports held-out test accuracy separately from optimistic training accuracy.' },
   { tool: 'Dynamic World', dataset: 'GOOGLE/DYNAMICWORLD/V1', resolution: '10m, near-real-time', note: 'Pretrained deep-learning land cover, 9 fixed classes, one shared model for every request — no training points. Brown et al. 2022, Sci Data 9, 251.' },
@@ -152,6 +153,29 @@ function TimeSeriesTab({ apiUrl, drawnAOI }) {
               formatY={(v) => v.toFixed(3)}
               emptyLabel="No cloud-free scenes across this range — try widening it."
             />
+            {result.trend_analysis?.status === 'ok' && (
+              <div style={{ marginTop: 10, padding: '8px 12px', background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
+                  <span style={{
+                    fontSize: 13, fontFamily: S.mono, fontWeight: 700, textTransform: 'uppercase',
+                    color: !result.trend_analysis.significant ? S.text3 : result.trend_analysis.trend === 'increasing' ? '#2ecc71' : '#ff7a45',
+                  }}>
+                    {result.trend_analysis.trend}
+                  </span>
+                  <span style={{ fontSize: 10.5, color: S.text3 }}>
+                    Mann-Kendall p={result.trend_analysis.p_value} {result.trend_analysis.significant ? `(significant at α=${result.trend_analysis.alpha})` : '(not significant)'}
+                  </span>
+                </div>
+                {result.trend_analysis.sens_slope_per_year != null && (
+                  <div style={{ fontSize: 10.5, color: S.text2, fontFamily: S.mono }}>
+                    Sen's slope: {result.trend_analysis.sens_slope_per_year > 0 ? '+' : ''}{result.trend_analysis.sens_slope_per_year}/year
+                  </div>
+                )}
+              </div>
+            )}
+            {result.trend_analysis?.status === 'insufficient_data' && (
+              <div style={{ fontSize: 10.5, color: S.text3, marginTop: 8 }}>{result.trend_analysis.note}</div>
+            )}
             <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 8 }}>{result.method}</div>
           </>
         )}
