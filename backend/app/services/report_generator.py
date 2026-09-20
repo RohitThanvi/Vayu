@@ -2296,7 +2296,7 @@ RS_TOOL_LABELS = {
     "snow_cover": "Snow Cover (NDSI)",
     "sar_backscatter": "SAR Backscatter",
     "change_detection": "Change Detection",
-    "burn_severity": "Burn Severity (dNBR)",
+    "burn_severity": "Burn Severity (dNBR + RBR)",
     "atmospheric_composition": "Atmospheric Composition",
     "index_time_series": "Index Time Series",
     "land_surface_temperature": "Land Surface Temperature",
@@ -2310,6 +2310,9 @@ RS_GLOSSARY = [
     ("SAVI / EVI", "Soil/atmosphere-adjusted variants of NDVI, reducing soil-background and atmospheric noise respectively."),
     ("NDSI", "Normalized Difference Snow Index = (Green\u2212SWIR1)/(Green+SWIR1). Classified as snow above a 0.4 threshold (Hall et al. 1995)."),
     ("dNBR", "Delta Normalized Burn Ratio \u2014 pre-fire NBR minus post-fire NBR. Standard USGS FIREMON burn-severity metric."),
+    ("RBR", "Relativized Burn Ratio = dNBR / (pre-fire NBR + 1.001). Corrects dNBR's bias from varying pre-fire vegetation density (Parks, Dillon & Miller 2014, doi:10.3390/rs6031827)."),
+    ("Mann-Kendall trend test", "A non-parametric statistical test (Mann 1945; Kendall 1975) for whether a time series has a significant monotonic trend, without assuming a normal distribution \u2014 distinguishes a real trend from apparent noise."),
+    ("Sen's slope", "The median of all pairwise slopes in a time series (Sen 1968) \u2014 a robust (outlier-resistant) estimate of trend magnitude, reported alongside the Mann-Kendall significance test."),
     ("RVI", "Radar Vegetation Index, derived from SAR VV/VH polarizations, computed on linear (not dB) backscatter power."),
     ("SAR / GRD", "Synthetic Aperture Radar; Ground Range Detected \u2014 an all-weather, day/night imaging radar product (Sentinel-1)."),
     ("Column density", "For atmospheric gases (NO2/SO2/CO): total mass of the gas in a vertical column of atmosphere, not ground-level concentration."),
@@ -2369,10 +2372,29 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
             rows += [
                 ("dNBR \u2014 mean / \u03c3", f"{_fmt_num(result.get('dnbr_mean'))} / {_fmt_num(result.get('dnbr_std_dev'))}", ""),
                 ("dNBR \u2014 min / max", f"{_fmt_num(result.get('dnbr_min'))} / {_fmt_num(result.get('dnbr_max'))}", ""),
-                ("Overall classification", str(result.get("overall_classification", "N/A")), ""),
+                ("dNBR classification", str(result.get("overall_classification", "N/A")), ""),
             ]
+            if result.get("rbr_mean") is not None:
+                rows += [
+                    ("RBR \u2014 mean / \u03c3", f"{_fmt_num(result.get('rbr_mean'))} / {_fmt_num(result.get('rbr_std_dev'))}", ""),
+                    ("RBR \u2014 min / max", f"{_fmt_num(result.get('rbr_min'))} / {_fmt_num(result.get('rbr_max'))}", ""),
+                    ("RBR classification", str(result.get("rbr_classification", "N/A")), ""),
+                    ("dNBR / RBR agreement", "Agree" if result.get("dnbr_rbr_agree") else "Disagree \u2014 pre-fire vegetation density likely biased dNBR", ""),
+                ]
             for sev_label, km2 in (result.get("area_by_severity_km2") or {}).items():
                 rows.append((sev_label, _fmt_num(km2), "km\u00b2"))
+        elif tool == "index_time_series":
+            ta = result.get("trend_analysis") or {}
+            if ta.get("status") == "ok":
+                rows += [
+                    ("Mann-Kendall trend", str(ta.get("trend", "N/A")), ""),
+                    ("Mann-Kendall p-value", _fmt_num(ta.get("p_value")), ""),
+                    ("Significant at \u03b1", f"{ta.get('alpha')}" if ta.get("significant") else f"No (\u03b1={ta.get('alpha')})", ""),
+                ]
+                if ta.get("sens_slope_per_year") is not None:
+                    rows.append(("Sen's slope", _fmt_num(ta.get("sens_slope_per_year")), "per year"))
+            elif ta.get("status") == "insufficient_data":
+                rows.append(("Trend analysis", ta.get("note", "Not enough non-gap points."), ""))
         elif tool == "atmospheric_composition":
             for key, label in [("no2", "NO2"), ("so2", "SO2"), ("co", "CO"), ("aerosol_index", "Aerosol Index")]:
                 g = result.get(key, {}) or {}
