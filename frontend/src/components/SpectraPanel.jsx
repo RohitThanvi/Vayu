@@ -68,6 +68,7 @@ const TOOL_META = {
   sar_backscatter: { label: 'SAR Backscatter', needsDates: true, icon: '∿' },
   change_detection: { label: 'Change Detection', needsDates: false, needsTwoPeriods: true, icon: '⇄' },
   burn_severity: { label: 'Burn Severity', needsDates: false, needsPrePost: true, icon: '▲' },
+  flood_mapping: { label: 'Flood Mapping (SAR)', needsDates: false, needsPrePost: true, needsPolarization: true, icon: '≈' },
   atmospheric_composition: { label: 'Atmosphere', needsDates: true, icon: '☁' },
   land_surface_temperature: { label: 'Surface Temp', needsDates: true, icon: '◉' },
   surface_water_dynamics: { label: 'Surface Water', needsDates: false, icon: '≋' },
@@ -395,6 +396,24 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
       </div>
     );
   }
+  if (tool === 'flood_mapping') {
+    return (
+      <div>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 24, fontFamily: S.mono, fontWeight: 700, color: '#2166ac' }}>{result.flood_extent_km2} km²</div>
+          <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase' }}>Flood extent ({result.pct_of_aoi_flooded}% of AOI)</div>
+        </div>
+        <StatRow label="AOI area" value={`${result.aoi_area_km2} km²`} />
+        <StatRow label="Permanent water (excluded)" value={`${result.permanent_water_km2} km²`} />
+        <StatRow label="Polarization" value={result.polarization} />
+        <StatRow label="Orbit pass used" value={result.orbit_pass_used} />
+        <StatRow label="Pre-flood / post-flood scenes" value={`${result.pre_flood_scenes} / ${result.post_flood_scenes}`} />
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="flood extent" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'flood_mapping'} onActivate={() => setActiveLayerId?.('flood_mapping')} />
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
   if (tool === 'land_surface_temperature') {
     const lst = result.lst_celsius;
     if (!lst || lst.mean == null) {
@@ -578,6 +597,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
   const [refPtLat, setRefPtLat] = useState('');
   const [refPtLon, setRefPtLon] = useState('');
   const [refPtClass, setRefPtClass] = useState('');
+  const [polarization, setPolarization] = useState('VH'); // flood_mapping
   const [loading, setLoading] = useState(false);
   const dateInputStyle = { flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 };
   const [error, setError] = useState(null);
@@ -735,6 +755,9 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
       body.pre_start = preStart; body.pre_end = preEnd;
       body.post_start = postStart; body.post_end = postEnd;
     }
+    if (meta.needsPolarization) {
+      body.polarization = polarization;
+    }
     if (meta.needsTrainingPoints) {
       body.training_samples = trainingSamples;
       body.num_trees = numTrees;
@@ -782,7 +805,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
     } catch (e) {
       setError(`Failed to submit: ${e.message}`); setLoading(false);
     }
-  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices, changeIndex, period1Start, period1End, period2Start, period2End, preStart, preEnd, postStart, postEnd, trainingSamples, numTrees, assessTool, referencePoints]);
+  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices, changeIndex, period1Start, period1End, period2Start, period2End, preStart, preEnd, postStart, postEnd, trainingSamples, numTrees, assessTool, referencePoints, polarization]);
 
   const meta = TOOL_META[tool];
 
@@ -874,7 +897,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
 
       {meta.needsPrePost && (
         <>
-          <Field label="Pre-fire period">
+          <Field label={tool === 'flood_mapping' ? 'Pre-flood period' : 'Pre-fire period'}>
             <div style={{ display: 'flex', gap: 8 }}>
               <input type="date" value={preStart} onChange={e => setPreStart(e.target.value)}
                 style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
@@ -882,7 +905,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
                 style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
             </div>
           </Field>
-          <Field label="Post-fire period">
+          <Field label={tool === 'flood_mapping' ? 'Post-flood period' : 'Post-fire period'}>
             <div style={{ display: 'flex', gap: 8 }}>
               <input type="date" value={postStart} onChange={e => setPostStart(e.target.value)}
                 style={{ flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }} />
@@ -891,6 +914,19 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
             </div>
           </Field>
         </>
+      )}
+
+      {meta.needsPolarization && (
+        <Field label="Polarization">
+          <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.4, marginBottom: 6 }}>
+            VH is generally more sensitive to land-surface change; VV is more useful for delineating open water specifically (shoreline detection, a large post-flood water body) — UN-SPIDER's own guidance on the choice.
+          </div>
+          <select value={polarization} onChange={e => setPolarization(e.target.value)}
+            style={{ width: '100%', background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }}>
+            <option value="VH">VH (default — land-surface change)</option>
+            <option value="VV">VV (open-water delineation)</option>
+          </select>
+        </Field>
       )}
 
       {meta.needsTrainingPoints && (

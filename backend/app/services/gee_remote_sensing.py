@@ -1362,6 +1362,124 @@ def compute_dynamic_world_classification(aoi: Dict, start_date: str, end_date: s
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Flood mapping — Sentinel-1 SAR before/after change detection, following
+# UN-SPIDER's own Recommended Practice for GEE flood mapping (un-spider.org/
+# advisory-support/recommended-practices/recommended-practice-google-earth-
+# engine-flood-mapping), verified against their published methodology
+# rather than invented. All-weather, day/night SAR — can map a flood
+# through the exact cloud cover that usually accompanies one, unlike every
+# optical tool in this module.
+# ═════════════════════════════════════════════════════════════════════════════
+
+# UN-SPIDER's own documented threshold on the after/before ratio, computed
+# directly on the dB-scale GRD bands as their published script does — NOT
+# converted to linear power first (a ratio of dB values isn't physically a
+# power ratio, but 1.25 is specifically calibrated against THEIR literal
+# dB-domain divide; "fixing" the math to be linear and reapplying 1.25
+# would silently change what the number means, the same reasoning RBR's
+# "+1.001" offset gets in compute_burn_severity — replicate the cited
+# method's actual arithmetic, not a purist version of it).
+FLOOD_RATIO_THRESHOLD = 1.25
+# ~50m circular smoothing to reduce speckle before the ratio — the radius
+# UN-SPIDER's own script applies, not an arbitrary choice.
+FLOOD_SPECKLE_SMOOTHING_RADIUS_M = 50
+
+
+def compute_flood_mapping(aoi: Dict, pre_start: str, pre_end: str, post_start: str, post_end: str, polarization: str = "VH") -> Dict[str, Any]:
+    """Sentinel-1 SAR flood extent via before/after change detection —
+    UN-SPIDER's Recommended Practice. VH polarization by default (more
+    sensitive to land-surface change generally); VV is offered as an
+    alternative since it's more useful for delineating open water
+    specifically (shoreline detection, a large post-flood water body),
+    per UN-SPIDER's own guidance on the choice between the two.
+
+    Both periods are filtered to the SAME orbit pass direction (ascending
+    or descending — whichever has more pre-flood coverage, then the same
+    direction is required for the post-flood period too) since mixing
+    look geometries creates a false change signal from differing view
+    angle, not an actual surface change. Permanent water (JRC Global
+    Surface Water occurrence >= 90% — the same dataset and threshold
+    compute_surface_water_dynamics uses) is masked out, since a lake
+    being a lake isn't a flood.
+
+    Requires the pre-flood and post-flood periods to be specified
+    correctly by the caller — this function has no way to verify a flood
+    actually occurred in the given window (same caveat compute_burn_severity
+    states for fire windows). Scene-level provenance isn't reported here
+    the way it is for the Sentinel-2 composite tools — Sentinel-1's extra
+    mode/polarization/orbit filtering would need a purpose-built listing
+    rather than the shared _scene_provenance helper (built for the S2_SR
+    collection), left as a smaller follow-up rather than blocking this tool."""
+    logger.info(f"GEE (remote sensing): flood_mapping pre={pre_start}->{pre_end} post={post_start}->{post_end} pol={polarization}")
+    if polarization not in ("VH", "VV"):
+        raise ValueError("polarization must be 'VH' or 'VV'.")
+    region = _polygon_geometry(aoi)
+    _require_start_after(pre_start, "2014-04-01", "Sentinel-1")
+
+    def _s1_col(start, end):
+        return (
+            ee.ImageCollection("COPERNICUS/S1_GRD")
+            .filterBounds(region)
+            .filterDate(ee.Date(start), _cap_end_date(end))
+            .filter(ee.Filter.eq("instrumentMode", "IW"))
+            .filter(ee.Filter.listContains("transmitterReceiverPolarisation", polarization))
+        )
+
+    pre_all, post_all = _s1_col(pre_start, pre_end), _s1_col(post_start, post_end)
+
+    pre_asc_n = pre_all.filter(ee.Filter.eq("orbitProperties_pass", "ASCENDING")).size().getInfo()
+    pre_desc_n = pre_all.filter(ee.Filter.eq("orbitProperties_pass", "DESCENDING")).size().getInfo()
+    if pre_asc_n == 0 and pre_desc_n == 0:
+        raise ValueError(f"No Sentinel-1 IW {polarization} imagery found for the pre-flood period {pre_start} - {pre_end}. Try a wider date range.")
+    orbit = "ASCENDING" if pre_asc_n >= pre_desc_n else "DESCENDING"
+
+    pre_col = pre_all.filter(ee.Filter.eq("orbitProperties_pass", orbit))
+    post_col = post_all.filter(ee.Filter.eq("orbitProperties_pass", orbit))
+    pre_n, post_n = pre_col.size().getInfo(), post_col.size().getInfo()
+    if post_n == 0:
+        raise ValueError(
+            f"No {orbit.lower()}-pass Sentinel-1 imagery found for the post-flood period {post_start} - "
+            f"{post_end} (the pre-flood period used {orbit.lower()} pass, {pre_n} scene(s)) — widen the "
+            f"post-flood date range."
+        )
+
+    pre_composite = pre_col.select(polarization).mean().focal_mean(FLOOD_SPECKLE_SMOOTHING_RADIUS_M, "circle", "meters")
+    post_composite = post_col.select(polarization).mean().focal_mean(FLOOD_SPECKLE_SMOOTHING_RADIUS_M, "circle", "meters")
+
+    ratio = post_composite.divide(pre_composite)
+    flood_raw = ratio.gt(FLOOD_RATIO_THRESHOLD)
+
+    permanent_water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(90)
+    flood_mask = flood_raw.And(permanent_water.Not()).rename("flood")
+
+    flood_km2 = _calc_area_km2(flood_mask, region, scale=20)
+    aoi_km2 = _region_area_km2(region)
+    permanent_water_km2 = _calc_area_km2(permanent_water.clip(region), region, scale=30)
+
+    return {
+        "flood_extent_km2": round(flood_km2, 3),
+        "aoi_area_km2": round(aoi_km2, 3),
+        "pct_of_aoi_flooded": round(flood_km2 / aoi_km2 * 100, 2) if aoi_km2 > 0 else 0,
+        "permanent_water_km2": round(permanent_water_km2, 3),
+        "orbit_pass_used": orbit,
+        "polarization": polarization,
+        "pre_flood_scenes": pre_n, "post_flood_scenes": post_n,
+        "map_layer": _tile_layer(flood_mask.selfMask(), {"palette": ["#2166ac"]}),
+        "download_url": _download_url(flood_mask, region, scale=20),
+        "method": (
+            f"Sentinel-1 GRD (IW mode, {polarization} polarization, {orbit.lower()} pass only to avoid "
+            f"mixed look-angle artifacts) before/after change detection — UN-SPIDER's Recommended Practice "
+            f"for GEE flood mapping. {FLOOD_SPECKLE_SMOOTHING_RADIUS_M}m circular speckle smoothing, then "
+            f"post/pre ratio (on dB-scale values, matching the published script's literal arithmetic) "
+            f"thresholded at {FLOOD_RATIO_THRESHOLD}. Permanent water (JRC Global Surface Water occurrence "
+            f">= 90%) masked out. All-weather, day/night SAR — usable under the cloud cover that typically "
+            f"accompanies a flood event, unlike every optical tool in this module. {pre_n} pre-flood / "
+            f"{post_n} post-flood scenes, both {orbit.lower()} pass."
+        ),
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Accuracy assessment — confusion matrix / kappa (Congalton 1991) against
 # user-supplied reference points, for classification tools that otherwise
 # report a result with no check against independent ground truth (lulc,
@@ -1567,7 +1685,26 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
             col = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterBounds(region).filterDate(params["start_date"], params["end_date"])
             label_mode = col.select("label").mode().clip(region)
             return _fetch_thumb_bytes(label_mode, region, {"min": 0, "max": 8, "palette": DYNAMIC_WORLD_PALETTE})
-        return None  # atmospheric_composition, index_time_series (a chart, not a raster)
+        if tool == "flood_mapping":
+            polarization = params.get("polarization") or "VH"
+
+            def _s1_col(start, end):
+                return (
+                    ee.ImageCollection("COPERNICUS/S1_GRD").filterBounds(region).filterDate(start, end)
+                    .filter(ee.Filter.eq("instrumentMode", "IW"))
+                    .filter(ee.Filter.listContains("transmitterReceiverPolarisation", polarization))
+                )
+            pre_all = _s1_col(params["pre_start"], params["pre_end"])
+            orbit = "ASCENDING" if pre_all.filter(ee.Filter.eq("orbitProperties_pass", "ASCENDING")).size().getInfo() \
+                >= pre_all.filter(ee.Filter.eq("orbitProperties_pass", "DESCENDING")).size().getInfo() else "DESCENDING"
+            pre = pre_all.filter(ee.Filter.eq("orbitProperties_pass", orbit)).select(polarization).mean() \
+                .focal_mean(FLOOD_SPECKLE_SMOOTHING_RADIUS_M, "circle", "meters")
+            post = _s1_col(params["post_start"], params["post_end"]).filter(ee.Filter.eq("orbitProperties_pass", orbit)) \
+                .select(polarization).mean().focal_mean(FLOOD_SPECKLE_SMOOTHING_RADIUS_M, "circle", "meters")
+            permanent_water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(90)
+            flood_mask = post.divide(pre).gt(FLOOD_RATIO_THRESHOLD).And(permanent_water.Not()).selfMask()
+            return _fetch_thumb_bytes(flood_mask, region, {"palette": ["#2166ac"]})
+        return None  # atmospheric_composition, index_time_series, accuracy_assessment (not single-raster thumbnails)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")
         return None
