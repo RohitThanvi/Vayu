@@ -49,6 +49,7 @@ const REFERENCE_DATA = [
   { tool: 'ML Classify', dataset: 'Sentinel-2 SR + user training points', resolution: '10m', note: 'Random Forest (ee.Classifier.smileRandomForest, Breiman 2001), trained per-request on points you supply. Reports held-out test accuracy separately from optimistic training accuracy.' },
   { tool: 'Dynamic World', dataset: 'GOOGLE/DYNAMICWORLD/V1', resolution: '10m, near-real-time', note: 'Pretrained deep-learning land cover, 9 fixed classes, one shared model for every request — no training points. Brown et al. 2022, Sci Data 9, 251.' },
   { tool: 'Accuracy Assessment', dataset: 'Your own reference points', resolution: 'n/a', note: 'Confusion matrix, overall/producer\'s/user\'s accuracy, Cohen\'s kappa (Congalton 1991; Cohen 1960) for Land Cover, Dynamic World, or Burn Severity, against reference points independent of any training data.' },
+  { tool: 'Flood Mapping', dataset: 'Sentinel-1 GRD (SAR)', resolution: '10m', note: 'Before/after change detection, UN-SPIDER\'s Recommended Practice — post/pre backscatter ratio thresholded at 1.25, permanent water masked out (JRC GSW). All-weather, day/night.' },
 ];
 
 function useJobPoll(apiUrl) {

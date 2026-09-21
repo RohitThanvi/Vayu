@@ -2301,6 +2301,10 @@ RS_TOOL_LABELS = {
     "index_time_series": "Index Time Series",
     "land_surface_temperature": "Land Surface Temperature",
     "surface_water_dynamics": "Surface Water Dynamics",
+    "supervised_classification": "ML Classify (Random Forest)",
+    "dynamic_world": "Dynamic World (ML Land Cover)",
+    "accuracy_assessment": "Accuracy Assessment",
+    "flood_mapping": "Flood Mapping (SAR)",
 }
 
 RS_GLOSSARY = [
@@ -2313,6 +2317,7 @@ RS_GLOSSARY = [
     ("RBR", "Relativized Burn Ratio = dNBR / (pre-fire NBR + 1.001). Corrects dNBR's bias from varying pre-fire vegetation density (Parks, Dillon & Miller 2014, doi:10.3390/rs6031827)."),
     ("Mann-Kendall trend test", "A non-parametric statistical test (Mann 1945; Kendall 1975) for whether a time series has a significant monotonic trend, without assuming a normal distribution \u2014 distinguishes a real trend from apparent noise."),
     ("Sen's slope", "The median of all pairwise slopes in a time series (Sen 1968) \u2014 a robust (outlier-resistant) estimate of trend magnitude, reported alongside the Mann-Kendall significance test."),
+    ("SAR flood ratio", "Sentinel-1 SAR before/after backscatter ratio (post/pre), thresholded at 1.25 \u2014 UN-SPIDER's Recommended Practice for GEE flood mapping. A value above threshold indicates a surface-scattering change consistent with new standing water."),
     ("RVI", "Radar Vegetation Index, derived from SAR VV/VH polarizations, computed on linear (not dB) backscatter power."),
     ("SAR / GRD", "Synthetic Aperture Radar; Ground Range Detected \u2014 an all-weather, day/night imaging radar product (Sentinel-1)."),
     ("Column density", "For atmospheric gases (NO2/SO2/CO): total mass of the gas in a vertical column of atmosphere, not ground-level concentration."),
@@ -2395,6 +2400,14 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
                     rows.append(("Sen's slope", _fmt_num(ta.get("sens_slope_per_year")), "per year"))
             elif ta.get("status") == "insufficient_data":
                 rows.append(("Trend analysis", ta.get("note", "Not enough non-gap points."), ""))
+        elif tool == "flood_mapping":
+            rows += [
+                ("Flood extent", _fmt_num(result.get("flood_extent_km2")), "km\u00b2"),
+                ("% of AOI flooded", _fmt_num(result.get("pct_of_aoi_flooded")), "%"),
+                ("Permanent water (excluded)", _fmt_num(result.get("permanent_water_km2")), "km\u00b2"),
+                ("Polarization / orbit pass", f"{result.get('polarization')} / {result.get('orbit_pass_used')}", ""),
+                ("Pre-flood / post-flood scenes", f"{result.get('pre_flood_scenes')} / {result.get('post_flood_scenes')}", ""),
+            ]
         elif tool == "atmospheric_composition":
             for key, label in [("no2", "NO2"), ("so2", "SO2"), ("co", "CO"), ("aerosol_index", "Aerosol Index")]:
                 g = result.get(key, {}) or {}

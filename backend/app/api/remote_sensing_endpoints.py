@@ -54,8 +54,8 @@ TOOLS = {
         "description": "Diff any spectral index between two date ranges — Sentinel-2, 20m.",
     },
     "burn_severity": {
-        "label": "Burn Severity (dNBR)", "needs_dates": False, "needs_two_periods": True,
-        "description": "USGS FIREMON dNBR burn-severity classification — Sentinel-2, 20m.",
+        "label": "Burn Severity (dNBR + RBR)", "needs_dates": False, "needs_two_periods": True,
+        "description": "USGS FIREMON dNBR + RBR (Parks et al. 2014) burn-severity classification — Sentinel-2, 20m.",
     },
     "atmospheric_composition": {
         "label": "Atmospheric Composition", "needs_dates": True,
@@ -85,6 +85,10 @@ TOOLS = {
         "label": "Accuracy Assessment", "needs_dates": False, "needs_reference_points": True,
         "description": "Confusion matrix / kappa (Congalton 1991) for LULC, Dynamic World, or Burn Severity, against your own reference points.",
     },
+    "flood_mapping": {
+        "label": "Flood Mapping (SAR)", "needs_dates": False, "needs_two_periods": True,
+        "description": "Sentinel-1 SAR before/after flood extent — UN-SPIDER's Recommended Practice, all-weather/day-night, 10m.",
+    },
 }
 
 
@@ -108,6 +112,7 @@ class RemoteSensingRequest(BaseModel):
     num_trees: Optional[int] = None  # supervised_classification, defaults to rs.DEFAULT_NUM_TREES if omitted
     assess_tool: Optional[str] = None  # accuracy_assessment: which tool's classification to validate (lulc | dynamic_world | burn_severity)
     reference_points: Optional[List[Dict[str, Any]]] = None  # accuracy_assessment: [{lat, lon, true_class}]
+    polarization: Optional[str] = None  # flood_mapping: 'VH' (default) or 'VV'
 
 
 def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
@@ -175,6 +180,10 @@ def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
                 "post_start": req.post_start, "post_end": req.post_end,
             }
             result = rs.compute_accuracy_assessment(req.assess_tool, req.aoi_geojson, req.reference_points, tool_params)
+        elif req.tool == "flood_mapping":
+            if not all([req.pre_start, req.pre_end, req.post_start, req.post_end]):
+                raise ValueError("flood_mapping requires pre_start, pre_end, post_start, post_end.")
+            result = rs.compute_flood_mapping(req.aoi_geojson, req.pre_start, req.pre_end, req.post_start, req.post_end, req.polarization or "VH")
         else:
             job_store.update(request_id, {"status": "failed", "error": f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}"})
             return
