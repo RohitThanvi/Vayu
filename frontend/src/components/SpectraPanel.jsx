@@ -72,7 +72,24 @@ const TOOL_META = {
   land_surface_temperature: { label: 'Surface Temp', needsDates: true, icon: '◉' },
   surface_water_dynamics: { label: 'Surface Water', needsDates: false, icon: '≋' },
   supervised_classification: { label: 'ML Classify', needsDates: true, needsTrainingPoints: true, icon: '⊛' },
+  accuracy_assessment: { label: 'Accuracy Assessment', needsDates: false, needsReferencePoints: true, icon: '✓' },
 };
+
+// Client-side mirror of gee_remote_sensing.py's WORLDCOVER_CLASSES /
+// DYNAMIC_WORLD_CLASSES / DNBR_SEVERITY_CLASSES labels — used to offer a
+// dropdown of valid true_class values per assessable tool instead of a
+// free-text field, so a typo can't silently drop a reference point (the
+// backend already reports dropped/unrecognized points, but avoiding the
+// typo in the first place is better than explaining it after the fact).
+const ACCURACY_CLASS_OPTIONS = {
+  lulc: ['Tree cover', 'Shrubland', 'Grassland', 'Cropland', 'Built-up', 'Bare / sparse vegetation',
+         'Snow and ice', 'Permanent water bodies', 'Herbaceous wetland', 'Mangroves', 'Moss and lichen'],
+  dynamic_world: ['Water', 'Trees', 'Grass', 'Flooded vegetation', 'Crops', 'Shrub & scrub', 'Built area', 'Bare ground', 'Snow & ice'],
+  burn_severity: ['High post-fire regrowth', 'Low post-fire regrowth', 'Unburned', 'Low severity',
+                  'Moderate-low severity', 'Moderate-high severity', 'High severity'],
+};
+const ACCURACY_TOOL_LABELS = { lulc: 'Land Cover (WorldCover)', dynamic_world: 'Dynamic World', burn_severity: 'Burn Severity (dNBR bins)' };
+const MIN_REFERENCE_POINTS = 4;
 
 // Matches backend gee_remote_sensing.py's MIN_SAMPLES_PER_CLASS/MIN_CLASSES —
 // surfaced here too so the Run button and an inline hint can catch an
@@ -460,6 +477,69 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
       </div>
     );
   }
+  if (tool === 'accuracy_assessment') {
+    if (result.status === 'insufficient_data') {
+      return <div style={{ fontSize: 12, color: S.text3 }}>{result.note}</div>;
+    }
+    const classes = result.classes || [];
+    const matrix = result.confusion_matrix || {};
+    return (
+      <div>
+        <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 20, fontFamily: S.mono, fontWeight: 700, color: S.accent }}>{Math.round(result.overall_accuracy * 100)}%</div>
+            <div style={{ fontSize: 9.5, color: S.text3, textTransform: 'uppercase' }}>Overall accuracy</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 20, fontFamily: S.mono, fontWeight: 700, color: S.gold }}>{result.kappa}</div>
+            <div style={{ fontSize: 9.5, color: S.text3, textTransform: 'uppercase' }}>Kappa (κ)</div>
+          </div>
+        </div>
+
+        <div style={{ fontSize: 10, color: S.text3, marginBottom: 10 }}>
+          {result.points_used} reference points used
+          {result.points_dropped_no_data > 0 && `, ${result.points_dropped_no_data} dropped (no-data pixel)`}
+          {result.points_dropped_unrecognized_class > 0 && `, ${result.points_dropped_unrecognized_class} dropped (unrecognized class)`}
+        </div>
+
+        <div style={{ overflowX: 'auto', marginBottom: 12 }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: 9.5, fontFamily: S.mono }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '4px 6px', textAlign: 'left', color: S.text3, borderBottom: `1px solid ${S.border}` }}>True \ Pred</th>
+                {classes.map(c => <th key={c} style={{ padding: '4px 6px', color: S.text3, borderBottom: `1px solid ${S.border}`, whiteSpace: 'nowrap' }}>{c}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {classes.map(trueClass => (
+                <tr key={trueClass}>
+                  <td style={{ padding: '4px 6px', color: S.text2, borderBottom: `1px solid ${S.border}`, whiteSpace: 'nowrap' }}>{trueClass}</td>
+                  {classes.map(predClass => (
+                    <td key={predClass} style={{
+                      padding: '4px 6px', textAlign: 'center', borderBottom: `1px solid ${S.border}`,
+                      color: trueClass === predClass ? S.accent : S.text3,
+                      fontWeight: trueClass === predClass ? 700 : 400,
+                    }}>
+                      {matrix[trueClass]?.[predClass] ?? 0}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Per-class accuracy</div>
+        {classes.map(c => (
+          <StatRow key={c} label={c} value={`producer's ${result.producers_accuracy[c] != null ? Math.round(result.producers_accuracy[c] * 100) + '%' : 'n/a'} / user's ${result.users_accuracy[c] != null ? Math.round(result.users_accuracy[c] * 100) + '%' : 'n/a'}`} />
+        ))}
+        <div style={{ fontSize: 10, color: S.text3, marginTop: 6, lineHeight: 1.4 }}>
+          Producer's accuracy: of everything actually that class, what fraction the classifier caught (omission error = 1 - this). User's accuracy: of everything predicted that class, what fraction was actually right (commission error = 1 - this). The two are not interchangeable.
+        </div>
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
   if (tool === 'atmospheric_composition') {
     return (
       <div>
@@ -493,7 +573,13 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
   const [ptLon, setPtLon] = useState('');
   const [ptLabel, setPtLabel] = useState('');
   const [numTrees, setNumTrees] = useState(50);
+  const [assessTool, setAssessTool] = useState('lulc'); // accuracy_assessment: which classification to validate
+  const [referencePoints, setReferencePoints] = useState([]); // [{lat, lon, true_class}]
+  const [refPtLat, setRefPtLat] = useState('');
+  const [refPtLon, setRefPtLon] = useState('');
+  const [refPtClass, setRefPtClass] = useState('');
   const [loading, setLoading] = useState(false);
+  const dateInputStyle = { flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 };
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
   const [activeLayerId, setActiveLayerId] = useState(null);
@@ -571,6 +657,45 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
   const trainingClassCount = Object.keys(trainingByClass).length;
   const trainingReady = trainingClassCount >= MIN_CLASSES && Object.values(trainingByClass).every(c => c.points.length >= MIN_SAMPLES_PER_CLASS);
 
+  const addReferencePoint = () => {
+    const lat = parseFloat(refPtLat), lon = parseFloat(refPtLon);
+    if (Number.isNaN(lat) || Number.isNaN(lon) || !refPtClass) return;
+    setReferencePoints(prev => [...prev, { lat, lon, true_class: refPtClass }]);
+    setRefPtLat(''); setRefPtLon('');
+  };
+
+  // Same click-on-map pattern as training points: a dropdown (not free
+  // text, since the valid classes are a fixed, known list per
+  // assess_tool) picks the true class once, then each map click adds a
+  // reference point under that class.
+  const addRefPointFromMapClick = useCallback((lat, lon) => {
+    if (!refPtClass) return;
+    setReferencePoints(prev => [...prev, { lat, lon, true_class: refPtClass }]);
+  }, [refPtClass]);
+
+  const [pickingRefPoints, setPickingRefPoints] = useState(false);
+  useEffect(() => {
+    if (!pickingRefPoints || !onSetPointPickHandler) return;
+    onSetPointPickHandler(() => addRefPointFromMapClick);
+    return () => onSetPointPickHandler(null);
+  }, [pickingRefPoints, addRefPointFromMapClick, onSetPointPickHandler]);
+  useEffect(() => {
+    if (tool !== 'accuracy_assessment' && pickingRefPoints) setPickingRefPoints(false);
+  }, [tool, pickingRefPoints]);
+  // Switching WHICH tool is being assessed mid-way invalidates any
+  // already-added points (their true_class values were drawn from the
+  // PREVIOUS tool's class list, and may not even be valid options for
+  // the new one) — clear rather than silently carry over points into
+  // an assessment they were never meant for.
+  useEffect(() => { setReferencePoints([]); }, [assessTool]);
+
+  const removeReferencePoint = (idx) => setReferencePoints(prev => prev.filter((_, i) => i !== idx));
+  const refPointsByClass = referencePoints.reduce((acc, p, idx) => {
+    (acc[p.true_class] ||= []).push({ ...p, idx });
+    return acc;
+  }, {});
+  const refPointsReady = referencePoints.length >= MIN_REFERENCE_POINTS;
+
   const generateReport = useCallback(async () => {
     if (!result || !lastParams) return;
     setReportLoading(true); setError(null);
@@ -614,6 +739,19 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
       body.training_samples = trainingSamples;
       body.num_trees = numTrees;
     }
+    if (meta.needsReferencePoints) {
+      body.assess_tool = assessTool;
+      body.reference_points = referencePoints;
+      // Accuracy assessment needs the SAME date window(s) the tool being
+      // validated itself used — reuses this panel's own start/end (for
+      // dynamic_world) or pre/post (for burn_severity) date fields rather
+      // than adding a second, separate set of date inputs.
+      if (assessTool === 'dynamic_world') { body.start_date = startDate; body.end_date = endDate; }
+      if (assessTool === 'burn_severity') {
+        body.pre_start = preStart; body.pre_end = preEnd;
+        body.post_start = postStart; body.post_end = postEnd;
+      }
+    }
     setLastParams(body);
 
     try {
@@ -644,7 +782,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
     } catch (e) {
       setError(`Failed to submit: ${e.message}`); setLoading(false);
     }
-  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices, changeIndex, period1Start, period1End, period2Start, period2End, preStart, preEnd, postStart, postEnd, trainingSamples, numTrees]);
+  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices, changeIndex, period1Start, period1End, period2Start, period2End, preStart, preEnd, postStart, postEnd, trainingSamples, numTrees, assessTool, referencePoints]);
 
   const meta = TOOL_META[tool];
 
@@ -825,7 +963,97 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
         </>
       )}
 
-      <button onClick={run} disabled={loading || (tool === 'spectral_indices' && selectedIndices.length === 0) || (meta.needsTrainingPoints && !trainingReady)} style={{
+      {meta.needsReferencePoints && (
+        <>
+          <Field label="Validate which tool?">
+            <select value={assessTool} onChange={e => setAssessTool(e.target.value)}
+              style={{ width: '100%', background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }}>
+              {Object.entries(ACCURACY_TOOL_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+            </select>
+          </Field>
+          {assessTool === 'dynamic_world' && (
+            <Field label="Date range (matches Dynamic World's own window)">
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={dateInputStyle} />
+                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={dateInputStyle} />
+              </div>
+            </Field>
+          )}
+          {assessTool === 'burn_severity' && (
+            <Field label="Pre / post fire windows (matches Burn Severity's own)">
+              <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                <input type="date" value={preStart} onChange={e => setPreStart(e.target.value)} style={dateInputStyle} />
+                <input type="date" value={preEnd} onChange={e => setPreEnd(e.target.value)} style={dateInputStyle} />
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input type="date" value={postStart} onChange={e => setPostStart(e.target.value)} style={dateInputStyle} />
+                <input type="date" value={postEnd} onChange={e => setPostEnd(e.target.value)} style={dateInputStyle} />
+              </div>
+            </Field>
+          )}
+          <Field label="Reference points">
+            <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.4, marginBottom: 8 }}>
+              Points where you know the actual ground truth — pick a class, then click the map (or type coordinates), for at least {MIN_REFERENCE_POINTS} points total. These should be independent of any training data used elsewhere — the whole point is checking against something the classifier never saw.
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
+              <select value={refPtClass} onChange={e => setRefPtClass(e.target.value)}
+                style={{ flex: 1, minWidth: 0, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }}>
+                <option value="">— true class —</option>
+                {(ACCURACY_CLASS_OPTIONS[assessTool] || []).map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button onClick={() => setPickingRefPoints(p => !p)} disabled={!refPtClass && !pickingRefPoints} style={{
+                background: pickingRefPoints ? 'rgba(126,184,212,0.25)' : 'rgba(126,184,212,0.12)',
+                border: `1px solid ${S.accent}`, color: S.accent, fontSize: 10.5, fontFamily: S.mono,
+                padding: '6px 10px', borderRadius: 3, cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap',
+              }}>
+                {pickingRefPoints ? '● click map…' : '⊕ click map to add'}
+              </button>
+            </div>
+            {pickingRefPoints && (
+              <div style={{ fontSize: 10.5, color: S.accent, marginBottom: 8 }}>
+                Click anywhere on the map to add a point labeled "{refPtClass || '…'}".
+              </div>
+            )}
+            <div style={{ fontSize: 10, color: S.text3, marginBottom: 4 }}>...or type coordinates directly:</div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+              <input type="number" step="any" placeholder="Lat" value={refPtLat} onChange={e => setRefPtLat(e.target.value)}
+                style={{ width: 70, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px', borderRadius: 3 }} />
+              <input type="number" step="any" placeholder="Lon" value={refPtLon} onChange={e => setRefPtLon(e.target.value)}
+                style={{ width: 70, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px', borderRadius: 3 }} />
+              <button onClick={addReferencePoint} disabled={!refPtLat || !refPtLon || !refPtClass} style={{
+                background: 'rgba(126,184,212,0.12)', border: `1px solid ${S.accent}`, color: S.accent, fontSize: 10.5,
+                fontFamily: S.mono, padding: '6px 10px', borderRadius: 3, cursor: 'pointer', flexShrink: 0,
+              }}>
+                + Add
+              </button>
+            </div>
+            {Object.keys(refPointsByClass).length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {Object.entries(refPointsByClass).map(([cls, pts]) => (
+                  <div key={cls} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '6px 8px' }}>
+                    <div style={{ fontSize: 11, color: S.gold, marginBottom: 4 }}>{cls} <span style={{ color: S.text3 }}>({pts.length})</span></div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {pts.map(p => (
+                        <span key={p.idx} onClick={() => removeReferencePoint(p.idx)} title="Click to remove" style={{
+                          fontSize: 9.5, fontFamily: S.mono, color: S.text3, background: S.surface, border: `1px solid ${S.border}`,
+                          borderRadius: 3, padding: '2px 5px', cursor: 'pointer',
+                        }}>
+                          {p.lat.toFixed(3)},{p.lon.toFixed(3)} ✕
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {referencePoints.length > 0 && referencePoints.length < MIN_REFERENCE_POINTS && (
+              <div style={{ fontSize: 10.5, color: '#e0c23c', marginTop: 6 }}>Add at least {MIN_REFERENCE_POINTS} reference points total.</div>
+            )}
+          </Field>
+        </>
+      )}
+
+      <button onClick={run} disabled={loading || (tool === 'spectral_indices' && selectedIndices.length === 0) || (meta.needsTrainingPoints && !trainingReady) || (meta.needsReferencePoints && !refPointsReady)} style={{
         background: 'rgba(126,184,212,0.12)', border: `1px solid ${S.accent}`, color: S.accent, fontFamily: S.mono,
         fontSize: 12, letterSpacing: 1, textTransform: 'uppercase', padding: '9px 16px', borderRadius: 4, cursor: 'pointer', marginTop: 4,
       }}>
