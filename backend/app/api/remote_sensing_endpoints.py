@@ -81,6 +81,10 @@ TOOLS = {
         "label": "Dynamic World (ML land cover)", "needs_dates": True,
         "description": "Google/WRI pretrained near-real-time land cover — 9 fixed classes, no training needed, shared model — 10m.",
     },
+    "accuracy_assessment": {
+        "label": "Accuracy Assessment", "needs_dates": False, "needs_reference_points": True,
+        "description": "Confusion matrix / kappa (Congalton 1991) for LULC, Dynamic World, or Burn Severity, against your own reference points.",
+    },
 }
 
 
@@ -102,6 +106,8 @@ class RemoteSensingRequest(BaseModel):
     interval: Optional[str] = "month"  # index_time_series
     training_samples: Optional[List[Dict[str, Any]]] = None  # supervised_classification: [{lat, lon, class_id, class_label}]
     num_trees: Optional[int] = None  # supervised_classification, defaults to rs.DEFAULT_NUM_TREES if omitted
+    assess_tool: Optional[str] = None  # accuracy_assessment: which tool's classification to validate (lulc | dynamic_world | burn_severity)
+    reference_points: Optional[List[Dict[str, Any]]] = None  # accuracy_assessment: [{lat, lon, true_class}]
 
 
 def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
@@ -158,6 +164,17 @@ def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
             if not req.start_date or not req.end_date:
                 raise ValueError("dynamic_world requires start_date and end_date.")
             result = rs.compute_dynamic_world_classification(req.aoi_geojson, req.start_date, req.end_date)
+        elif req.tool == "accuracy_assessment":
+            if not req.assess_tool:
+                raise ValueError(f"accuracy_assessment requires assess_tool: one of {sorted(rs.ACCURACY_ASSESSABLE_TOOLS)}.")
+            if not req.reference_points:
+                raise ValueError("accuracy_assessment requires reference_points: [{lat, lon, true_class}, ...].")
+            tool_params = {
+                "start_date": req.start_date, "end_date": req.end_date,
+                "pre_start": req.pre_start, "pre_end": req.pre_end,
+                "post_start": req.post_start, "post_end": req.post_end,
+            }
+            result = rs.compute_accuracy_assessment(req.assess_tool, req.aoi_geojson, req.reference_points, tool_params)
         else:
             job_store.update(request_id, {"status": "failed", "error": f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}"})
             return

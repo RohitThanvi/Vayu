@@ -33,6 +33,7 @@ from .gee_client import (
 from .satellite_imagery import _fetch_thumb_bytes
 from . import trend_stats
 from .trend_stats import mann_kendall_test
+from .accuracy_stats import compute_confusion_matrix
 
 logger = logging.getLogger(__name__)
 
@@ -1358,6 +1359,118 @@ def compute_dynamic_world_classification(aoi: Dict, start_date: str, end_date: s
             f"Project by Google in partnership with National Geographic Society and the World Resources Institute."
         ),
     }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Accuracy assessment — confusion matrix / kappa (Congalton 1991) against
+# user-supplied reference points, for classification tools that otherwise
+# report a result with no check against independent ground truth (lulc,
+# dynamic_world, burn_severity's severity classes). The ML Classify tool
+# already has this rigor via its own train/test split; this generalizes it
+# to tools that use a FIXED classification scheme rather than training
+# one, where "held-out training points" doesn't apply but "check against
+# reference points the tool never saw" still does and still matters.
+# ═════════════════════════════════════════════════════════════════════════════
+
+ACCURACY_ASSESSABLE_TOOLS = {"lulc", "dynamic_world", "burn_severity"}
+
+
+def _classified_image_for_accuracy(tool: str, region: ee.Geometry, params: Dict[str, Any]):
+    """Returns (classified_image, class_code_to_label) for a tool that
+    supports accuracy assessment — built from the SAME classified image/
+    band each tool's own compute_* function produces, not a re-derived
+    approximation, so this validates what the user actually sees."""
+    if tool == "lulc":
+        wc = ee.ImageCollection("ESA/WorldCover/v200").first().select("Map")
+        return wc, WORLDCOVER_CLASSES
+    if tool == "dynamic_world":
+        start_date, end_date = params.get("start_date"), params.get("end_date")
+        if not start_date or not end_date:
+            raise ValueError("dynamic_world accuracy assessment requires start_date and end_date (the same window the classification itself used).")
+        col = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1").filterBounds(region).filterDate(start_date, end_date)
+        if col.size().getInfo() == 0:
+            raise ValueError(f"No Dynamic World coverage for {start_date} to {end_date} — try widening the date range.")
+        return col.select("label").mode(), DYNAMIC_WORLD_CLASSES
+    if tool == "burn_severity":
+        pre_start, pre_end = params.get("pre_start"), params.get("pre_end")
+        post_start, post_end = params.get("post_start"), params.get("post_end")
+        if not all([pre_start, pre_end, post_start, post_end]):
+            raise ValueError("burn_severity accuracy assessment requires pre_start/pre_end/post_start/post_end (the same windows the severity map itself used).")
+        pre_composite, _ = _s2_composite(region, pre_start, pre_end)
+        post_composite, _ = _s2_composite(region, post_start, post_end)
+        nbr_pre = pre_composite.normalizedDifference(["B8", "B12"])
+        nbr_post = post_composite.normalizedDifference(["B8", "B12"])
+        dnbr = nbr_pre.subtract(nbr_post)
+        # Bin the continuous dNBR into the SAME DNBR_SEVERITY_CLASSES used
+        # everywhere else in this file (compute_burn_severity's own area
+        # breakdown, its map palette) — class codes 0..len-1, in the same
+        # order as the list, defaulting to the last (highest-severity) bin
+        # before any .where() call narrows pixels into their actual bin.
+        classified = ee.Image(len(DNBR_SEVERITY_CLASSES) - 1)
+        for i, (lo, hi, _label) in enumerate(DNBR_SEVERITY_CLASSES):
+            classified = classified.where(dnbr.gte(lo).And(dnbr.lt(hi)), i)
+        class_map = {i: label for i, (_lo, _hi, label) in enumerate(DNBR_SEVERITY_CLASSES)}
+        return classified, class_map
+    raise ValueError(f"Accuracy assessment isn't available for tool '{tool}'. Available: {sorted(ACCURACY_ASSESSABLE_TOOLS)}.")
+
+
+def compute_accuracy_assessment(tool: str, aoi: Dict, reference_points: list, tool_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    reference_points: [{"lat": .., "lon": .., "true_class": "<label>"}, ...]
+    — true_class must match one of the tool's own class labels (returned
+    as class_options on the response either way, so a caller can show the
+    user exactly which labels are valid rather than guessing at typos).
+
+    Samples the SAME classified image/band the tool's own compute_*
+    function produces at each reference point, pairs the predicted label
+    with the point's stated true_class, and runs the pairs through
+    accuracy_stats.compute_confusion_matrix — Congalton-standard overall/
+    producer's/user's accuracy + kappa against independent reference data,
+    not a resubstitution shortcut."""
+    logger.info(f"GEE (remote sensing): accuracy_assessment tool={tool}")
+    if tool not in ACCURACY_ASSESSABLE_TOOLS:
+        raise ValueError(f"Accuracy assessment isn't available for tool '{tool}'. Available: {sorted(ACCURACY_ASSESSABLE_TOOLS)}.")
+    if not reference_points:
+        raise ValueError("At least a few reference points (lat, lon, true_class) are required.")
+
+    region = _polygon_geometry(aoi)
+    tool_params = tool_params or {}
+    classified, class_map = _classified_image_for_accuracy(tool, region, tool_params)
+    label_by_code = {int(code): label for code, label in class_map.items()}
+    valid_labels = sorted(set(label_by_code.values()))
+
+    fc = ee.FeatureCollection([
+        ee.Feature(ee.Geometry.Point([p["lon"], p["lat"]]), {"true_class": p["true_class"], "point_index": i})
+        for i, p in enumerate(reference_points)
+    ])
+    sampled = classified.rename("predicted_code").sampleRegions(
+        collection=fc, properties=["true_class", "point_index"], scale=10, tileScale=4,
+    ).getInfo()
+    features = sampled.get("features", [])
+
+    pairs, dropped_no_data, dropped_unrecognized = [], 0, 0
+    for f in features:
+        props = f["properties"]
+        code = props.get("predicted_code")
+        true_label = props.get("true_class")
+        if code is None:
+            dropped_no_data += 1
+            continue
+        if true_label not in valid_labels:
+            dropped_unrecognized += 1
+            continue
+        pairs.append((label_by_code.get(int(code), f"Unknown class {int(code)}"), true_label))
+
+    result = compute_confusion_matrix(pairs)
+    result.update({
+        "tool": tool,
+        "class_options": valid_labels,
+        "points_provided": len(reference_points),
+        "points_used": len(pairs),
+        "points_dropped_no_data": dropped_no_data,
+        "points_dropped_unrecognized_class": dropped_unrecognized,
+    })
+    return result
 
 
 def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
