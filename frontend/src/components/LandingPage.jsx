@@ -746,7 +746,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
               </span>
             </div>
 
-            <div style={{ fontFamily: "'Audiowide', " + S.sans, fontWeight: 400, letterSpacing: -0.5, fontSize: isMobile ? 28 : 46, lineHeight: 1.22, color: S.text, marginBottom: isMobile ? 16 : 24, textShadow: '0 4px 32px rgba(0,0,0,0.7)' }}>
+            <div style={{ fontFamily: 'Georgia, serif' + S.sans, fontWeight: 400, letterSpacing: -0.5, fontSize: isMobile ? 28 : 46, lineHeight: 1.22, color: S.text, marginBottom: isMobile ? 16 : 24, textShadow: '0 4px 32px rgba(0,0,0,0.7)' }}>
               One terminal for <span style={{ color: S.gold }}>everything above and around you.</span>
             </div>
             <div style={{ fontFamily: S.sans, fontWeight: 400, fontSize: isMobile ? 14 : 16, color: '#94A3B8', lineHeight: 1.7, marginBottom: isMobile ? 28 : 36, maxWidth: 480 }}>
