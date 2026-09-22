@@ -434,14 +434,14 @@ export default function HeroEarth({ disabled = false, style }) {
       starPos[i * 3 + 2] = r * Math.cos(phi);
     }
     starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xdbe6f0, size: 0.045, transparent: true, opacity: 0.5 }));
+    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xdbe6f0, size: 0.045, transparent: true, opacity: 0.6 }));
     scene.add(stars);
 
-    const sunLight = new THREE.DirectionalLight(0xffffff, 1.15);
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.25);
     sunLight.position.copy(WORLD_OFFSET.clone().add(SUN_DIR.clone().multiplyScalar(10)));
     sunLight.target.position.copy(WORLD_OFFSET);
     scene.add(sunLight, sunLight.target);
-    scene.add(new THREE.AmbientLight(0x1a2233, 0.55));
+    scene.add(new THREE.AmbientLight(0x1a2233, 0.65));
 
     // --- Photorealistic orbiting satellite ---
     // const sat = buildSatellite();
