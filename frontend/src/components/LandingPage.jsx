@@ -730,7 +730,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(0deg, rgba(7,10,15,1) 0%, rgba(7,10,15,0) 22%)' }} />
 
         <div style={{
-          position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1200, margin: '0 auto', padding: isMobile ? '0 20px' : '0 28px',
+          position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1600, margin: '0 auto', padding: isMobile ? '0 20px' : '0 40px',
           opacity: Math.max(0, 1 - parallaxY / 260), transform: `translateY(${parallaxY * 0.15}px)`,
         }}>
           <div style={{ maxWidth: 580 }}>

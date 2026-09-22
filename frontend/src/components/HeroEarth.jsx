@@ -140,12 +140,12 @@ function makeSolarPanelTexture() {
   c.width = 256; c.height = 512;
   const ctx = c.getContext('2d');
   const grad = ctx.createLinearGradient(0, 0, 256, 512);
-  grad.addColorStop(0, '#141c33');
-  grad.addColorStop(0.5, '#0d1226');
-  grad.addColorStop(1, '#161d38');
+  grad.addColorStop(0, '#2a4d84');
+  grad.addColorStop(0.5, '#15294f');
+  grad.addColorStop(1, '#2d5490');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 256, 512);
-  ctx.strokeStyle = 'rgba(180,195,225,0.55)';
+  ctx.strokeStyle = 'rgba(210,222,245,0.7)';
   ctx.lineWidth = 1.4;
   const cols = 6, rows = 12;
   for (let i = 0; i <= cols; i++) {
@@ -182,7 +182,8 @@ function makeRadiatorTexture() {
 function buildSatellite() {
   const group = new THREE.Group(); // orbit position only — never rotated
   const attitude = new THREE.Group(); // fixed-attitude body — orientation held constant
-  attitude.rotation.set(0.35, 0.9, 0.12);
+  attitude.rotation.set(0.32, 0.75, 0.16);
+  attitude.scale.setScalar(1.55);
   group.add(attitude);
 
   const hitMeshes = [];
@@ -190,13 +191,13 @@ function buildSatellite() {
   const solarTex = makeSolarPanelTexture();
   const radiatorTex = makeRadiatorTexture();
 
-  const foilMat = new THREE.MeshStandardMaterial({ color: 0xc79a56, metalness: 0.55, roughness: 0.42, bumpMap: foilBump, bumpScale: 0.006 });
-  const chassisMat = new THREE.MeshStandardMaterial({ color: 0xb9bfc7, metalness: 0.75, roughness: 0.3 });
+  const foilMat = new THREE.MeshStandardMaterial({ color: 0xd4af5a, metalness: 0.62, roughness: 0.38, bumpMap: foilBump, bumpScale: 0.006 });
+  const chassisMat = new THREE.MeshStandardMaterial({ color: 0xc7cdd4, metalness: 0.8, roughness: 0.28 });
   const darkMat = new THREE.MeshStandardMaterial({ color: 0x1c2027, metalness: 0.4, roughness: 0.6 });
-  const dishMat = new THREE.MeshStandardMaterial({ color: 0xe9ecef, metalness: 0.35, roughness: 0.28, side: THREE.DoubleSide });
+  const dishMat = new THREE.MeshStandardMaterial({ color: 0xf1f3f5, metalness: 0.3, roughness: 0.32, side: THREE.DoubleSide });
   const radiatorMat = new THREE.MeshStandardMaterial({ map: radiatorTex, metalness: 0.15, roughness: 0.45 });
-  const solarMat = new THREE.MeshPhysicalMaterial({ map: solarTex, metalness: 0.25, roughness: 0.35, clearcoat: 0.65, clearcoatRoughness: 0.22 });
-  const railMat = new THREE.MeshStandardMaterial({ color: 0xd8dbe0, metalness: 0.8, roughness: 0.25 });
+  const solarMat = new THREE.MeshPhysicalMaterial({ map: solarTex, metalness: 0.3, roughness: 0.3, clearcoat: 0.75, clearcoatRoughness: 0.18 });
+  const railMat = new THREE.MeshStandardMaterial({ color: 0xe4e7eb, metalness: 0.85, roughness: 0.22 });
 
   // --- Bus (main body) ---
   const bodyGeo = new THREE.BoxGeometry(0.15, 0.11, 0.2);
@@ -205,6 +206,13 @@ function buildSatellite() {
   hitMeshes.push(body);
   const edges = new THREE.LineSegments(new THREE.EdgesGeometry(bodyGeo), new THREE.LineBasicMaterial({ color: 0x2a2f36, transparent: true, opacity: 0.5 }));
   body.add(edges);
+  // Gold foil skirt wrapping the aft half — the crinkled-foil "blanket"
+  // look real comsats have below the equipment deck.
+  const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.086, 0.086, 0.09, 8, 1, true), foilMat);
+  skirt.position.set(0, 0, -0.06);
+  skirt.rotation.x = Math.PI / 2;
+  attitude.add(skirt);
+  hitMeshes.push(skirt);
 
   // Aft radiator deck
   const radiator = new THREE.Mesh(new THREE.BoxGeometry(0.152, 0.112, 0.02), radiatorMat);
@@ -212,25 +220,34 @@ function buildSatellite() {
   attitude.add(radiator);
   hitMeshes.push(radiator);
 
-  // --- Dish antenna, offset boom off the front face ---
-  const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.09, 8), chassisMat);
-  boom.rotation.z = Math.PI / 2.4;
-  boom.position.set(0.09, 0.07, 0.09);
+  // --- Large parabolic mesh dish, offset on its own boom — the
+  // single most recognizable silhouette element on a comsat, so it's
+  // sized to read clearly rather than as a minor greeble. ---
+  const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.13, 8), chassisMat);
+  boom.rotation.z = Math.PI / 2.5;
+  boom.position.set(0.12, 0.09, 0.1);
   attitude.add(boom);
   const dishPts = [];
-  for (let i = 0; i <= 10; i++) { const t = i / 10; dishPts.push(new THREE.Vector2(t * 0.065, t * t * 0.03)); }
-  const dish = new THREE.Mesh(new THREE.LatheGeometry(dishPts, 24), dishMat);
+  for (let i = 0; i <= 12; i++) { const t = i / 12; dishPts.push(new THREE.Vector2(t * 0.115, t * t * 0.05)); }
+  const dish = new THREE.Mesh(new THREE.LatheGeometry(dishPts, 28), dishMat);
   dish.rotation.x = Math.PI / 2;
-  dish.position.set(0.15, 0.11, 0.13);
+  dish.position.set(0.23, 0.16, 0.16);
   attitude.add(dish);
   hitMeshes.push(dish);
-  const feed = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 0.045, 6), darkMat);
-  feed.position.set(0.15, 0.155, 0.13);
+  const dishRim = new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.004, 8, 32), chassisMat);
+  dishRim.position.copy(dish.position);
+  dishRim.rotation.x = Math.PI / 2;
+  attitude.add(dishRim);
+  const feed = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.075, 6), darkMat);
+  feed.position.set(0.23, 0.235, 0.16);
   attitude.add(feed);
+  const feedHorn = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.02, 8, 1, true), darkMat);
+  feedHorn.position.set(0.23, 0.2, 0.16);
+  attitude.add(feedHorn);
 
   // Whip antennas
   [[-0.06, 0.06, 0.1, 0.5], [-0.02, 0.06, 0.1, -0.35]].forEach(([x, y, z, tilt]) => {
-    const whip = new THREE.Mesh(new THREE.CylinderGeometry(0.0015, 0.0015, 0.07, 5), darkMat);
+    const whip = new THREE.Mesh(new THREE.CylinderGeometry(0.0015, 0.0015, 0.08, 5), darkMat);
     whip.position.set(x, y, z);
     whip.rotation.z = tilt;
     attitude.add(whip);
@@ -238,7 +255,7 @@ function buildSatellite() {
 
   // Aft thruster nozzles
   [-0.045, 0.045].forEach((x) => {
-    const nozzle = new THREE.Mesh(new THREE.ConeGeometry(0.014, 0.03, 10, 1, true), darkMat);
+    const nozzle = new THREE.Mesh(new THREE.ConeGeometry(0.014, 0.032, 10, 1, true), darkMat);
     nozzle.rotation.x = Math.PI / 2;
     nozzle.position.set(x, -0.03, -0.135);
     attitude.add(nozzle);
@@ -259,24 +276,32 @@ function buildSatellite() {
     hinge.position.set(side * 0.078, 0, 0.02);
     attitude.add(hinge);
 
-    const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.03, 0.03), chassisMat);
+    const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.034, 0.034), chassisMat);
     hinge.add(yoke);
 
     const panelGroup = new THREE.Group();
     hinge.add(panelGroup);
 
-    const segCount = 3, segW = 0.09, segH = 0.2, gap = 0.006;
+    const segCount = 4, segW = 0.095, segH = 0.21, gap = 0.007;
     for (let i = 0; i < segCount; i++) {
-      const seg = new THREE.Mesh(new THREE.BoxGeometry(segW, segH, 0.004), solarMat);
+      const seg = new THREE.Mesh(new THREE.BoxGeometry(segW, segH, 0.005), solarMat);
       seg.position.set(side * (segW / 2 + i * (segW + gap)), 0, 0);
       panelGroup.add(seg);
       hitMeshes.push(seg);
-      const railTop = new THREE.Mesh(new THREE.BoxGeometry(segW, 0.006, 0.006), railMat);
-      railTop.position.set(seg.position.x, segH / 2, 0.003);
+      const railTop = new THREE.Mesh(new THREE.BoxGeometry(segW, 0.007, 0.007), railMat);
+      railTop.position.set(seg.position.x, segH / 2, 0.0035);
       panelGroup.add(railTop);
       const railBot = railTop.clone();
       railBot.position.y = -segH / 2;
       panelGroup.add(railBot);
+      // Slim hinge rod between consecutive panel segments — the sectioned
+      // look real deployable arrays have at each fold line.
+      if (i > 0) {
+        const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.0025, 0.0025, segH * 0.92, 6), railMat);
+        rod.rotation.z = Math.PI / 2;
+        rod.position.set(side * (i * (segW + gap) - gap / 2), 0, 0.003);
+        panelGroup.add(rod);
+      }
     }
 
     // rotation.y: 0 = deployed (extended sideways), ±HALF_PI = stowed
@@ -321,14 +346,17 @@ export default function HeroEarth({ disabled = false, style }) {
     let disposed = false;
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(42, mount.clientWidth / Math.max(mount.clientHeight, 1), 0.1, 100);
-    camera.position.set(0.4, 0.25, 2.85);
+    camera.position.set(0.4 + 0.95, 0.25 - 0.08, 2.85);
 
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     mount.appendChild(renderer.domElement);
 
-    const loader = new THREE.TextureLoader();
+    const texManager = new THREE.LoadingManager();
+    let texturesReady = false;
+    texManager.onLoad = () => { texturesReady = true; };
+    const loader = new THREE.TextureLoader(texManager);
     const loadTex = (url) => {
       const t = loader.load(url);
       t.colorSpace = THREE.SRGBColorSpace;
@@ -338,6 +366,16 @@ export default function HeroEarth({ disabled = false, style }) {
     const nightTex = loadTex(TEX.night);
     const cloudsTex = loadTex(TEX.clouds);
     const specTex = loadTex(TEX.specular);
+
+    // Everything but the starfield lives in worldGroup, offset to the
+    // right of the camera's look-at origin — this is what pushes the
+    // globe + satellite into a center-right composition, leaving the
+    // left of the hero clear for copy, without any lens distortion
+    // (camera + controls target move by the same offset below).
+    const WORLD_OFFSET = new THREE.Vector3(0.95, -0.08, 0);
+    const worldGroup = new THREE.Group();
+    worldGroup.position.copy(WORLD_OFFSET);
+    scene.add(worldGroup);
 
     const earthGeo = new THREE.SphereGeometry(1, 64, 64);
     const earthMat = new THREE.ShaderMaterial({
@@ -352,13 +390,13 @@ export default function HeroEarth({ disabled = false, style }) {
       fragmentShader: EARTH_FRAGMENT,
     });
     const earth = new THREE.Mesh(earthGeo, earthMat);
-    scene.add(earth);
+    worldGroup.add(earth);
 
     const cloudsMat = new THREE.MeshStandardMaterial({
       map: cloudsTex, transparent: true, opacity: 0.5, depthWrite: false, roughness: 1,
     });
     const clouds = new THREE.Mesh(new THREE.SphereGeometry(1.012, 64, 64), cloudsMat);
-    scene.add(clouds);
+    worldGroup.add(clouds);
 
     const atmosphereMat = new THREE.ShaderMaterial({
       uniforms: { glowColor: { value: new THREE.Color('#38BDF8') } },
@@ -370,9 +408,20 @@ export default function HeroEarth({ disabled = false, style }) {
       depthWrite: false,
     });
     const atmosphere = new THREE.Mesh(new THREE.SphereGeometry(1.16, 64, 64), atmosphereMat);
-    scene.add(atmosphere);
+    worldGroup.add(atmosphere);
+
+    // Textured meshes stay hidden until every texture has actually
+    // decoded — otherwise there's a frame (or several, on a slow
+    // connection) where THREE's default 1x1 white placeholder texture
+    // renders as a plain lit sphere, which reads as a broken blob
+    // rather than Earth. The satellite is procedural (canvas textures,
+    // no network fetch) so it's unaffected and appears immediately.
+    earth.visible = texturesReady; clouds.visible = texturesReady; atmosphere.visible = texturesReady;
+    texManager.onLoad = () => { earth.visible = true; clouds.visible = true; atmosphere.visible = true; };
 
     // Faint distant starfield for depth — cheap point cloud, no texture.
+    // Left centered on the true origin (not worldGroup) since it's an
+    // infinite backdrop, not part of the Earth/satellite composition.
     const starGeo = new THREE.BufferGeometry();
     const STAR_COUNT = 700;
     const starPos = new Float32Array(STAR_COUNT * 3);
@@ -388,18 +437,25 @@ export default function HeroEarth({ disabled = false, style }) {
     const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xdbe6f0, size: 0.045, transparent: true, opacity: 0.5 }));
     scene.add(stars);
 
-    const sunLight = new THREE.DirectionalLight(0xffffff, 1.1);
-    sunLight.position.copy(SUN_DIR.clone().multiplyScalar(10));
-    scene.add(sunLight);
-    scene.add(new THREE.AmbientLight(0x1a2233, 0.5));
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.15);
+    sunLight.position.copy(WORLD_OFFSET.clone().add(SUN_DIR.clone().multiplyScalar(10)));
+    sunLight.target.position.copy(WORLD_OFFSET);
+    scene.add(sunLight, sunLight.target);
+    scene.add(new THREE.AmbientLight(0x1a2233, 0.55));
 
     // --- Photorealistic orbiting satellite ---
     const sat = buildSatellite();
-    scene.add(sat.group);
-    const orbitRadius = 1.34;
-    const orbitTilt = 0.5; // radians, plane inclination
-    let orbitAngle = Math.random() * Math.PI * 2;
-    const orbitSpeed = 0.09; // rad/sec — slow, deliberate pass
+    worldGroup.add(sat.group);
+    const orbitRadius = 1.6;
+    const orbitTilt = 0.35; // radians, plane inclination
+    // Bounded arc rather than a full 360° revolution — a fixed,
+    // camera-facing sweep so the satellite is always in frame (a full
+    // orbit would spend half its time hidden behind the globe or off
+    // to the side), while still visibly "moving in its orbit".
+    const ORBIT_CENTER = 0.5;
+    const ORBIT_AMPLITUDE = 0.32;
+    const ORBIT_SPEED = 0.16;
+    let orbitT = 0;
     const raycaster = new THREE.Raycaster();
     const pointerNDC = new THREE.Vector2();
 
@@ -433,6 +489,7 @@ export default function HeroEarth({ disabled = false, style }) {
     renderer.domElement.addEventListener('pointermove', onPointerMove);
 
     const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.copy(WORLD_OFFSET);
     controls.enablePan = false;
     controls.enableZoom = false;
     controls.enableDamping = true;
@@ -454,14 +511,17 @@ export default function HeroEarth({ disabled = false, style }) {
       clouds.rotation.y += 0.0006;
       earthMat.uniforms.cameraWorldPosition.value.copy(camera.position);
 
-      // Orbit motion — only the group's POSITION advances around Earth;
-      // its attitude (set once in buildSatellite) is never touched here,
-      // so the satellite keeps a fixed orientation through the whole
-      // pass rather than re-facing the direction of travel.
-      orbitAngle += orbitSpeed * dt;
-      const cx = Math.cos(orbitAngle) * orbitRadius;
-      const cz = Math.sin(orbitAngle) * orbitRadius;
-      sat.group.position.set(cx, Math.sin(orbitAngle * 1) * orbitRadius * Math.sin(orbitTilt), cz * Math.cos(orbitTilt));
+      // Orbit motion — only the group's POSITION advances along a
+      // bounded, camera-facing arc; its attitude (set once in
+      // buildSatellite) is never touched here, so the satellite keeps
+      // a fixed orientation through the whole pass rather than
+      // re-facing the direction of travel. Position is local to
+      // worldGroup (which already carries the WORLD_OFFSET).
+      orbitT += ORBIT_SPEED * dt;
+      const angle = ORBIT_CENTER + Math.sin(orbitT) * ORBIT_AMPLITUDE;
+      const cx = Math.cos(angle) * orbitRadius;
+      const cz = Math.sin(angle) * orbitRadius;
+      sat.group.position.set(cx, Math.sin(angle) * orbitRadius * Math.sin(orbitTilt) * 0.4, cz * Math.cos(orbitTilt));
 
       // Smoothly ease each wing hinge toward its deploy/stow target.
       sat.wings.forEach((w) => {
