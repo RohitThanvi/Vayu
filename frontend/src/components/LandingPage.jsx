@@ -756,11 +756,11 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
             </div>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               <button className="vayu-cta-primary" onClick={() => setTierModalOpen(true)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: isMobile ? '13px 24px' : '15px 30px', fontFamily: S.sans, fontSize: 13, letterSpacing: 0.3, background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 999, color: '#0c0e12', fontWeight: 600, cursor: 'pointer', boxShadow: '0 4px 28px rgba(212,175,55,0.35)' }}>
-                Enter Terminal <span aria-hidden>&rarr;</span>
+                style={{ padding: isMobile ? '13px 26px' : '14px 32px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#05070c', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 24px rgba(201,168,106,0.3)' }}>
+                Enter Terminal
               </button>
               <button className="vayu-cta-secondary" onClick={() => scrollTo('about')}
-                style={{ padding: isMobile ? '13px 22px' : '15px 28px', fontFamily: S.sans, fontSize: 13, letterSpacing: 0.3, background: S.glass, backdropFilter: 'blur(24px)', border: `1px solid ${S.border}`, borderRadius: 999, color: S.text2, cursor: 'pointer' }}>
+                style={{ padding: isMobile ? '13px 22px' : '14px 28px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: 'rgba(13,17,23,0.7)', backdropFilter: 'blur(4px)', border: `1px solid ${S.borderLight}`, borderRadius: 4, color: S.text, cursor: 'pointer' }}>
                 See What It Does
               </button>
             </div>
