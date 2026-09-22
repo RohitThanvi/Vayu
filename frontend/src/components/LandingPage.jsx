@@ -26,7 +26,6 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useIsMobile } from '../hooks/useIsMobile';
-import HeroEarth from './HeroEarth';
 
 // Account system (signup/login/password-reset) is disabled for the MVP
 // tier-picker pivot — see banner comments below and in AppGate.jsx /
@@ -34,25 +33,16 @@ import HeroEarth from './HeroEarth';
 const RESET_PASSWORD_ENABLED = false;
 
 const S = {
-  // Design system: Deep Space Obsidian / Navy Graphite / Midnight Glass,
-  // Icy Silver text, muted Phosphor Gold for critical/CTA accents, a
-  // desaturated Cyan-Slate for data/atmosphere accents — replaces the
-  // prior pure-white/saturated-gold terminal palette with something
-  // closer to a premium spatial-computing product than a hacker console.
-  bg: '#070A0F', surface2: '#0E131F', surface3: '#141B2B',
-  glass: 'rgba(15,23,42,0.45)', glassStrong: 'rgba(15,23,42,0.68)',
-  border: 'rgba(255,255,255,0.08)', borderLight: 'rgba(255,255,255,0.14)',
-  text: '#E2E8F0', text2: 'rgba(226,232,240,0.86)', text3: 'rgba(226,232,240,0.68)', text4: 'rgba(226,232,240,0.48)',
-  gold: '#D4AF37', goldBright: '#e8c96a', goldDim: 'rgba(212,175,55,0.5)',
-  accent: '#38BDF8', accentDim: 'rgba(56,189,248,0.3)',
+  bg: '#05070c', surface: 'rgba(13,17,23,0.88)', surface2: '#0d1117', surface3: '#111826', border: '#2a3040', borderLight: '#3a4257',
+  // Bumped from 0.5/0.75 — the old text3 sat around ~5:1 contrast on this
+  // background, which reads as "washed out" for small mono body copy even
+  // though it technically cleared AA. text2/text3 raised so descriptive
+  // copy stays legible without going full white (keeps the muted terminal
+  // mood); text4 is for genuinely decorative/tertiary labels only.
+  text: '#ffffff', text2: 'rgba(255,255,255,0.86)', text3: 'rgba(255,255,255,0.68)', text4: 'rgba(255,255,255,0.5)',
+  gold: '#c9a86a', goldBright: '#f5d98a', goldDim: 'rgba(201,168,106,0.55)', accent: '#7eb8d4',
   mono: "'JetBrains Mono','Courier New',monospace",
-  sans: "'Inter','SF Pro Display',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
 };
-// Back-compat alias — several blocks below still read S.surface for a
-// solid (non-glass) card background; kept distinct from S.glass since
-// not every surface should carry a blur (perf cost on scroll-heavy
-// areas like the stat grid).
-S.surface = S.surface2;
 
 const SECTIONS = [['home', 'Home'], ['about', 'About'], ['contact', 'Contact']];
 
@@ -81,7 +71,6 @@ const FEATURES = [
 // this is the one place this file breaks from inline styles.
 const GlobalStyle = () => (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Audiowide&display=swap');
     @keyframes vayu-spin { to { transform: rotate(360deg); } }
     @keyframes vayu-kenburns {
       0%   { transform: scale(1.06) translate(0%, 0%); }
@@ -90,8 +79,6 @@ const GlobalStyle = () => (
     }
     @keyframes vayu-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
     @keyframes vayu-modal-pop-in { from { opacity: 0; transform: scale(0.94) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-    @keyframes vayu-pulse { 0%, 100% { opacity: 1; box-shadow: 0 0 4px #38BDF8, 0 0 10px rgba(56,189,248,0.5); } 50% { opacity: 0.4; box-shadow: 0 0 2px #38BDF8; } }
-    .vayu-live-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #38BDF8; animation: vayu-pulse 2.2s ease-in-out infinite; flex-shrink: 0; }
     .vayu-hero-bg { animation: vayu-kenburns 34s ease-in-out infinite; }
     .vayu-feature-card { transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease; transform-style: preserve-3d; }
     .vayu-feature-card:hover { border-color: #c9a86a66; box-shadow: 0 22px 50px rgba(0,0,0,0.55), 0 4px 16px rgba(201,168,106,0.12); }
@@ -106,9 +93,9 @@ const GlobalStyle = () => (
     .vayu-nav-btn:hover { color: #f5d98a !important; }
     .vayu-nav-btn:hover::after { transform: scaleX(1); }
     .vayu-cta-primary { transition: transform 0.2s ease, box-shadow 0.2s ease; }
-    .vayu-cta-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(212,175,55,0.55), 0 0 0 1px rgba(212,175,55,0.3); }
-    .vayu-cta-secondary { transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease; }
-    .vayu-cta-secondary:hover { border-color: rgba(56,189,248,0.4); color: #ffffff; background: rgba(15,23,42,0.68); }
+    .vayu-cta-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(201,168,106,0.45); }
+    .vayu-cta-secondary { transition: border-color 0.2s ease, color 0.2s ease; }
+    .vayu-cta-secondary:hover { border-color: #c9a86a; color: #f5d98a; }
     .vayu-stat-card { transition: border-color 0.25s ease, transform 0.25s ease; }
     .vayu-stat-card:hover { border-color: #c9a86a55; transform: translateY(-3px); }
     .vayu-tier-option { transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease; }
@@ -159,10 +146,7 @@ function Icon({ path, size = 20, color = S.gold }) {
 // Scroll-reveal wrapper: fades + rises into place the first time it
 // enters the viewport, then stays (disconnects its own observer —
 // this is a one-time entrance, not a repeat-on-every-scroll effect).
-// `variant`: 'rise' (default, translateY only — for body text/paragraphs)
-// or 'scale' (translateY + scale-up + blur-out — the punchier Atlys-style
-// entrance, used for cards/tiles/icons where a bit of "pop" reads well).
-function Reveal({ children, delay = 0, root, variant = 'rise' }) {
+function Reveal({ children, delay = 0, root }) {
   const ref = useRef(null);
   const [visible, setVisible] = useState(false);
 
@@ -179,15 +163,11 @@ function Reveal({ children, delay = 0, root, variant = 'rise' }) {
     return () => observer.disconnect();
   }, [root]);
 
-  const hiddenTransform = variant === 'scale' ? 'translateY(34px) scale(0.94)' : 'translateY(28px)';
-
   return (
     <div ref={ref} style={{
       opacity: visible ? 1 : 0,
-      transform: visible ? 'translateY(0) scale(1)' : hiddenTransform,
-      filter: variant === 'scale' ? (visible ? 'blur(0px)' : 'blur(6px)') : 'none',
-      transition: `opacity 0.7s cubic-bezier(0.16,1,0.3,1) ${delay}s, transform 0.7s cubic-bezier(0.16,1,0.3,1) ${delay}s, filter 0.7s ease ${delay}s`,
-      willChange: 'opacity, transform',
+      transform: visible ? 'translateY(0)' : 'translateY(28px)',
+      transition: `opacity 0.7s ease ${delay}s, transform 0.7s ease ${delay}s`,
     }}>
       {children}
     </div>
@@ -410,7 +390,7 @@ function TierPickerModal({ onSelect, onClose, isMobile }) {
           <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 6, textAlign: 'center' }}>
             Choose your terminal
           </div>
-          <div style={{ fontFamily: S.sans, fontWeight: 600, fontSize: isMobile ? 17 : 20, color: S.text, marginBottom: 20, textAlign: 'center' }}>
+          <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 17 : 20, color: S.text, marginBottom: 20, textAlign: 'center' }}>
             Which slice of Vayu do you need?
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(155px, 1fr))', gap: 12 }}>
@@ -557,7 +537,6 @@ function ContactForm({ apiUrl }) {
 export default function LandingPage({ apiUrl, onSelectTier }) {
   const [activeSection, setActiveSection] = useState('home');
   const [parallaxY, setParallaxY] = useState(0);
-  const [scrollProgress, setScrollProgress] = useState(0);
   const [tierModalOpen, setTierModalOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useIsMobile(760);
@@ -597,8 +576,6 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
       ticking = true;
       requestAnimationFrame(() => {
         setParallaxY(container.scrollTop * 0.25);
-        const max = container.scrollHeight - container.clientHeight;
-        setScrollProgress(max > 0 ? Math.min(1, container.scrollTop / max) : 0);
         ticking = false;
       });
     };
@@ -623,34 +600,12 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         <TierPickerModal onSelect={(tier) => { setTierModalOpen(false); onSelectTier(tier); }} onClose={() => setTierModalOpen(false)} isMobile={isMobile} />
       )}
 
-      {/* Scroll progress bar — thin gold hairline that fills left-to-right
-          as the page scrolls, pinned above the navbar so it reads at a
-          glance without competing with the nav content. */}
-      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 101, height: 2, background: 'rgba(255,255,255,0.06)' }}>
-        <div style={{
-          height: '100%', width: `${scrollProgress * 100}%`,
-          background: `linear-gradient(90deg, ${S.gold}, ${S.goldBright})`,
-          boxShadow: `0 0 8px ${S.goldDim}`, transition: 'width 0.1s linear',
-        }} />
-      </div>
-
-      {/* Navbar — compacts (less vertical padding, more opaque backdrop)
-          once the hero has scrolled past, Atlys-style "shrinking header". */}
-      <div style={{
-        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
-        background: `rgba(5,7,12,${Math.min(0.97, 0.85 + parallaxY / 800)})`,
-        backdropFilter: 'blur(8px)', borderBottom: `1px solid ${S.border}`,
-        transition: 'background 0.2s ease',
-      }}>
-        <div style={{
-          maxWidth: 1200, margin: '0 auto',
-          padding: isMobile ? '12px 18px' : `${Math.max(9, 14 - parallaxY / 40)}px 28px`,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          transition: 'padding 0.2s ease',
-        }}>
+      {/* Navbar */}
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, background: 'rgba(5,7,12,0.85)', backdropFilter: 'blur(8px)', borderBottom: `1px solid ${S.border}` }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '12px 18px' : '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
             <img src="/logo.png" alt="Vayu" width="20" height="20" style={{ display: 'block', filter: 'drop-shadow(0 0 4px rgba(201,168,106,0.4))' }} />
-            <div style={{ fontFamily: "'Orbitron', " + S.mono, fontSize: 14, letterSpacing: 3, color: S.gold, fontWeight: 700 }}>VAYU</div>
+            <div style={{ fontFamily: S.mono, fontSize: 14, letterSpacing: 3, color: S.gold, fontWeight: 700 }}>VAYU</div>
           </div>
 
           {!isMobile && (
@@ -707,49 +662,41 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         )}
       </div>
 
-      {/* Home / Hero — photorealistic 3D Earth (HeroEarth.jsx) instead of
-          the old static satellite photo; disabled on mobile in favor of
-          its own built-in static-image fallback (perf/battery). */}
-      <div ref={el => sectionRefs.current.home = el} data-section="home" style={{ position: 'relative', height: '100vh', overflow: 'hidden', background: S.bg }}>
-        <div style={{ position: 'absolute', inset: 0, transform: `translateY(${parallaxY * 0.3}px) scale(1.04)` }}>
-          <HeroEarth disabled={isMobile} />
+      {/* Home / Hero */}
+      <div ref={el => sectionRefs.current.home = el} data-section="home" style={{ position: 'relative', height: '100vh', overflow: 'hidden' }}>
+        {/* Scroll-driven layer (translateY only) wraps an independently
+            always-animating Ken Burns layer (CSS keyframes) — two
+            separate transform sources on two separate elements, so
+            they don't fight over the same inline style. */}
+        <div style={{ position: 'absolute', inset: 0, transform: `translateY(${parallaxY * 0.3}px)` }}>
+          <div className="vayu-hero-bg" style={{
+            position: 'absolute', inset: -24,
+            backgroundImage: 'url(/hero-satellite.jpg)', backgroundSize: 'cover', backgroundPosition: 'center',
+          }} />
         </div>
 
-        {/* WCAG-AAA scrim: vertical (top-to-bottom) fade per the design
-            spec, layered with a horizontal fade toward the text column
-            so headline/body copy stays crisp regardless of what part of
-            the globe happens to sit behind it. */}
         <div style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
-          background: 'linear-gradient(180deg, rgba(7,10,15,0.85) 0%, rgba(7,10,15,0.35) 45%, rgba(7,10,15,0.2) 100%)',
+          background: 'linear-gradient(115deg, rgba(5,7,12,0.92) 0%, rgba(5,7,12,0.72) 32%, rgba(5,7,12,0.2) 62%, rgba(5,7,12,0.05) 100%)',
         }} />
-        <div style={{
-          position: 'absolute', inset: 0, pointerEvents: 'none',
-          background: 'linear-gradient(100deg, rgba(7,10,15,0.88) 0%, rgba(7,10,15,0.6) 30%, rgba(7,10,15,0.15) 60%, rgba(7,10,15,0.05) 100%)',
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(0deg, rgba(5,7,12,1) 0%, rgba(5,7,12,0) 18%)' }} />
+        <img src="/logo.png" alt="" aria-hidden style={{
+          position: 'absolute', right: '6%', bottom: '10%', width: isMobile ? 120 : 220, opacity: 0.07,
+          filter: 'grayscale(0.4)', pointerEvents: 'none',
         }} />
-        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(0deg, rgba(7,10,15,1) 0%, rgba(7,10,15,0) 22%)' }} />
 
         <div style={{
-          position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1600, margin: '0 auto', padding: isMobile ? '0 20px' : '0 40px',
+          position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1200, margin: '0 auto', padding: isMobile ? '0 20px' : '0 28px',
           opacity: Math.max(0, 1 - parallaxY / 260), transform: `translateY(${parallaxY * 0.15}px)`,
         }}>
-          <div style={{ maxWidth: 580 }}>
-            {/* Overline badge — pill with a live pulsing dot, glassmorphic */}
-            {/* <div style={{
-              display: 'inline-flex', alignItems: 'center', gap: 9, padding: isMobile ? '6px 12px' : '7px 14px',
-              background: S.glass, backdropFilter: 'blur(24px)', border: `1px solid ${S.border}`, borderRadius: 999,
-              marginBottom: isMobile ? 16 : 20,
-            }}>
-              <span className="vayu-live-dot" />
-              <span style={{ fontFamily: S.mono, fontSize: isMobile ? 10 : 11, letterSpacing: isMobile ? 1.5 : 2.5, color: S.text3, textTransform: 'uppercase' }}>
-                Geospatial &amp; Business Intelligence
-              </span>
-            </div> */}
-
-            <div style={{ fontFamily: 'Georgia, serif', fontWeight: 400, letterSpacing: -0.5, fontSize: isMobile ? 28 : 46, lineHeight: 1.22, color: S.text, marginBottom: isMobile ? 16 : 24, textShadow: '0 4px 32px rgba(0,0,0,0.7)',}}>
-                One terminal for{' '} <span style={{ color: S.gold }}> everything above and around you.</span>
+          <div style={{ maxWidth: 560 }}>
+            <div style={{ fontFamily: S.mono, fontSize: isMobile ? 10.5 : 12, letterSpacing: isMobile ? 2 : 3, color: S.text3, textTransform: 'uppercase', marginBottom: isMobile ? 12 : 16 }}>
+              Geospatial &amp; Business Intelligence
             </div>
-            <div style={{ fontFamily: S.sans, fontWeight: 400, fontSize: isMobile ? 14 : 16, color: '#94A3B8', lineHeight: 1.7, marginBottom: isMobile ? 28 : 36, maxWidth: 480 }}>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 32 : 50, lineHeight: 1.18, color: S.text, marginBottom: isMobile ? 16 : 22, textShadow: '0 2px 24px rgba(0,0,0,0.6)' }}>
+              One terminal for <span style={{ color: S.gold }}>everything above and around you.</span>
+            </div>
+            <div style={{ fontFamily: S.mono, fontSize: isMobile ? 12.5 : 13.5, color: S.text2, lineHeight: 1.75, marginBottom: isMobile ? 26 : 34, maxWidth: 480 }}>
               Live satellite analysis, maritime &amp; aviation tracking, commodity
               markets, drought &amp; agricultural risk scoring, and global hazard
               intel — unified, live, and actionable.
@@ -768,7 +715,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         </div>
 
         <div style={{
-          position: 'absolute', bottom: isMobile ? 16 : 22, left: '50%', transform: 'translateX(-50%)', zIndex: 1,
+          position: 'absolute', bottom: isMobile ? 16 : 26, left: '50%', transform: 'translateX(-50%)', zIndex: 1,
           fontFamily: S.mono, fontSize: 10, letterSpacing: 2, color: S.text3, textTransform: 'uppercase', textAlign: 'center',
           opacity: Math.max(0, 1 - parallaxY / 120),
         }}>
@@ -782,7 +729,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>About</div>
-            <div style={{ fontFamily: S.sans, fontWeight: 600, fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 18 }}>What Vayu actually does</div>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 18 }}>What Vayu actually does</div>
             <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.85, maxWidth: 760, marginBottom: isMobile ? 40 : 56 }}>
               Vayu pulls together satellite imagery, maritime &amp; flight traffic, weather and
               air quality, commodity prices, and government agricultural data into one
@@ -796,28 +743,26 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
           {/* Stat strip — quiet infographic, same palette as the rest of
               the page (gold hairline icons on dark cards) so it reads as
               part of the design rather than a bolted-on dashboard widget. */}
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(200px, 1fr))', gap: isMobile ? 10 : 16, marginBottom: isMobile ? 44 : 64 }}>
-            {STATS.map((s, i) => (
-              <Reveal key={s.label} delay={i * 0.08} variant="scale" root={scrollContainerRef.current}>
-                <div className="vayu-stat-card" style={{ background: S.glass, backdropFilter: 'blur(24px)', border: `1px solid ${S.border}`, borderRadius: 14, padding: isMobile ? '16px 14px' : '20px 20px', height: '100%' }}>
+          <Reveal root={scrollContainerRef.current}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(200px, 1fr))', gap: isMobile ? 10 : 16, marginBottom: isMobile ? 44 : 64 }}>
+              {STATS.map((s) => (
+                <div key={s.label} className="vayu-stat-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, padding: isMobile ? '16px 14px' : '20px 20px' }}>
                   <div style={{ marginBottom: 14 }}><Icon path={s.icon} /></div>
-                  <div style={{ fontFamily: S.sans, fontWeight: 600, fontSize: 26, color: S.goldBright, marginBottom: 6 }}>{s.n}</div>
+                  <div style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: S.goldBright, marginBottom: 6 }}>{s.n}</div>
                   <div style={{ fontFamily: S.mono, fontSize: 11.5, color: S.text3, lineHeight: 1.5 }}>{s.label}</div>
                 </div>
-              </Reveal>
-            ))}
-          </div>
+              ))}
+            </div>
+          </Reveal>
 
           {/* How it works — a simple three-step flow, connected with a
               single hairline instead of arrows/animation, to stay calm
               rather than "dashboard-y". */}
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 2.5, color: S.text3, textTransform: 'uppercase', marginBottom: 24 }}>How it works</div>
-          </Reveal>
-          <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 28, marginBottom: isMobile ? 44 : 64 }}>
-            {FLOW.map((f, i) => (
-              <Reveal key={f.title} delay={i * 0.12} variant="scale" root={scrollContainerRef.current}>
-                <div className="vayu-flow-node" style={{ position: 'relative' }}>
+            <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 28, marginBottom: isMobile ? 44 : 64 }}>
+              {FLOW.map((f, i) => (
+                <div key={f.title} className="vayu-flow-node" style={{ position: 'relative' }}>
                   <div style={{ width: 38, height: 38, borderRadius: '50%', background: S.surface2, border: `1px solid ${S.goldDim}`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                     <Icon path={f.icon} size={18} />
                   </div>
@@ -826,14 +771,14 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
                   </div>
                   <div style={{ fontFamily: S.mono, fontSize: 12, color: S.text3, lineHeight: 1.6, maxWidth: 320 }}>{f.desc}</div>
                 </div>
-              </Reveal>
-            ))}
-          </div>
+              ))}
+            </div>
+          </Reveal>
 
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(260px, 1fr))', gap: isMobile ? 18 : 28 }}>
             {FEATURES.map((f, i) => (
-              <Reveal key={f.title} delay={i * 0.1} variant="scale" root={scrollContainerRef.current}>
-                <TiltCard className="vayu-feature-card" style={{ background: S.glass, backdropFilter: 'blur(24px)', border: `1px solid ${S.border}`, borderRadius: 14, overflow: 'hidden', height: '100%' }}>
+              <Reveal key={f.title} delay={i * 0.1} root={scrollContainerRef.current}>
+                <TiltCard className="vayu-feature-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, overflow: 'hidden', height: '100%' }}>
                   <div style={{ overflow: 'hidden' }}>
                     <img className="vayu-feature-img" src={f.img} alt={f.title} style={{ width: '100%', height: 160, objectFit: 'cover', display: 'block', borderBottom: `1px solid ${S.border}` }} />
                   </div>
@@ -853,7 +798,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Contact</div>
-            <div style={{ fontFamily: S.sans, fontWeight: 600, fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 30 }}>Get in touch</div>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 30 }}>Get in touch</div>
             <ContactForm apiUrl={apiUrl} />
           </Reveal>
         </div>
