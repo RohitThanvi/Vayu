@@ -10,9 +10,9 @@
 import { useState } from 'react';
 
 const S = {
-  surface2: '#0f1419', border: '#2a3040',
-  text2: 'rgba(255,255,255,0.8)', text3: 'rgba(255,255,255,0.6)',
-  accent: '#7eb8d4', mono: "'JetBrains Mono','Courier New',monospace",
+  surface2: 'var(--vayu-surface2)', border: 'var(--vayu-border)',
+  text2: 'var(--vayu-text2)', text3: 'var(--vayu-text3)',
+  accent: 'var(--vayu-accent)', mono: "'JetBrains Mono','Courier New',monospace",
 };
 
 export default function SubscribeWidget({ apiUrl }) {

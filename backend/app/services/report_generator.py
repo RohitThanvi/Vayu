@@ -2305,6 +2305,7 @@ RS_TOOL_LABELS = {
     "dynamic_world": "Dynamic World (ML Land Cover)",
     "accuracy_assessment": "Accuracy Assessment",
     "flood_mapping": "Flood Mapping (SAR)",
+    "soil_moisture": "Soil Moisture (SMAP)",
 }
 
 RS_GLOSSARY = [
@@ -2323,6 +2324,7 @@ RS_GLOSSARY = [
     ("Column density", "For atmospheric gases (NO2/SO2/CO): total mass of the gas in a vertical column of atmosphere, not ground-level concentration."),
     ("Valid pixel fraction", "Share of the AOI actually covered by cloud-free (unmasked) pixels in the composite used for this result."),
     ("Std. deviation (\u03c3)", "Spread of pixel values within the AOI around the reported mean \u2014 a rough indicator of spatial heterogeneity/uncertainty."),
+    ("Volumetric water content (m\u00b3/m\u00b3)", "Soil moisture expressed as the fraction of soil volume occupied by water \u2014 SMAP's native unit. ~0.05 is very dry, ~0.4+ is saturated."),
 ]
 
 
@@ -2436,6 +2438,17 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
                 ("Avg. months/year water present", _fmt_num(result.get("avg_months_per_year_water_present")), ""),
                 ("Permanent-water threshold used", str(result.get("permanent_threshold_used", "N/A")), ""),
             ]
+        elif tool == "soil_moisture":
+            sm = result.get("sm_surface") or {}
+            if sm.get("mean") is not None:
+                rows += [
+                    ("Surface soil moisture — mean", _fmt_num(sm.get("mean"), 4), sm.get("units", "m³/m³")),
+                    ("Surface soil moisture — min / max", f"{_fmt_num(sm.get('min'), 4)} / {_fmt_num(sm.get('max'), 4)}", ""),
+                    ("Surface soil moisture — std. dev.", _fmt_num(sm.get("std_dev"), 4), ""),
+                    ("Scenes used", str(result.get("scene_count", "N/A")), ""),
+                ]
+            else:
+                rows.append(("Soil Moisture (SMAP)", "No SMAP coverage found for this AOI/date range", ""))
     except Exception as e:
         logger.warning(f"_rs_metric_rows failed for tool={tool}: {type(e).__name__}: {e}")
     return rows

@@ -37,16 +37,23 @@
 }
 
 [data-theme="light"] {
+  /* Contrast pass: the original 0.78/0.55-alpha grays measured well on
+     paper (AA for large text) but read as washed-out for the small
+     (11-13px) mono body copy this app uses everywhere — the actual
+     complaint was real. text2 raised to a near-solid ink (still not
+     pure black, keeps some softness) and text3 raised well past AA-for-
+     small-text territory (~7:1+ on --vayu-surface) since it's used for
+     labels/captions people still need to read quickly, not decoration. */
   --vayu-bg: #f4f5f7;
   --vayu-surface: #ffffff;
   --vayu-surface2: #eef0f3;
-  --vayu-border: #d6dae1;
-  --vayu-border2: #b9c0cb;
-  --vayu-text: #12151a;
-  --vayu-text2: rgba(18,21,26,0.78);
-  --vayu-text3: rgba(18,21,26,0.55);
-  --vayu-accent: #2f7fa8;
-  --vayu-gold: #a3803f;
+  --vayu-border: #c6cbd4;
+  --vayu-border2: #a3aab6;
+  --vayu-text: #0c0e12;
+  --vayu-text2: rgba(12,14,18,0.92);
+  --vayu-text3: rgba(12,14,18,0.78);
+  --vayu-accent: #256d92;
+  --vayu-gold: #8a6a2e;
 }
 
 * { box-sizing: border-box; }

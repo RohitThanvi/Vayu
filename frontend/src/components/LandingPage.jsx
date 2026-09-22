@@ -146,7 +146,10 @@ function Icon({ path, size = 20, color = S.gold }) {
 // Scroll-reveal wrapper: fades + rises into place the first time it
 // enters the viewport, then stays (disconnects its own observer —
 // this is a one-time entrance, not a repeat-on-every-scroll effect).
-function Reveal({ children, delay = 0, root }) {
+// `variant`: 'rise' (default, translateY only — for body text/paragraphs)
+// or 'scale' (translateY + scale-up + blur-out — the punchier Atlys-style
+// entrance, used for cards/tiles/icons where a bit of "pop" reads well).
+function Reveal({ children, delay = 0, root, variant = 'rise' }) {
   const ref = useRef(null);
   const [visible, setVisible] = useState(false);
 
@@ -163,11 +166,15 @@ function Reveal({ children, delay = 0, root }) {
     return () => observer.disconnect();
   }, [root]);
 
+  const hiddenTransform = variant === 'scale' ? 'translateY(34px) scale(0.94)' : 'translateY(28px)';
+
   return (
     <div ref={ref} style={{
       opacity: visible ? 1 : 0,
-      transform: visible ? 'translateY(0)' : 'translateY(28px)',
-      transition: `opacity 0.7s ease ${delay}s, transform 0.7s ease ${delay}s`,
+      transform: visible ? 'translateY(0) scale(1)' : hiddenTransform,
+      filter: variant === 'scale' ? (visible ? 'blur(0px)' : 'blur(6px)') : 'none',
+      transition: `opacity 0.7s cubic-bezier(0.16,1,0.3,1) ${delay}s, transform 0.7s cubic-bezier(0.16,1,0.3,1) ${delay}s, filter 0.7s ease ${delay}s`,
+      willChange: 'opacity, transform',
     }}>
       {children}
     </div>
@@ -537,6 +544,7 @@ function ContactForm({ apiUrl }) {
 export default function LandingPage({ apiUrl, onSelectTier }) {
   const [activeSection, setActiveSection] = useState('home');
   const [parallaxY, setParallaxY] = useState(0);
+  const [scrollProgress, setScrollProgress] = useState(0);
   const [tierModalOpen, setTierModalOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useIsMobile(760);
@@ -576,6 +584,8 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
       ticking = true;
       requestAnimationFrame(() => {
         setParallaxY(container.scrollTop * 0.25);
+        const max = container.scrollHeight - container.clientHeight;
+        setScrollProgress(max > 0 ? Math.min(1, container.scrollTop / max) : 0);
         ticking = false;
       });
     };
@@ -600,9 +610,31 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         <TierPickerModal onSelect={(tier) => { setTierModalOpen(false); onSelectTier(tier); }} onClose={() => setTierModalOpen(false)} isMobile={isMobile} />
       )}
 
-      {/* Navbar */}
-      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, background: 'rgba(5,7,12,0.85)', backdropFilter: 'blur(8px)', borderBottom: `1px solid ${S.border}` }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '12px 18px' : '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      {/* Scroll progress bar — thin gold hairline that fills left-to-right
+          as the page scrolls, pinned above the navbar so it reads at a
+          glance without competing with the nav content. */}
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 101, height: 2, background: 'rgba(255,255,255,0.06)' }}>
+        <div style={{
+          height: '100%', width: `${scrollProgress * 100}%`,
+          background: `linear-gradient(90deg, ${S.gold}, ${S.goldBright})`,
+          boxShadow: `0 0 8px ${S.goldDim}`, transition: 'width 0.1s linear',
+        }} />
+      </div>
+
+      {/* Navbar — compacts (less vertical padding, more opaque backdrop)
+          once the hero has scrolled past, Atlys-style "shrinking header". */}
+      <div style={{
+        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
+        background: `rgba(5,7,12,${Math.min(0.97, 0.85 + parallaxY / 800)})`,
+        backdropFilter: 'blur(8px)', borderBottom: `1px solid ${S.border}`,
+        transition: 'background 0.2s ease',
+      }}>
+        <div style={{
+          maxWidth: 1200, margin: '0 auto',
+          padding: isMobile ? '12px 18px' : `${Math.max(9, 14 - parallaxY / 40)}px 28px`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          transition: 'padding 0.2s ease',
+        }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
             <img src="/logo.png" alt="Vayu" width="20" height="20" style={{ display: 'block', filter: 'drop-shadow(0 0 4px rgba(201,168,106,0.4))' }} />
             <div style={{ fontFamily: S.mono, fontSize: 14, letterSpacing: 3, color: S.gold, fontWeight: 700 }}>VAYU</div>
@@ -743,26 +775,28 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
           {/* Stat strip — quiet infographic, same palette as the rest of
               the page (gold hairline icons on dark cards) so it reads as
               part of the design rather than a bolted-on dashboard widget. */}
-          <Reveal root={scrollContainerRef.current}>
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(200px, 1fr))', gap: isMobile ? 10 : 16, marginBottom: isMobile ? 44 : 64 }}>
-              {STATS.map((s) => (
-                <div key={s.label} className="vayu-stat-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, padding: isMobile ? '16px 14px' : '20px 20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(200px, 1fr))', gap: isMobile ? 10 : 16, marginBottom: isMobile ? 44 : 64 }}>
+            {STATS.map((s, i) => (
+              <Reveal key={s.label} delay={i * 0.08} variant="scale" root={scrollContainerRef.current}>
+                <div className="vayu-stat-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, padding: isMobile ? '16px 14px' : '20px 20px', height: '100%' }}>
                   <div style={{ marginBottom: 14 }}><Icon path={s.icon} /></div>
                   <div style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: S.goldBright, marginBottom: 6 }}>{s.n}</div>
                   <div style={{ fontFamily: S.mono, fontSize: 11.5, color: S.text3, lineHeight: 1.5 }}>{s.label}</div>
                 </div>
-              ))}
-            </div>
-          </Reveal>
+              </Reveal>
+            ))}
+          </div>
 
           {/* How it works — a simple three-step flow, connected with a
               single hairline instead of arrows/animation, to stay calm
               rather than "dashboard-y". */}
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 2.5, color: S.text3, textTransform: 'uppercase', marginBottom: 24 }}>How it works</div>
-            <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 28, marginBottom: isMobile ? 44 : 64 }}>
-              {FLOW.map((f, i) => (
-                <div key={f.title} className="vayu-flow-node" style={{ position: 'relative' }}>
+          </Reveal>
+          <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 28, marginBottom: isMobile ? 44 : 64 }}>
+            {FLOW.map((f, i) => (
+              <Reveal key={f.title} delay={i * 0.12} variant="scale" root={scrollContainerRef.current}>
+                <div className="vayu-flow-node" style={{ position: 'relative' }}>
                   <div style={{ width: 38, height: 38, borderRadius: '50%', background: S.surface2, border: `1px solid ${S.goldDim}`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                     <Icon path={f.icon} size={18} />
                   </div>
@@ -771,13 +805,13 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
                   </div>
                   <div style={{ fontFamily: S.mono, fontSize: 12, color: S.text3, lineHeight: 1.6, maxWidth: 320 }}>{f.desc}</div>
                 </div>
-              ))}
-            </div>
-          </Reveal>
+              </Reveal>
+            ))}
+          </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(260px, 1fr))', gap: isMobile ? 18 : 28 }}>
             {FEATURES.map((f, i) => (
-              <Reveal key={f.title} delay={i * 0.1} root={scrollContainerRef.current}>
+              <Reveal key={f.title} delay={i * 0.1} variant="scale" root={scrollContainerRef.current}>
                 <TiltCard className="vayu-feature-card" style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 8, overflow: 'hidden', height: '100%' }}>
                   <div style={{ overflow: 'hidden' }}>
                     <img className="vayu-feature-img" src={f.img} alt={f.title} style={{ width: '100%', height: 160, objectFit: 'cover', display: 'block', borderBottom: `1px solid ${S.border}` }} />

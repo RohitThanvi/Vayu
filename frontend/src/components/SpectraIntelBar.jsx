@@ -23,9 +23,9 @@ import SparkChart from './SparkChart';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
-  surface: '#0d1117', surface2: '#0f1419', border: '#2a3040', border2: '#3a4250',
-  text: '#ffffff', text2: 'rgba(255,255,255,0.8)', text3: 'rgba(255,255,255,0.6)',
-  accent: '#7eb8d4', gold: '#c9a86a',
+  surface: 'var(--vayu-surface)', surface2: 'var(--vayu-surface2)', border: 'var(--vayu-border)', border2: 'var(--vayu-border2)',
+  text: 'var(--vayu-text)', text2: 'var(--vayu-text2)', text3: 'var(--vayu-text3)',
+  accent: 'var(--vayu-accent)', gold: 'var(--vayu-gold)',
 };
 
 const POLL_MS = 2000;
@@ -50,6 +50,7 @@ const REFERENCE_DATA = [
   { tool: 'Dynamic World', dataset: 'GOOGLE/DYNAMICWORLD/V1', resolution: '10m, near-real-time', note: 'Pretrained deep-learning land cover, 9 fixed classes, one shared model for every request — no training points. Brown et al. 2022, Sci Data 9, 251.' },
   { tool: 'Accuracy Assessment', dataset: 'Your own reference points', resolution: 'n/a', note: 'Confusion matrix, overall/producer\'s/user\'s accuracy, Cohen\'s kappa (Congalton 1991; Cohen 1960) for Land Cover, Dynamic World, or Burn Severity, against reference points independent of any training data.' },
   { tool: 'Flood Mapping', dataset: 'Sentinel-1 GRD (SAR)', resolution: '10m', note: 'Before/after change detection, UN-SPIDER\'s Recommended Practice — post/pre backscatter ratio thresholded at 1.25, permanent water masked out (JRC GSW). All-weather, day/night.' },
+  { tool: 'Soil Moisture', dataset: 'NASA SMAP L4 (SPL4SMGP.008)', resolution: '~9km, 3-hourly', note: 'Surface soil moisture (sm_surface, 0-5cm depth), single-period snapshot. Coarse resolution — suited to regional/district-scale monitoring, not field-level decisions. Entekhabi et al., NASA JPL/GSFC.' },
 ];
 
 function useJobPoll(apiUrl) {

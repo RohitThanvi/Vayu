@@ -29,10 +29,10 @@ import EconomicsView from './EconomicsView';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
-  bg: '#0a0c0f', surface: '#0d1117', surface2: '#0f1419',
-  border: '#2a3040', border2: '#3a4250',
-  text: '#ffffff', text2: 'rgba(255,255,255,0.8)', text3: 'rgba(255,255,255,0.6)',
-  accent: '#7eb8d4', gold: '#c9a86a',
+  bg: 'var(--vayu-bg)', surface: 'var(--vayu-surface)', surface2: 'var(--vayu-surface2)',
+  border: 'var(--vayu-border)', border2: 'var(--vayu-border2)',
+  text: 'var(--vayu-text)', text2: 'var(--vayu-text2)', text3: 'var(--vayu-text3)',
+  accent: 'var(--vayu-accent)', gold: 'var(--vayu-gold)',
 };
 
 const BAND_COLOR = { critical: '#ff3b3b', elevated: '#f0b429', normal: '#2ecc71' };
@@ -171,7 +171,7 @@ function ConflictForecastLookup({ apiUrl }) {
             <span>{allMonths.length > 1 ? monthLabel(allMonths[allMonths.length - 1]) : ''}</span>
           </div>
           <div style={{ fontSize: 9.5, color: S.text3, marginTop: 6 }}>
-            <span style={{ color: S.accent }}>■</span> observed &nbsp; <span style={{ color: '#c9a86a' }}>■</span> forecast (indicative, not a certainty)
+            <span style={{ color: S.accent }}>■</span> observed &nbsp; <span style={{ color: 'var(--vayu-gold)' }}>■</span> forecast (indicative, not a certainty)
           </div>
         </div>
       )}

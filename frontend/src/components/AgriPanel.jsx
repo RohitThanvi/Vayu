@@ -3,8 +3,8 @@ import { useState, useEffect, useCallback } from 'react';
 // Matches the dark-terminal aesthetic used elsewhere in App.jsx (kept local
 // to avoid importing the S/Icon internals across files).
 const S = {
-  bg: '#0a0c0f', surface: '#12151a', surface2: '#181c22', border: '#262b33',
-  text: '#e4e7eb', text2: '#a8b0bb', text3: '#5c6673', accent: '#7eb8d4',
+  bg: 'var(--vayu-bg)', surface: 'var(--vayu-surface)', surface2: 'var(--vayu-surface2)', border: 'var(--vayu-border)',
+  text: 'var(--vayu-text)', text2: 'var(--vayu-text2)', text3: 'var(--vayu-text3)', accent: 'var(--vayu-accent)',
   mono: "'JetBrains Mono', 'Courier New', monospace",
 };
 

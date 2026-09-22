@@ -28,10 +28,10 @@ import { createPortal } from 'react-dom';
 import { useCommodityTicker } from '../hooks/useCommodityTicker';
 
 const S = {
-  bg: '#0d0f12',
-  border: '#2a2f36',
-  text2: '#9a9fa8',
-  text3: '#6a6f78',
+  bg: 'var(--vayu-surface)',
+  border: 'var(--vayu-border)',
+  text2: 'var(--vayu-text2)',
+  text3: 'var(--vayu-text3)',
   mono: "'JetBrains Mono', 'SF Mono', Consolas, monospace",
   up: '#7ec88f',
   down: '#e8746b',

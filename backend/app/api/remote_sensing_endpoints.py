@@ -89,6 +89,10 @@ TOOLS = {
         "label": "Flood Mapping (SAR)", "needs_dates": False, "needs_two_periods": True,
         "description": "Sentinel-1 SAR before/after flood extent — UN-SPIDER's Recommended Practice, all-weather/day-night, 10m.",
     },
+    "soil_moisture": {
+        "label": "Soil Moisture (SMAP)", "needs_dates": True,
+        "description": "Surface soil moisture (sm_surface) — NASA SMAP L4, ~9km, single-period snapshot.",
+    },
 }
 
 
@@ -184,6 +188,10 @@ def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
             if not all([req.pre_start, req.pre_end, req.post_start, req.post_end]):
                 raise ValueError("flood_mapping requires pre_start, pre_end, post_start, post_end.")
             result = rs.compute_flood_mapping(req.aoi_geojson, req.pre_start, req.pre_end, req.post_start, req.post_end, req.polarization or "VH")
+        elif req.tool == "soil_moisture":
+            if not req.start_date or not req.end_date:
+                raise ValueError("soil_moisture requires start_date and end_date.")
+            result = rs.compute_soil_moisture(req.aoi_geojson, req.start_date, req.end_date)
         else:
             job_store.update(request_id, {"status": "failed", "error": f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}"})
             return
