@@ -785,6 +785,23 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
   useEffect(() => { streetViewModeRef.current = streetViewMode; }, [streetViewMode]);
   const pointPickModeRef = useRef(pointPickMode);
   useEffect(() => { pointPickModeRef.current = pointPickMode; }, [pointPickMode]);
+  // The callbacks themselves need the SAME ref treatment as the booleans
+  // above, for a subtler reason: the map-creation effect below runs once
+  // ([] deps) and its click listener closes over whatever
+  // onMapClickForPointPick WAS at that exact render. In App.jsx,
+  // handleMapClickForPointPick is a useCallback keyed on pointPickHandler
+  // state, so it's a NEW function reference every time a tool registers/
+  // unregisters its point-add handler — but the click listener here,
+  // having closed over the very first (mount-time, always null-backed)
+  // instance, would keep calling that original stale version forever,
+  // silently doing nothing on every click with no error. Mirroring the
+  // callback into a ref (updated every render) and calling .current
+  // instead of the closed-over prop fixes this the same way the mode
+  // booleans are already handled.
+  const onMapClickForStreetViewRef = useRef(onMapClickForStreetView);
+  useEffect(() => { onMapClickForStreetViewRef.current = onMapClickForStreetView; }, [onMapClickForStreetView]);
+  const onMapClickForPointPickRef = useRef(onMapClickForPointPick);
+  useEffect(() => { onMapClickForPointPickRef.current = onMapClickForPointPick; }, [onMapClickForPointPick]);
   // Crosshair cursor while in Street View or point-pick mode — a real
   // effect (not inside the [] map-creation one) since it needs to re-run
   // whenever either prop changes, using the already-created map.
@@ -873,11 +890,11 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
     // training point by clicking, instead of typing lat/lon) follows the
     // same registered-once/ref-checked pattern, independently.
     map.on('click', (e) => {
-      if (streetViewModeRef.current && onMapClickForStreetView) {
-        onMapClickForStreetView(e.latlng.lat, e.latlng.lng);
+      if (streetViewModeRef.current && onMapClickForStreetViewRef.current) {
+        onMapClickForStreetViewRef.current(e.latlng.lat, e.latlng.lng);
       }
-      if (pointPickModeRef.current && onMapClickForPointPick) {
-        onMapClickForPointPick(e.latlng.lat, e.latlng.lng);
+      if (pointPickModeRef.current && onMapClickForPointPickRef.current) {
+        onMapClickForPointPickRef.current(e.latlng.lat, e.latlng.lng);
       }
     });
     mapRef.current = map;
