@@ -15,9 +15,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
-  surface: '#0d1117', surface2: '#0f1419', border: '#2a3040', border2: '#3a4250',
-  text: '#ffffff', text2: 'rgba(255,255,255,0.8)', text3: 'rgba(255,255,255,0.6)',
-  accent: '#7eb8d4', gold: '#c9a86a',
+  surface: 'var(--vayu-surface)', surface2: 'var(--vayu-surface2)', border: 'var(--vayu-border)', border2: 'var(--vayu-border2)',
+  text: 'var(--vayu-text)', text2: 'var(--vayu-text2)', text3: 'var(--vayu-text3)',
+  accent: 'var(--vayu-accent)', gold: 'var(--vayu-gold)',
 };
 
 const POLL_MS = 2000;
@@ -74,6 +74,7 @@ const TOOL_META = {
   surface_water_dynamics: { label: 'Surface Water', needsDates: false, icon: '≋' },
   supervised_classification: { label: 'ML Classify', needsDates: true, needsTrainingPoints: true, icon: '⊛' },
   accuracy_assessment: { label: 'Accuracy Assessment', needsDates: false, needsReferencePoints: true, icon: '✓' },
+  soil_moisture: { label: 'Soil Moisture (SMAP)', needsDates: true, icon: '◍' },
 };
 
 // Client-side mirror of gee_remote_sensing.py's WORLDCOVER_CLASSES /
@@ -441,6 +442,36 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         </div>
         <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="surface temperature" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'land_surface_temperature'} onActivate={() => setActiveLayerId?.('land_surface_temperature')} />
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'soil_moisture') {
+    const sm = result.sm_surface;
+    if (!sm || sm.mean == null) {
+      return (
+        <div>
+          <div style={{ fontSize: 12, color: S.text3, padding: '10px 0' }}>
+            No SMAP coverage found for this AOI/date range — try widening the dates.
+          </div>
+          <MethodNote text={result.method} />
+        </div>
+      );
+    }
+    return (
+      <div>
+        <StatRow label="Surface soil moisture (mean)" value={`${sm.mean} m³/m³`} />
+        <StatRow label="Min / Max" value={`${sm.min} / ${sm.max} m³/m³`} />
+        <StatRow label="σ (spatial spread)" value={sm.std_dev} />
+        <StatRow label="Scenes used" value={result.scene_count} />
+        {result.valid_pixel_fraction != null && (
+          <StatRow label="Valid pixel coverage" value={`${Math.round(result.valid_pixel_fraction * 100)}%`} />
+        )}
+        <div style={{ fontSize: 10.5, color: S.text3, marginTop: 6, lineHeight: 1.4 }}>
+          SMAP's ~9km resolution is suited to regional/district-scale monitoring, not field-level irrigation decisions.
+        </div>
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="soil moisture" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'soil_moisture'} onActivate={() => setActiveLayerId?.('soil_moisture')} />
         <MethodNote text={result.method} />
       </div>
     );

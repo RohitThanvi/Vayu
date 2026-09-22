@@ -976,6 +976,81 @@ def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) 
     }
 
 
+def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict[str, Any]:
+    """Surface soil moisture from SMAP L4 (NASA/SMAP/SPL4SMGP/008), band
+    "sm_surface" — the long-flagged open Spectra gap: Agri already has
+    SMAP-based moisture via irrigation_advisory.py's dry-stress check, but
+    it was never exposed as a standalone Spectra tool with its own
+    map_layer/download_url/uncertainty like every other Spectra product.
+
+    Same dataset (SPL4SMGP.008, replacing the deprecated
+    NASA_USDA/HSL/SMAP10KM_soil_moisture product) and start-date floor as
+    gee_client.py's compute_soil_moisture (Analyze tab), but that one does
+    a before/after 3-month-window comparison for change detection — this
+    is a single-period snapshot (mean over start_date..end_date, no fixed
+    3-month padding) matching how every other Spectra tool here reports
+    one period's stats, not a delta.
+    """
+    logger.info(f"GEE (remote sensing): soil_moisture {start_date} -> {end_date}")
+    _validate_date_range(start_date, end_date)
+    _require_start_after(start_date, "2015-04-01", "SMAP")
+    region = _polygon_geometry(aoi)
+    end_ee = _cap_end_date(end_date)
+
+    col = (
+        ee.ImageCollection("NASA/SMAP/SPL4SMGP/008")
+        .filterBounds(region).filterDate(ee.Date(start_date), end_ee)
+        .select("sm_surface")
+    )
+    scene_count = col.size().getInfo()
+    if scene_count == 0:
+        return {
+            "sm_surface": None, "scene_count": 0,
+            "method": (
+                "NASA SMAP L4 (SPL4SMGP.008) surface soil moisture, band sm_surface, ~9km/3-hourly. "
+                "No SMAP coverage found for this AOI/date range — try widening the date window."
+            ),
+        }
+
+    sm = col.mean().clip(region)
+
+    stats = sm.reduceRegion(
+        reducer=ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True),
+        geometry=region, scale=10000, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
+
+    valid_px = col.mosaic().mask().reduceRegion(
+        reducer=ee.Reducer.mean(), geometry=region, scale=10000, maxPixels=1e9, bestEffort=True, tileScale=4,
+    ).getInfo()
+    valid_pixel_fraction = round((valid_px.get("sm_surface", 0) or 0), 4)
+
+    return {
+        "sm_surface": {
+            "mean": round(stats.get("sm_surface_mean", 0) or 0, 4),
+            "min": round(stats.get("sm_surface_min", 0) or 0, 4),
+            "max": round(stats.get("sm_surface_max", 0) or 0, 4),
+            "std_dev": round(stats.get("sm_surface_stdDev", 0) or 0, 4),
+            "units": "m\u00b3/m\u00b3 (volumetric water content)",
+        },
+        "scene_count": scene_count,
+        "valid_pixel_fraction": valid_pixel_fraction,
+        "aoi_area_km2": round(_region_area_km2(region), 3),
+        # Brown (dry) to blue (moist) — same sense as satellite_imagery.py's
+        # existing SMAP thumbnail palette (get_soil_moisture_thumbnail),
+        # kept consistent rather than inventing a second soil-moisture
+        # color scheme in the same product. 0-0.5 m3/m3 covers the
+        # physically realistic range for this band.
+        "map_layer": _tile_layer(sm, {"min": 0, "max": 0.5, "palette": ["#a0522d", "#c9a86a", "#e8e2c8", "#8ab4cc", "#1a4d7a"]}),
+        "download_url": _download_url(sm, region, scale=10000),
+        "method": (
+            f"Surface soil moisture (0\u20135cm depth) from NASA SMAP L4 (SPL4SMGP.008), band sm_surface, "
+            f"mean of {scene_count} scene(s) between {start_date} and {end_date}, ~9km native resolution "
+            f"(reduced at 10km scale to match the grid). SMAP's coarse resolution is appropriate for "
+            f"regional/district-scale monitoring, not field-level irrigation decisions."
+        ),
+    }
+
+
 def compute_surface_water_dynamics(aoi: Dict) -> Dict[str, Any]:
     """Surface water extent and permanence from JRC Global Surface Water
     v1.4 (Pekel et al. 2016, Nature) — directly relevant to NRSC's
@@ -1704,6 +1779,15 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
             permanent_water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(90)
             flood_mask = post.divide(pre).gt(FLOOD_RATIO_THRESHOLD).And(permanent_water.Not()).selfMask()
             return _fetch_thumb_bytes(flood_mask, region, {"palette": ["#2166ac"]})
+        if tool == "soil_moisture":
+            start_date, end_date = params["start_date"], params["end_date"]
+            end_ee = _cap_end_date(end_date)
+            col = (ee.ImageCollection("NASA/SMAP/SPL4SMGP/008").filterBounds(region)
+                   .filterDate(ee.Date(start_date), end_ee).select("sm_surface"))
+            if col.size().getInfo() == 0:
+                return None
+            sm = col.mean().clip(region)
+            return _fetch_thumb_bytes(sm, region, {"min": 0, "max": 0.5, "palette": ["#a0522d", "#c9a86a", "#e8e2c8", "#8ab4cc", "#1a4d7a"]})
         return None  # atmospheric_composition, index_time_series, accuracy_assessment (not single-raster thumbnails)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")

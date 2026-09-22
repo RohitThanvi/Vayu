@@ -19,8 +19,8 @@
 import { useState, useRef, useCallback } from 'react';
 
 const S = {
-  surface2: '#0f1419', border: '#2a3040', border2: '#3a4250',
-  text: '#ffffff', text3: 'rgba(255,255,255,0.6)', accent: '#7eb8d4', mono: "'JetBrains Mono','Courier New',monospace",
+  surface2: 'var(--vayu-surface2)', border: 'var(--vayu-border)', border2: 'var(--vayu-border2)',
+  text: 'var(--vayu-text)', text3: 'var(--vayu-text3)', accent: 'var(--vayu-accent)', mono: "'JetBrains Mono','Courier New',monospace",
 };
 
 const CHART_W = 640;
@@ -137,7 +137,7 @@ export default function SparkChart({ points, color = S.accent, height = 150, for
         <path d={path} fill="none" stroke={color} strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round" />
 
         {valid.length <= 60 && valid.map((p, i) => (
-          <circle key={i} cx={toX(i)} cy={toY(p.value)} r={2.3} fill="#0d1117" stroke={color} strokeWidth={1.6} />
+          <circle key={i} cx={toX(i)} cy={toY(p.value)} r={2.3} fill="var(--vayu-surface)" stroke={color} strokeWidth={1.6} />
         ))}
 
         {/* X-axis tick labels */}

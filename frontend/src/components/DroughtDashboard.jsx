@@ -30,10 +30,10 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const S = {
-  bg: '#0a0c0f', surface: '#0d1117', surface2: '#0f1419',
-  border: '#2a3040', border2: '#3a4250',
-  text: '#ffffff', text2: 'rgba(255,255,255,0.8)', text3: 'rgba(255,255,255,0.6)',
-  accent: '#7eb8d4',
+  bg: 'var(--vayu-bg)', surface: 'var(--vayu-surface)', surface2: 'var(--vayu-surface2)',
+  border: 'var(--vayu-border)', border2: 'var(--vayu-border2)',
+  text: 'var(--vayu-text)', text2: 'var(--vayu-text2)', text3: 'var(--vayu-text3)',
+  accent: 'var(--vayu-accent)',
   mono: "'JetBrains Mono','Courier New',monospace",
 };
 

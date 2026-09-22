@@ -11,12 +11,12 @@
 import { useState, useEffect } from 'react';
 
 const S = {
-  surface2: '#0f1419', border: '#2a3040', border2: '#3a4250',
-  text: '#ffffff', text2: 'rgba(255,255,255,0.8)', text3: 'rgba(255,255,255,0.6)',
-  accent: '#7eb8d4', mono: "'JetBrains Mono','Courier New',monospace",
+  surface2: 'var(--vayu-surface2)', border: 'var(--vayu-border)', border2: 'var(--vayu-border2)',
+  text: 'var(--vayu-text)', text2: 'var(--vayu-text2)', text3: 'var(--vayu-text3)',
+  accent: 'var(--vayu-accent)', mono: "'JetBrains Mono','Courier New',monospace",
 };
 
-const STATUS_COLOR = { normal: '#2ecc71', elevated: '#f0b429', disrupted: '#ff3b3b', insufficient_history: 'rgba(255,255,255,0.4)' };
+const STATUS_COLOR = { normal: '#2ecc71', elevated: '#f0b429', disrupted: '#ff3b3b', insufficient_history: 'var(--vayu-text3)' };
 const STATUS_LABEL = { normal: 'NORMAL', elevated: 'ELEVATED', disrupted: 'DISRUPTED', insufficient_history: 'GATHERING DATA' };
 
 const REFRESH_MS = 5 * 60 * 1000;   // matches the backend's 15-min snapshot cadence closely enough to stay current without over-polling

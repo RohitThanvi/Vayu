@@ -19,9 +19,9 @@ import { useState, useEffect } from 'react';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
-  surface2: '#0f1419', border: '#2a3040', border2: '#3a4250',
-  text: '#ffffff', text2: 'rgba(255,255,255,0.8)', text3: 'rgba(255,255,255,0.6)',
-  accent: '#7eb8d4', gold: '#c9a86a',
+  surface2: 'var(--vayu-surface2)', border: 'var(--vayu-border)', border2: 'var(--vayu-border2)',
+  text: 'var(--vayu-text)', text2: 'var(--vayu-text2)', text3: 'var(--vayu-text3)',
+  accent: 'var(--vayu-accent)', gold: 'var(--vayu-gold)',
 };
 
 const BLOC_LIST = [
@@ -189,7 +189,7 @@ export default function EconomicsView({ apiUrl }) {
           {exposure && exposure.filings.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {exposure.filings.map((f, i) => (
-                <a key={i} href={f.search_url} target="_blank" rel="noreferrer" style={{ display: 'block', fontSize: 11, color: S.text2, textDecoration: 'none', background: 'rgba(255,255,255,0.03)', border: `1px solid ${S.border}`, borderRadius: 3, padding: '6px 8px' }}>
+                <a key={i} href={f.search_url} target="_blank" rel="noreferrer" style={{ display: 'block', fontSize: 11, color: S.text2, textDecoration: 'none', background: 'var(--vayu-surface2)', border: `1px solid ${S.border}`, borderRadius: 3, padding: '6px 8px' }}>
                   <span style={{ color: S.gold }}>{f.company}</span> — {f.form_type}, {f.filed}
                 </a>
               ))}
