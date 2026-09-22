@@ -164,21 +164,32 @@ function loadSatelliteModel(onReady, isCancelled) {
       model.scale.setScalar(scale);
 
       model.traverse((o) => {
-        if (o.isMesh) {
-          hitMeshes.push(o);
-          if (o.material) o.material.side = THREE.FrontSide;
-        }
+        // NOT overriding o.material.side here — every material in this
+        // model is authored doubleSided:true (verified against the
+        // source glTF), which GLTFLoader already turns into
+        // THREE.DoubleSide correctly. An earlier version of this code
+        // forced FrontSide on everything, which back-face-culled the
+        // thin panel geometry (solar array, dish, body panels) from
+        // most viewing/orbit angles — the actual cause of the
+        // satellite being invisible (and unclickable, since Raycaster
+        // respects material.side too).
+        if (o.isMesh) hitMeshes.push(o);
       });
 
       attitude.add(model);
+      console.log(`HeroEarth: satellite loaded — ${hitMeshes.length} meshes, scale ${scale.toFixed(3)}, source size`, size);
       onReady();
     },
-    undefined,
+    (progress) => {
+      if (progress.total) console.log(`HeroEarth: satellite loading… ${Math.round((progress.loaded / progress.total) * 100)}%`);
+    },
     (err) => {
       // Model failed to load (e.g. blocked request) — the hero still
-      // works fine with just the Earth; log for diagnosis rather than
-      // silently leaving a confusing empty orbit.
-      console.warn('HeroEarth: satellite model failed to load', err);
+      // works fine with just the Earth; log loudly (error, not warn)
+      // with the full object since GLTFLoader/DRACOLoader errors are
+      // often nested (e.g. a Draco worker error wrapping the real
+      // cause) and easy to miss as a quiet warning.
+      console.error('HeroEarth: satellite model failed to load —', err);
     }
   );
 
