@@ -26,6 +26,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useIsMobile } from '../hooks/useIsMobile';
+import HeroEarth from './HeroEarth';
 
 // Account system (signup/login/password-reset) is disabled for the MVP
 // tier-picker pivot — see banner comments below and in AppGate.jsx /
@@ -102,6 +103,16 @@ const GlobalStyle = () => (
     .vayu-tier-option:hover { border-color: #c9a86a99; background: rgba(201,168,106,0.08); transform: translateY(-3px); }
     .vayu-flow-node { transition: opacity 0.4s ease; }
     input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.4); }
+    /* Cursor-follow ambient glow — the "every mouse movement does
+       something" touch, applied page-wide rather than just in the
+       hero. Deliberately faint (0.07 alpha) and additive (screen
+       blend) so it reads as ambiance, not a spotlight — it should
+       never fight with text contrast. */
+    .vayu-cursor-glow {
+      position: fixed; inset: 0; pointer-events: none; z-index: 2;
+      background: radial-gradient(560px circle at var(--mx, 50%) var(--my, 40%), rgba(201,168,106,0.07), transparent 68%);
+      mix-blend-mode: screen;
+    }
   `}</style>
 );
 
@@ -542,6 +553,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
   const isMobile = useIsMobile(760);
   const sectionRefs = useRef({});
   const scrollContainerRef = useRef(null);
+  const heroTextRef = useRef(null);
 
   // Reset-password mode disabled along with the rest of the account
   // system — see the AuthModal/ResetPasswordCard block above. Flip
@@ -583,6 +595,35 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
     return () => container.removeEventListener('scroll', onScroll);
   }, []);
 
+  // Mouse-reactive ambiance — sets CSS vars for the page-wide cursor
+  // glow, plus a small counter-drift on the hero headline block, both
+  // via direct DOM mutation (not React state) so mouse movement never
+  // triggers a re-render of the whole page — the glow and the text
+  // drift are the ONLY things touched, at native pointer-move rate,
+  // eased by the browser's own compositor rather than component state.
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || isMobile) return; // desktop-only — no pointer on touch
+    let raf = null;
+    const onMove = (e) => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        const nx = e.clientX / window.innerWidth;   // 0..1
+        const ny = e.clientY / window.innerHeight;  // 0..1
+        container.style.setProperty('--mx', `${(nx * 100).toFixed(1)}%`);
+        container.style.setProperty('--my', `${(ny * 100).toFixed(1)}%`);
+        if (heroTextRef.current) {
+          const dx = (nx - 0.5) * -14; // opposite-direction drift = depth
+          const dy = (ny - 0.5) * -8;
+          heroTextRef.current.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
+        }
+        raf = null;
+      });
+    };
+    container.addEventListener('mousemove', onMove, { passive: true });
+    return () => container.removeEventListener('mousemove', onMove);
+  }, [isMobile]);
+
   if (resetToken) {
     return (
       <div style={{ position: 'fixed', inset: 0, background: S.bg, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -595,6 +636,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
   return (
     <div ref={scrollContainerRef} style={{ position: 'fixed', inset: 0, overflowY: 'auto', overflowX: 'hidden', background: S.bg, color: S.text, scrollBehavior: 'smooth' }}>
       <GlobalStyle />
+      <div className="vayu-cursor-glow" />
 
       {tierModalOpen && (
         <TierPickerModal onSelect={(tier) => { setTierModalOpen(false); onSelectTier(tier); }} onClose={() => setTierModalOpen(false)} isMobile={isMobile} />
@@ -662,17 +704,12 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         )}
       </div>
 
-      {/* Home / Hero */}
+      {/* Home / Hero — photorealistic 3D Earth + orbiting satellite
+          (HeroEarth.jsx), not a static photo. Falls back to the old
+          Ken-Burns satellite photo on its own (mobile / no-WebGL). */}
       <div ref={el => sectionRefs.current.home = el} data-section="home" style={{ position: 'relative', height: '100vh', overflow: 'hidden' }}>
-        {/* Scroll-driven layer (translateY only) wraps an independently
-            always-animating Ken Burns layer (CSS keyframes) — two
-            separate transform sources on two separate elements, so
-            they don't fight over the same inline style. */}
         <div style={{ position: 'absolute', inset: 0, transform: `translateY(${parallaxY * 0.3}px)` }}>
-          <div className="vayu-hero-bg" style={{
-            position: 'absolute', inset: -24,
-            backgroundImage: 'url(/hero-satellite.jpg)', backgroundSize: 'cover', backgroundPosition: 'center',
-          }} />
+          <HeroEarth disabled={isMobile} />
         </div>
 
         <div style={{
@@ -689,7 +726,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
           position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1200, margin: '0 auto', padding: isMobile ? '0 20px' : '0 28px',
           opacity: Math.max(0, 1 - parallaxY / 260), transform: `translateY(${parallaxY * 0.15}px)`,
         }}>
-          <div style={{ maxWidth: 560 }}>
+          <div ref={heroTextRef} style={{ maxWidth: 560 }}>
             <div style={{ fontFamily: S.mono, fontSize: isMobile ? 10.5 : 12, letterSpacing: isMobile ? 2 : 3, color: S.text3, textTransform: 'uppercase', marginBottom: isMobile ? 12 : 16 }}>
               Geospatial &amp; Business Intelligence
             </div>
