@@ -65,8 +65,16 @@ const EARTH_FRAGMENT = `
     float mixFactor = smoothstep(-0.18, 0.12, sunFacing);
 
     vec3 dayColor = texture2D(dayTexture, vUv).rgb;
+
+    // Slightly lift the day-side exposure without washing out
+    // the underlying Blue Marble texture detail.
+    dayColor *= 1.22;
+
     vec3 nightColor = texture2D(nightTexture, vUv).rgb * 1.6;
     vec3 color = mix(nightColor, dayColor, mixFactor);
+
+    // Subtle ambient lift so the shadow-side terrain isn't crushed.
+    color += vec3(0.025, 0.03, 0.04) * (1.0 - mixFactor * 0.65);
 
     // Ocean specular highlight — only where the specular mask (water)
     // is bright AND the surface faces the sun, so it reads as a real
@@ -103,6 +111,7 @@ const ATMOSPHERE_FRAGMENT = `
   }
 `;
 
+/*
 // ---------------------------------------------------------------------
 // Procedural photorealistic satellite (no external model file — built
 // from primitives + generated PBR-ish textures so it needs no asset
@@ -315,6 +324,7 @@ function buildSatellite() {
     [foilMat, chassisMat, darkMat, dishMat, radiatorMat, solarMat, railMat].forEach((m) => m.dispose());
   } };
 }
+*/
 
 function supportsWebGL() {
   try {
@@ -434,39 +444,40 @@ export default function HeroEarth({ disabled = false, style }) {
       starPos[i * 3 + 2] = r * Math.cos(phi);
     }
     starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xdbe6f0, size: 0.045, transparent: true, opacity: 0.6 }));
+    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xdbe6f0, size: 0.045, transparent: true, opacity: 0.5 }));
     scene.add(stars);
 
-    const sunLight = new THREE.DirectionalLight(0xffffff, 1.25);
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.35);
     sunLight.position.copy(WORLD_OFFSET.clone().add(SUN_DIR.clone().multiplyScalar(10)));
     sunLight.target.position.copy(WORLD_OFFSET);
     scene.add(sunLight, sunLight.target);
-    scene.add(new THREE.AmbientLight(0x1a2233, 0.65));
+    scene.add(new THREE.AmbientLight(0x263449, 0.7));
 
+    /*
     // --- Photorealistic orbiting satellite ---
-    // const sat = buildSatellite();
-    // worldGroup.add(sat.group);
-    // const orbitRadius = 1.6;
-    // const orbitTilt = 0.35; // radians, plane inclination
-    // // Bounded arc rather than a full 360° revolution — a fixed,
-    // // camera-facing sweep so the satellite is always in frame (a full
-    // // orbit would spend half its time hidden behind the globe or off
-    // // to the side), while still visibly "moving in its orbit".
-    // const ORBIT_CENTER = 0.5;
-    // const ORBIT_AMPLITUDE = 0.32;
-    // const ORBIT_SPEED = 0.16;
-    // let orbitT = 0;
-    // const raycaster = new THREE.Raycaster();
-    // const pointerNDC = new THREE.Vector2();
+    const sat = buildSatellite();
+    worldGroup.add(sat.group);
+    const orbitRadius = 1.6;
+    const orbitTilt = 0.35; // radians, plane inclination
+    // Bounded arc rather than a full 360° revolution — a fixed,
+    // camera-facing sweep so the satellite is always in frame (a full
+    // orbit would spend half its time hidden behind the globe or off
+    // to the side), while still visibly "moving in its orbit".
+    const ORBIT_CENTER = 0.5;
+    const ORBIT_AMPLITUDE = 0.32;
+    const ORBIT_SPEED = 0.16;
+    let orbitT = 0;
+    const raycaster = new THREE.Raycaster();
+    const pointerNDC = new THREE.Vector2();
 
-    // function setDeployed(deployed) {
-    //   sat.wings.forEach((w, i) => {
-    //     const side = i === 0 ? 1 : -1;
-    //     w.target = deployed ? 0 : -side * (Math.PI / 2);
-    //   });
-    // }
-    // let deployed = true; // starts deployed — normal on-orbit configuration
-    // setDeployed(deployed);
+    function setDeployed(deployed) {
+      sat.wings.forEach((w, i) => {
+        const side = i === 0 ? 1 : -1;
+        w.target = deployed ? 0 : -side * (Math.PI / 2);
+      });
+    }
+    let deployed = true; // starts deployed — normal on-orbit configuration
+    setDeployed(deployed);
 
     function pointerToNDC(clientX, clientY) {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -487,6 +498,7 @@ export default function HeroEarth({ disabled = false, style }) {
     }
     renderer.domElement.addEventListener('click', onClick);
     renderer.domElement.addEventListener('pointermove', onPointerMove);
+    */
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.copy(WORLD_OFFSET);
@@ -511,6 +523,7 @@ export default function HeroEarth({ disabled = false, style }) {
       clouds.rotation.y += 0.0006;
       earthMat.uniforms.cameraWorldPosition.value.copy(camera.position);
 
+      /*
       // Orbit motion — only the group's POSITION advances along a
       // bounded, camera-facing arc; its attitude (set once in
       // buildSatellite) is never touched here, so the satellite keeps
@@ -528,6 +541,7 @@ export default function HeroEarth({ disabled = false, style }) {
         w.current += (w.target - w.current) * Math.min(1, dt * 3.2);
         w.hinge.rotation.y = w.current;
       });
+      */
 
       controls.update();
       renderer.render(scene, camera);
@@ -550,16 +564,24 @@ export default function HeroEarth({ disabled = false, style }) {
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', onResize);
       resizeObserver.disconnect();
+
+      /*
       renderer.domElement.removeEventListener('click', onClick);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      */
+
       controls.dispose();
       [dayTex, nightTex, cloudsTex, specTex].forEach((t) => t.dispose());
       earthGeo.dispose(); earthMat.dispose();
       clouds.geometry.dispose(); cloudsMat.dispose();
       atmosphere.geometry.dispose(); atmosphereMat.dispose();
       starGeo.dispose();
+
+      /*
       sat.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
       sat.dispose();
+      */
+
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };
