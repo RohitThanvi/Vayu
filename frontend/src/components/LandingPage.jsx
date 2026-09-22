@@ -735,7 +735,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         }}>
           <div style={{ maxWidth: 580 }}>
             {/* Overline badge — pill with a live pulsing dot, glassmorphic */}
-            <div style={{
+            {/* <div style={{
               display: 'inline-flex', alignItems: 'center', gap: 9, padding: isMobile ? '6px 12px' : '7px 14px',
               background: S.glass, backdropFilter: 'blur(24px)', border: `1px solid ${S.border}`, borderRadius: 999,
               marginBottom: isMobile ? 16 : 20,
@@ -744,7 +744,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
               <span style={{ fontFamily: S.mono, fontSize: isMobile ? 10 : 11, letterSpacing: isMobile ? 1.5 : 2.5, color: S.text3, textTransform: 'uppercase' }}>
                 Geospatial &amp; Business Intelligence
               </span>
-            </div>
+            </div> */}
 
             <div style={{ fontFamily: 'Georgia, serif', fontWeight: 400, letterSpacing: -0.5, fontSize: isMobile ? 28 : 46, lineHeight: 1.22, color: S.text, marginBottom: isMobile ? 16 : 24, textShadow: '0 4px 32px rgba(0,0,0,0.7)',}}>
                 One terminal for{' '} <span style={{ color: S.gold }}> everything above and around you.</span>
