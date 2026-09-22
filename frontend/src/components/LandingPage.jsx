@@ -56,22 +56,6 @@ S.surface = S.surface2;
 
 const SECTIONS = [['home', 'Home'], ['about', 'About'], ['contact', 'Contact']];
 
-// Ambient telemetry ribbon content for the hero — representative of the
-// categories of data the authenticated terminal actually streams live
-// (commodities, satellite passes, pipeline health), not a live feed
-// itself: this page runs pre-auth/pre-session, so there's nothing to
-// poll yet. tone drives the up/down color on the value.
-const TELEMETRY = [
-  { label: 'WTI CRUDE', value: '$71.42 ▲0.8%', tone: 'up' },
-  { label: 'BRENT', value: '$75.09 ▲0.6%', tone: 'up' },
-  { label: 'WHEAT', value: '$612.25 ▼1.2%', tone: 'down' },
-  { label: 'ISS PASS', value: 'T-14:32', tone: 'neutral' },
-  { label: 'ACTIVE FEEDS', value: '10+', tone: 'neutral' },
-  { label: 'AQI DELHI', value: '184 MODERATE', tone: 'neutral' },
-  { label: 'SENTINEL-2 REVISIT', value: '5 DAYS', tone: 'neutral' },
-  { label: 'GOLD', value: '$2,418 ▲0.3%', tone: 'up' },
-];
-
 const STATS = [
   { n: '9+', label: 'Fixed satellite analysis metrics', icon: 'M4 17l5-5 3 3 6-8M4 17V7M4 17h16' },
   { n: '10+', label: 'Live data sources fused into one feed', icon: 'M4 6a8 3 0 0016 0 8 3 0 00-16 0zM4 6v6a8 3 0 0016 0V6M4 12v6a8 3 0 0016 0v-6' },
@@ -97,6 +81,7 @@ const FEATURES = [
 // this is the one place this file breaks from inline styles.
 const GlobalStyle = () => (
   <style>{`
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Audiowide&display=swap');
     @keyframes vayu-spin { to { transform: rotate(360deg); } }
     @keyframes vayu-kenburns {
       0%   { transform: scale(1.06) translate(0%, 0%); }
@@ -105,9 +90,7 @@ const GlobalStyle = () => (
     }
     @keyframes vayu-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
     @keyframes vayu-modal-pop-in { from { opacity: 0; transform: scale(0.94) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-    @keyframes vayu-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
     @keyframes vayu-pulse { 0%, 100% { opacity: 1; box-shadow: 0 0 4px #38BDF8, 0 0 10px rgba(56,189,248,0.5); } 50% { opacity: 0.4; box-shadow: 0 0 2px #38BDF8; } }
-    .vayu-ticker-track { width: max-content; animation: vayu-marquee 42s linear infinite; }
     .vayu-live-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #38BDF8; animation: vayu-pulse 2.2s ease-in-out infinite; flex-shrink: 0; }
     .vayu-hero-bg { animation: vayu-kenburns 34s ease-in-out infinite; }
     .vayu-feature-card { transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease; transform-style: preserve-3d; }
@@ -667,7 +650,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
             <img src="/logo.png" alt="Vayu" width="20" height="20" style={{ display: 'block', filter: 'drop-shadow(0 0 4px rgba(201,168,106,0.4))' }} />
-            <div style={{ fontFamily: S.mono, fontSize: 14, letterSpacing: 3, color: S.gold, fontWeight: 700 }}>VAYU</div>
+            <div style={{ fontFamily: "'Orbitron', " + S.mono, fontSize: 14, letterSpacing: 3, color: S.gold, fontWeight: 700 }}>VAYU</div>
           </div>
 
           {!isMobile && (
@@ -763,7 +746,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
               </span>
             </div>
 
-            <div style={{ fontFamily: S.sans, fontWeight: 600, letterSpacing: -0.5, fontSize: isMobile ? 33 : 54, lineHeight: 1.12, color: S.text, marginBottom: isMobile ? 16 : 24, textShadow: '0 4px 32px rgba(0,0,0,0.7)' }}>
+            <div style={{ fontFamily: "'Audiowide', " + S.sans, fontWeight: 400, letterSpacing: -0.5, fontSize: isMobile ? 28 : 46, lineHeight: 1.22, color: S.text, marginBottom: isMobile ? 16 : 24, textShadow: '0 4px 32px rgba(0,0,0,0.7)' }}>
               One terminal for <span style={{ color: S.gold }}>everything above and around you.</span>
             </div>
             <div style={{ fontFamily: S.sans, fontWeight: 400, fontSize: isMobile ? 14 : 16, color: '#94A3B8', lineHeight: 1.7, marginBottom: isMobile ? 28 : 36, maxWidth: 480 }}>
@@ -781,32 +764,6 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
                 See What It Does
               </button>
             </div>
-          </div>
-        </div>
-
-        {/* Live data telemetry ribbon — continuous marquee, tabular-nums
-            for the numeric fields so values don't jitter horizontally as
-            they scroll past. Ambient/representative on this pre-auth
-            page (no session yet to pull a live feed from) — the same
-            categories of data (markets, satellite passes, pipeline
-            status) the authenticated terminal actually streams. */}
-        <div style={{
-          position: 'absolute', left: 0, right: 0, bottom: isMobile ? 46 : 56, zIndex: 1,
-          borderTop: `1px solid ${S.border}`, borderBottom: `1px solid ${S.border}`,
-          background: S.glass, backdropFilter: 'blur(16px)', overflow: 'hidden',
-          opacity: Math.max(0, 1 - parallaxY / 200),
-        }}>
-          <div className="vayu-ticker-track" style={{ display: 'flex', padding: '9px 0' }}>
-            {[0, 1].map(rep => (
-              <div key={rep} style={{ display: 'flex', gap: isMobile ? 28 : 44, paddingRight: isMobile ? 28 : 44 }}>
-                {TELEMETRY.map((t, i) => (
-                  <span key={`${rep}-${i}`} style={{ fontFamily: S.mono, fontSize: isMobile ? 10.5 : 11.5, letterSpacing: 0.5, whiteSpace: 'nowrap', color: S.text3 }}>
-                    <span style={{ color: S.text4, marginRight: 8 }}>{t.label}</span>
-                    <span style={{ color: t.tone === 'up' ? '#4ade80' : t.tone === 'down' ? '#f87171' : S.text2, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{t.value}</span>
-                  </span>
-                ))}
-              </div>
-            ))}
           </div>
         </div>
 
