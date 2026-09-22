@@ -444,29 +444,29 @@ export default function HeroEarth({ disabled = false, style }) {
     scene.add(new THREE.AmbientLight(0x1a2233, 0.55));
 
     // --- Photorealistic orbiting satellite ---
-    const sat = buildSatellite();
-    worldGroup.add(sat.group);
-    const orbitRadius = 1.6;
-    const orbitTilt = 0.35; // radians, plane inclination
-    // Bounded arc rather than a full 360° revolution — a fixed,
-    // camera-facing sweep so the satellite is always in frame (a full
-    // orbit would spend half its time hidden behind the globe or off
-    // to the side), while still visibly "moving in its orbit".
-    const ORBIT_CENTER = 0.5;
-    const ORBIT_AMPLITUDE = 0.32;
-    const ORBIT_SPEED = 0.16;
-    let orbitT = 0;
-    const raycaster = new THREE.Raycaster();
-    const pointerNDC = new THREE.Vector2();
+    // const sat = buildSatellite();
+    // worldGroup.add(sat.group);
+    // const orbitRadius = 1.6;
+    // const orbitTilt = 0.35; // radians, plane inclination
+    // // Bounded arc rather than a full 360° revolution — a fixed,
+    // // camera-facing sweep so the satellite is always in frame (a full
+    // // orbit would spend half its time hidden behind the globe or off
+    // // to the side), while still visibly "moving in its orbit".
+    // const ORBIT_CENTER = 0.5;
+    // const ORBIT_AMPLITUDE = 0.32;
+    // const ORBIT_SPEED = 0.16;
+    // let orbitT = 0;
+    // const raycaster = new THREE.Raycaster();
+    // const pointerNDC = new THREE.Vector2();
 
-    function setDeployed(deployed) {
-      sat.wings.forEach((w, i) => {
-        const side = i === 0 ? 1 : -1;
-        w.target = deployed ? 0 : -side * (Math.PI / 2);
-      });
-    }
-    let deployed = true; // starts deployed — normal on-orbit configuration
-    setDeployed(deployed);
+    // function setDeployed(deployed) {
+    //   sat.wings.forEach((w, i) => {
+    //     const side = i === 0 ? 1 : -1;
+    //     w.target = deployed ? 0 : -side * (Math.PI / 2);
+    //   });
+    // }
+    // let deployed = true; // starts deployed — normal on-orbit configuration
+    // setDeployed(deployed);
 
     function pointerToNDC(clientX, clientY) {
       const rect = renderer.domElement.getBoundingClientRect();
