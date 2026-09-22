@@ -111,7 +111,6 @@ const ATMOSPHERE_FRAGMENT = `
   }
 `;
 
-/*
 // ---------------------------------------------------------------------
 // Procedural photorealistic satellite (no external model file — built
 // from primitives + generated PBR-ish textures so it needs no asset
@@ -324,7 +323,6 @@ function buildSatellite() {
     [foilMat, chassisMat, darkMat, dishMat, radiatorMat, solarMat, railMat].forEach((m) => m.dispose());
   } };
 }
-*/
 
 function supportsWebGL() {
   try {
@@ -453,7 +451,6 @@ export default function HeroEarth({ disabled = false, style }) {
     scene.add(sunLight, sunLight.target);
     scene.add(new THREE.AmbientLight(0x263449, 0.7));
 
-    /*
     // --- Photorealistic orbiting satellite ---
     const sat = buildSatellite();
     worldGroup.add(sat.group);
@@ -498,7 +495,6 @@ export default function HeroEarth({ disabled = false, style }) {
     }
     renderer.domElement.addEventListener('click', onClick);
     renderer.domElement.addEventListener('pointermove', onPointerMove);
-    */
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.copy(WORLD_OFFSET);
@@ -513,6 +509,7 @@ export default function HeroEarth({ disabled = false, style }) {
     controls.maxPolarAngle = Math.PI / 2 + 0.55;
 
     let lastT = performance.now();
+    let targetTiltX = 0, targetTiltY = 0;
     function animate() {
       if (disposed) return;
       raf = requestAnimationFrame(animate);
@@ -523,7 +520,6 @@ export default function HeroEarth({ disabled = false, style }) {
       clouds.rotation.y += 0.0006;
       earthMat.uniforms.cameraWorldPosition.value.copy(camera.position);
 
-      /*
       // Orbit motion — only the group's POSITION advances along a
       // bounded, camera-facing arc; its attitude (set once in
       // buildSatellite) is never touched here, so the satellite keeps
@@ -541,7 +537,17 @@ export default function HeroEarth({ disabled = false, style }) {
         w.current += (w.target - w.current) * Math.min(1, dt * 3.2);
         w.hinge.rotation.y = w.current;
       });
-      */
+
+      // Mouse-parallax — the whole Earth+satellite group gently leans
+      // toward wherever the pointer is, on top of (not instead of) the
+      // constant autoRotate drift. Eased toward the target each frame
+      // (not snapped) so it reads as weighty/mature rather than
+      // twitchy. Purely additive to worldGroup's own position (set via
+      // WORLD_OFFSET once above) — only rotation is touched here.
+      targetTiltX += (pointerNDC.y * 0.12 - targetTiltX) * Math.min(1, dt * 2.2);
+      targetTiltY += (pointerNDC.x * 0.16 - targetTiltY) * Math.min(1, dt * 2.2);
+      worldGroup.rotation.x = targetTiltX;
+      worldGroup.rotation.y = targetTiltY;
 
       controls.update();
       renderer.render(scene, camera);
@@ -565,10 +571,8 @@ export default function HeroEarth({ disabled = false, style }) {
       window.removeEventListener('resize', onResize);
       resizeObserver.disconnect();
 
-      /*
       renderer.domElement.removeEventListener('click', onClick);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
-      */
 
       controls.dispose();
       [dayTex, nightTex, cloudsTex, specTex].forEach((t) => t.dispose());
@@ -577,10 +581,8 @@ export default function HeroEarth({ disabled = false, style }) {
       atmosphere.geometry.dispose(); atmosphereMat.dispose();
       starGeo.dispose();
 
-      /*
       sat.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
       sat.dispose();
-      */
 
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
