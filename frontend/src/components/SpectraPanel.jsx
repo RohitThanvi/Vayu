@@ -950,6 +950,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
             {pickingPoints && (
               <div style={{ fontSize: 10.5, color: S.accent, marginBottom: 8 }}>
                 Click anywhere on the map to add a point labeled "{ptLabel.trim() || '…'}". Change the class name above to switch classes, or click the button again to stop.
+                <div style={{ marginTop: 4, fontFamily: S.mono, color: S.text2 }}>Points added so far: {trainingSamples.length}</div>
               </div>
             )}
             <div style={{ fontSize: 10, color: S.text3, marginBottom: 4 }}>...or type coordinates directly:</div>
@@ -1048,6 +1049,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
             {pickingRefPoints && (
               <div style={{ fontSize: 10.5, color: S.accent, marginBottom: 8 }}>
                 Click anywhere on the map to add a point labeled "{refPtClass || '…'}".
+                <div style={{ marginTop: 4, fontFamily: S.mono, color: S.text2 }}>Points added so far: {referencePoints.length}</div>
               </div>
             )}
             <div style={{ fontSize: 10, color: S.text3, marginBottom: 4 }}>...or type coordinates directly:</div>
