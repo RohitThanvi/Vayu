@@ -103,6 +103,194 @@ const ATMOSPHERE_FRAGMENT = `
   }
 `;
 
+// ---------------------------------------------------------------------
+// Procedural photorealistic satellite (no external model file — built
+// from primitives + generated PBR-ish textures so it needs no asset
+// pipeline). Orbits Earth at a fixed attitude (only the solar wings
+// articulate, on click) rather than tumbling or re-orienting to face
+// the direction of travel, since a real 3-axis-stabilized satellite
+// holds attitude independent of its orbital position.
+// ---------------------------------------------------------------------
+
+// Crinkled gold MLI (multi-layer insulation) foil — subtle noise bump
+// map so the body doesn't read as a flat-shaded box.
+function makeFoilBumpTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#808080';
+  ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 2200; i++) {
+    const v = 90 + Math.random() * 130;
+    ctx.fillStyle = `rgb(${v},${v},${v})`;
+    const x = Math.random() * 256, y = Math.random() * 256;
+    ctx.fillRect(x, y, 1 + Math.random() * 2.5, 1 + Math.random() * 2.5);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(3, 2);
+  return tex;
+}
+
+// Solar-cell grid — deep indigo cells with a fine silver grid and a
+// soft diagonal sheen, read through a physical (clearcoat) material so
+// it catches a glassy specular highlight like real cover-glass cells.
+function makeSolarPanelTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 512;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 256, 512);
+  grad.addColorStop(0, '#141c33');
+  grad.addColorStop(0.5, '#0d1226');
+  grad.addColorStop(1, '#161d38');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 256, 512);
+  ctx.strokeStyle = 'rgba(180,195,225,0.55)';
+  ctx.lineWidth = 1.4;
+  const cols = 6, rows = 12;
+  for (let i = 0; i <= cols; i++) {
+    ctx.beginPath(); ctx.moveTo((256 / cols) * i, 0); ctx.lineTo((256 / cols) * i, 512); ctx.stroke();
+  }
+  for (let j = 0; j <= rows; j++) {
+    ctx.beginPath(); ctx.moveTo(0, (512 / rows) * j); ctx.lineTo(256, (512 / rows) * j); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(256, 100); ctx.lineTo(256, 220); ctx.lineTo(0, 90); ctx.closePath();
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  return tex;
+}
+
+// White radiator-panel texture (aft equipment deck) — thin black grid
+// on satin white, standard spacecraft thermal-panel look.
+function makeRadiatorTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#eef0f2';
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.strokeStyle = 'rgba(30,30,35,0.35)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    ctx.beginPath(); ctx.moveTo((128 / 4) * i, 0); ctx.lineTo((128 / 4) * i, 128); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, (128 / 4) * i); ctx.lineTo(128, (128 / 4) * i); ctx.stroke();
+  }
+  return new THREE.CanvasTexture(c);
+}
+
+function buildSatellite() {
+  const group = new THREE.Group(); // orbit position only — never rotated
+  const attitude = new THREE.Group(); // fixed-attitude body — orientation held constant
+  attitude.rotation.set(0.35, 0.9, 0.12);
+  group.add(attitude);
+
+  const hitMeshes = [];
+  const foilBump = makeFoilBumpTexture();
+  const solarTex = makeSolarPanelTexture();
+  const radiatorTex = makeRadiatorTexture();
+
+  const foilMat = new THREE.MeshStandardMaterial({ color: 0xc79a56, metalness: 0.55, roughness: 0.42, bumpMap: foilBump, bumpScale: 0.006 });
+  const chassisMat = new THREE.MeshStandardMaterial({ color: 0xb9bfc7, metalness: 0.75, roughness: 0.3 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x1c2027, metalness: 0.4, roughness: 0.6 });
+  const dishMat = new THREE.MeshStandardMaterial({ color: 0xe9ecef, metalness: 0.35, roughness: 0.28, side: THREE.DoubleSide });
+  const radiatorMat = new THREE.MeshStandardMaterial({ map: radiatorTex, metalness: 0.15, roughness: 0.45 });
+  const solarMat = new THREE.MeshPhysicalMaterial({ map: solarTex, metalness: 0.25, roughness: 0.35, clearcoat: 0.65, clearcoatRoughness: 0.22 });
+  const railMat = new THREE.MeshStandardMaterial({ color: 0xd8dbe0, metalness: 0.8, roughness: 0.25 });
+
+  // --- Bus (main body) ---
+  const bodyGeo = new THREE.BoxGeometry(0.15, 0.11, 0.2);
+  const body = new THREE.Mesh(bodyGeo, foilMat);
+  attitude.add(body);
+  hitMeshes.push(body);
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(bodyGeo), new THREE.LineBasicMaterial({ color: 0x2a2f36, transparent: true, opacity: 0.5 }));
+  body.add(edges);
+
+  // Aft radiator deck
+  const radiator = new THREE.Mesh(new THREE.BoxGeometry(0.152, 0.112, 0.02), radiatorMat);
+  radiator.position.set(0, 0, -0.11);
+  attitude.add(radiator);
+  hitMeshes.push(radiator);
+
+  // --- Dish antenna, offset boom off the front face ---
+  const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.09, 8), chassisMat);
+  boom.rotation.z = Math.PI / 2.4;
+  boom.position.set(0.09, 0.07, 0.09);
+  attitude.add(boom);
+  const dishPts = [];
+  for (let i = 0; i <= 10; i++) { const t = i / 10; dishPts.push(new THREE.Vector2(t * 0.065, t * t * 0.03)); }
+  const dish = new THREE.Mesh(new THREE.LatheGeometry(dishPts, 24), dishMat);
+  dish.rotation.x = Math.PI / 2;
+  dish.position.set(0.15, 0.11, 0.13);
+  attitude.add(dish);
+  hitMeshes.push(dish);
+  const feed = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 0.045, 6), darkMat);
+  feed.position.set(0.15, 0.155, 0.13);
+  attitude.add(feed);
+
+  // Whip antennas
+  [[-0.06, 0.06, 0.1, 0.5], [-0.02, 0.06, 0.1, -0.35]].forEach(([x, y, z, tilt]) => {
+    const whip = new THREE.Mesh(new THREE.CylinderGeometry(0.0015, 0.0015, 0.07, 5), darkMat);
+    whip.position.set(x, y, z);
+    whip.rotation.z = tilt;
+    attitude.add(whip);
+  });
+
+  // Aft thruster nozzles
+  [-0.045, 0.045].forEach((x) => {
+    const nozzle = new THREE.Mesh(new THREE.ConeGeometry(0.014, 0.03, 10, 1, true), darkMat);
+    nozzle.rotation.x = Math.PI / 2;
+    nozzle.position.set(x, -0.03, -0.135);
+    attitude.add(nozzle);
+  });
+
+  // Small star-tracker sensor box
+  const tracker = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.025, 0.04), darkMat);
+  tracker.position.set(-0.06, 0.075, 0.06);
+  attitude.add(tracker);
+
+  // --- Solar wings — each is a hinge group at the body edge; a panel
+  // segment stack extends outward from the hinge. Rotating the hinge
+  // about its local Y axis swings the wing from stowed (folded flush
+  // against the body) to deployed (extended straight out to the side).
+  const wings = [];
+  [1, -1].forEach((side) => {
+    const hinge = new THREE.Group();
+    hinge.position.set(side * 0.078, 0, 0.02);
+    attitude.add(hinge);
+
+    const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.03, 0.03), chassisMat);
+    hinge.add(yoke);
+
+    const panelGroup = new THREE.Group();
+    hinge.add(panelGroup);
+
+    const segCount = 3, segW = 0.09, segH = 0.2, gap = 0.006;
+    for (let i = 0; i < segCount; i++) {
+      const seg = new THREE.Mesh(new THREE.BoxGeometry(segW, segH, 0.004), solarMat);
+      seg.position.set(side * (segW / 2 + i * (segW + gap)), 0, 0);
+      panelGroup.add(seg);
+      hitMeshes.push(seg);
+      const railTop = new THREE.Mesh(new THREE.BoxGeometry(segW, 0.006, 0.006), railMat);
+      railTop.position.set(seg.position.x, segH / 2, 0.003);
+      panelGroup.add(railTop);
+      const railBot = railTop.clone();
+      railBot.position.y = -segH / 2;
+      panelGroup.add(railBot);
+    }
+
+    // rotation.y: 0 = deployed (extended sideways), ±HALF_PI = stowed
+    // (folded flat against the body's flank).
+    wings.push({ hinge, current: -side * (Math.PI / 2), target: -side * (Math.PI / 2) });
+    hinge.rotation.y = -side * (Math.PI / 2);
+  });
+
+  return { group, attitude, wings, hitMeshes, dispose: () => {
+    foilBump.dispose(); solarTex.dispose(); radiatorTex.dispose();
+    [foilMat, chassisMat, darkMat, dishMat, radiatorMat, solarMat, railMat].forEach((m) => m.dispose());
+  } };
+}
+
 function supportsWebGL() {
   try {
     const canvas = document.createElement('canvas');
@@ -205,6 +393,45 @@ export default function HeroEarth({ disabled = false, style }) {
     scene.add(sunLight);
     scene.add(new THREE.AmbientLight(0x1a2233, 0.5));
 
+    // --- Photorealistic orbiting satellite ---
+    const sat = buildSatellite();
+    scene.add(sat.group);
+    const orbitRadius = 1.34;
+    const orbitTilt = 0.5; // radians, plane inclination
+    let orbitAngle = Math.random() * Math.PI * 2;
+    const orbitSpeed = 0.09; // rad/sec — slow, deliberate pass
+    const raycaster = new THREE.Raycaster();
+    const pointerNDC = new THREE.Vector2();
+
+    function setDeployed(deployed) {
+      sat.wings.forEach((w, i) => {
+        const side = i === 0 ? 1 : -1;
+        w.target = deployed ? 0 : -side * (Math.PI / 2);
+      });
+    }
+    let deployed = true; // starts deployed — normal on-orbit configuration
+    setDeployed(deployed);
+
+    function pointerToNDC(clientX, clientY) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointerNDC.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointerNDC.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    }
+    function hitSatellite() {
+      raycaster.setFromCamera(pointerNDC, camera);
+      return raycaster.intersectObjects(sat.hitMeshes, false).length > 0;
+    }
+    function onClick(e) {
+      pointerToNDC(e.clientX, e.clientY);
+      if (hitSatellite()) { deployed = !deployed; setDeployed(deployed); }
+    }
+    function onPointerMove(e) {
+      pointerToNDC(e.clientX, e.clientY);
+      renderer.domElement.style.cursor = hitSatellite() ? 'pointer' : '';
+    }
+    renderer.domElement.addEventListener('click', onClick);
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
+
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enablePan = false;
     controls.enableZoom = false;
@@ -216,11 +443,32 @@ export default function HeroEarth({ disabled = false, style }) {
     controls.minPolarAngle = Math.PI / 2 - 0.55;
     controls.maxPolarAngle = Math.PI / 2 + 0.55;
 
+    let lastT = performance.now();
     function animate() {
       if (disposed) return;
       raf = requestAnimationFrame(animate);
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - lastT) / 1000);
+      lastT = now;
+
       clouds.rotation.y += 0.0006;
       earthMat.uniforms.cameraWorldPosition.value.copy(camera.position);
+
+      // Orbit motion — only the group's POSITION advances around Earth;
+      // its attitude (set once in buildSatellite) is never touched here,
+      // so the satellite keeps a fixed orientation through the whole
+      // pass rather than re-facing the direction of travel.
+      orbitAngle += orbitSpeed * dt;
+      const cx = Math.cos(orbitAngle) * orbitRadius;
+      const cz = Math.sin(orbitAngle) * orbitRadius;
+      sat.group.position.set(cx, Math.sin(orbitAngle * 1) * orbitRadius * Math.sin(orbitTilt), cz * Math.cos(orbitTilt));
+
+      // Smoothly ease each wing hinge toward its deploy/stow target.
+      sat.wings.forEach((w) => {
+        w.current += (w.target - w.current) * Math.min(1, dt * 3.2);
+        w.hinge.rotation.y = w.current;
+      });
+
       controls.update();
       renderer.render(scene, camera);
     }
@@ -242,12 +490,16 @@ export default function HeroEarth({ disabled = false, style }) {
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', onResize);
       resizeObserver.disconnect();
+      renderer.domElement.removeEventListener('click', onClick);
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
       controls.dispose();
       [dayTex, nightTex, cloudsTex, specTex].forEach((t) => t.dispose());
       earthGeo.dispose(); earthMat.dispose();
       clouds.geometry.dispose(); cloudsMat.dispose();
       atmosphere.geometry.dispose(); atmosphereMat.dispose();
       starGeo.dispose();
+      sat.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+      sat.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };
