@@ -127,6 +127,17 @@ const GlobalStyle = () => (
     .vayu-tier-card:hover { border-color: #c9a86a66; transform: translateY(-3px); }
     .vayu-founder-links a { transition: border-color 0.2s ease, color 0.2s ease; }
     .vayu-founder-links a:hover { border-color: #c9a86a; color: #f5d98a; }
+    .vayu-pfp-img { transition: transform 0.4s cubic-bezier(0.16,1,0.3,1), box-shadow 0.4s ease, filter 0.4s ease; }
+    .vayu-pfp-wrap::before {
+      content: ''; position: absolute; inset: -5px; border-radius: 50%;
+      background: conic-gradient(from 0deg, #c9a86a, #f5d98a, #7eb8d4, #c9a86a);
+      opacity: 0; transform: scale(0.82) rotate(0deg); filter: blur(5px);
+      transition: opacity 0.4s ease, transform 0.6s ease; z-index: 0;
+      animation: vayu-pfp-spin 6s linear infinite paused;
+    }
+    .vayu-pfp-wrap:hover::before { opacity: 0.9; transform: scale(1) rotate(0deg); animation-play-state: running; }
+    .vayu-pfp-wrap:hover .vayu-pfp-img { transform: scale(1.07); filter: saturate(1.2) brightness(1.06); box-shadow: 0 0 26px rgba(201,168,106,0.5); }
+    @keyframes vayu-pfp-spin { from { transform: scale(1) rotate(0deg); } to { transform: scale(1) rotate(360deg); } }
     .vayu-tier-option { transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease; }
     .vayu-tier-option:hover { border-color: #c9a86a99; background: rgba(201,168,106,0.08); transform: translateY(-3px); }
     .vayu-flow-node { transition: opacity 0.4s ease; }
@@ -930,10 +941,12 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Developer</div>
             <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 30 }}>Who's building this</div>
             <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 20 : 40, alignItems: isMobile ? 'flex-start' : 'center' }}>
-              <img src="/images/founder.jpg" alt="Rohit Thanvi" style={{
-                width: 96, height: 96, borderRadius: '50%', flexShrink: 0, objectFit: 'cover',
-                border: `1px solid ${S.goldDim}`, display: 'block',
-              }} />
+              <div className="vayu-pfp-wrap" style={{ width: 96, height: 96, flexShrink: 0, position: 'relative', borderRadius: '50%' }}>
+                <img src="/images/founder.jpg" alt="Rohit Thanvi" className="vayu-pfp-img" style={{
+                  width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover', position: 'relative', zIndex: 1,
+                  border: `1px solid ${S.goldDim}`, display: 'block',
+                }} />
+              </div>
               <div style={{ maxWidth: 640 }}>
                 <div style={{ fontFamily: S.mono, fontSize: 16, color: S.text, marginBottom: 6 }}>Rohit Thanvi</div>
                 <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 1.5, color: S.gold, textTransform: 'uppercase', marginBottom: 16 }}>Developer, Vayu</div>
