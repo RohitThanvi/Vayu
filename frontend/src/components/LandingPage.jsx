@@ -125,6 +125,8 @@ const GlobalStyle = () => (
     .vayu-stat-card:hover { border-color: #c9a86a55; transform: translateY(-3px); }
     .vayu-tier-card { transition: border-color 0.2s ease, transform 0.2s ease; }
     .vayu-tier-card:hover { border-color: #c9a86a66; transform: translateY(-3px); }
+    .vayu-founder-links a { transition: border-color 0.2s ease, color 0.2s ease; }
+    .vayu-founder-links a:hover { border-color: #c9a86a; color: #f5d98a; }
     .vayu-tier-option { transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease; }
     .vayu-tier-option:hover { border-color: #c9a86a99; background: rgba(201,168,106,0.08); transform: translateY(-3px); }
     .vayu-flow-node { transition: opacity 0.4s ease; }
@@ -937,9 +939,26 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
               <div style={{ maxWidth: 640 }}>
                 <div style={{ fontFamily: S.mono, fontSize: 16, color: S.text, marginBottom: 6 }}>Rohit Thanvi</div>
                 <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 1.5, color: S.gold, textTransform: 'uppercase', marginBottom: 16 }}>Founder &amp; sole builder, Vayu</div>
-                <div style={{ fontFamily: S.mono, fontSize: 13, color: S.text2, lineHeight: 1.85 }}>
-                  Building Vayu solo — architecture, backend, frontend, and every one of the
-                  16 Spectra remote-sensing tools. {/* placeholder — bio details pending, see chat */}
+                <div style={{ fontFamily: S.mono, fontSize: 13, color: S.text2, lineHeight: 1.85, marginBottom: 20 }}>
+                  Computer Science undergraduate at SKIT, Jaipur, building Vayu end-to-end —
+                  backend, frontend, and every tool in the Spectra remote-sensing tab.
+                  Previously interned at ISRO, working on retrieval and code-analysis systems
+                  for aerospace software.
+                </div>
+                <div className="vayu-founder-links" style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {[
+                    ['LinkedIn', 'https://linkedin.com/in/rohitthanvi'],
+                    ['GitHub', 'https://github.com/RohitThanvi'],
+                    ['Portfolio', 'https://rohitthanvi.vercel.app'],
+                  ].map(([label, href]) => (
+                    <a key={label} href={href} target="_blank" rel="noreferrer" style={{
+                      fontFamily: S.mono, fontSize: 11, letterSpacing: 1, textTransform: 'uppercase',
+                      padding: '8px 14px', border: `1px solid ${S.borderLight}`, borderRadius: 4,
+                      color: S.text2, textDecoration: 'none', background: 'rgba(13,17,23,0.7)',
+                    }}>
+                      {label}
+                    </a>
+                  ))}
                 </div>
               </div>
             </div>
