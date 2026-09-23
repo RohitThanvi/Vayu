@@ -193,6 +193,48 @@ function Icon({ path, size = 20, color = S.gold }) {
   );
 }
 
+// Understated disclosure for the data-source list — a plain text link
+// with a thin underline and a slow-rotating chevron, not a boxed
+// "accordion" button. Expand/collapse is CSS-only via
+// grid-template-rows: 0fr -> 1fr on the wrapper (no JS height
+// measurement, no snap), which is what keeps the motion reading as
+// deliberate rather than a UI-kit default.
+function DataSourcesDisclosure({ isMobile }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginBottom: isMobile ? 44 : 64 }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 7, background: 'none', cursor: 'pointer',
+          border: 'none', borderBottom: `1px solid ${open ? S.gold : S.borderLight}`, padding: '0 0 5px',
+          fontFamily: S.mono, fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: open ? S.goldBright : S.text3,
+          transition: 'color 0.4s ease, border-color 0.4s ease',
+        }}
+      >
+        Data sources
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          style={{ transition: 'transform 0.45s cubic-bezier(0.22,1,0.36,1)', transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      <div style={{ display: 'grid', gridTemplateRows: open ? '1fr' : '0fr', transition: 'grid-template-rows 0.55s cubic-bezier(0.22,1,0.36,1)' }}>
+        <div style={{ overflow: 'hidden' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, paddingTop: 18 }}>
+            {DATA_SOURCES.map((d) => (
+              <div key={d.name} style={{ border: `1px solid ${S.border}`, borderRadius: 6, padding: '10px 12px', background: S.surface2 }}>
+                <div style={{ fontFamily: S.mono, fontSize: 11.5, color: S.text, marginBottom: 3 }}>{d.name}</div>
+                <div style={{ fontFamily: S.mono, fontSize: 10, color: S.text3 }}>{d.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Scroll-reveal wrapper: fades + rises into place the first time it
 // enters the viewport, then stays (disconnects its own observer —
 // this is a one-time entrance, not a repeat-on-every-scroll effect).
@@ -895,38 +937,25 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>About</div>
             <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 18 }}>What Vayu actually does</div>
-            <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.85, maxWidth: 760, marginBottom: 20 }}>
-              Vayu pulls together satellite imagery, maritime &amp; flight traffic, weather and
-              air quality, commodity prices, and government agricultural data into one
-              continuously-updating picture — instead of a dozen dashboards, tabs, and stale
-              PDFs. Point it at any area on Earth and it runs the analysis, scores the risk,
-              and explains what changed in plain language, then keeps watching so you don't
-              have to check back manually.
-            </div>
             <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.85, maxWidth: 760, marginBottom: isMobile ? 32 : 44 }}>
-              It's built as four focused terminals rather than one sprawling dashboard —
-              Business, Agri, Remote Sensing, or all of it combined — so whoever's using it
-              only sees the panels relevant to what they actually do. Under the hood, every
-              number is traceable back to a named public source and a stated method, not a
-              black-box score; the Spectra remote-sensing tab alone carries 16 separate
-              analysis tools, each reporting its own uncertainty and citation.
+              Vayu fuses satellite imagery, maritime &amp; flight traffic, weather, commodity
+              prices, and agricultural data into one continuously-updating picture — run as
+              four focused terminals (Business, Agri, Remote Sensing, or all combined) rather
+              than one sprawling dashboard. Every number traces back to a named public source
+              and a stated method, not a black box.
             </div>
           </Reveal>
 
-          {/* Data sources — a quick-scan "where the numbers actually come
-              from" strip. Real trust signal for a product whose whole
-              pitch is fusing many feeds into one read, so it's worth a
-              dedicated graphic rather than a line of prose. */}
+          {/* Data sources — collapsed by default. The list itself is
+              long (8 named sources) and secondary to the pitch above,
+              so it's tucked behind a plain text-link disclosure rather
+              than always rendered — keeps the section scannable while
+              the sourcing is still one click away for anyone who wants
+              it. CSS-only expand (grid-template-rows 0fr->1fr) rather
+              than a JS height measurement or a bouncy accordion icon —
+              reads as restrained, not a UI-kit demo. */}
           <Reveal root={scrollContainerRef.current}>
-            <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 2.5, color: S.text3, textTransform: 'uppercase', marginBottom: 16 }}>Real data, named sources</div>
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: isMobile ? 44 : 64 }}>
-              {DATA_SOURCES.map((d) => (
-                <div key={d.name} style={{ border: `1px solid ${S.border}`, borderRadius: 6, padding: '10px 12px', background: S.surface2 }}>
-                  <div style={{ fontFamily: S.mono, fontSize: 11.5, color: S.text, marginBottom: 3 }}>{d.name}</div>
-                  <div style={{ fontFamily: S.mono, fontSize: 10, color: S.text3 }}>{d.desc}</div>
-                </div>
-              ))}
-            </div>
+            <DataSourcesDisclosure isMobile={isMobile} />
           </Reveal>
 
           {/* Stat strip — quiet infographic, same palette as the rest of
