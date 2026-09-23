@@ -196,7 +196,7 @@ function Icon({ path, size = 20, color = S.gold }) {
 // Scroll-reveal wrapper: fades + rises into place the first time it
 // enters the viewport, then stays (disconnects its own observer —
 // this is a one-time entrance, not a repeat-on-every-scroll effect).
-function Reveal({ children, delay = 0, root }) {
+function Reveal({ children, delay = 0, root, variant = 'rise' }) {
   const ref = useRef(null);
   const [visible, setVisible] = useState(false);
 
@@ -213,11 +213,99 @@ function Reveal({ children, delay = 0, root }) {
     return () => observer.disconnect();
   }, [root]);
 
+  const hiddenTransform = variant === 'scale' ? 'translateY(34px) scale(0.94)' : 'translateY(28px)';
+
   return (
     <div ref={ref} style={{
       opacity: visible ? 1 : 0,
-      transform: visible ? 'translateY(0)' : 'translateY(28px)',
-      transition: `opacity 0.7s ease ${delay}s, transform 0.7s ease ${delay}s`,
+      transform: visible ? 'translateY(0) scale(1)' : hiddenTransform,
+      filter: variant === 'scale' ? (visible ? 'blur(0px)' : 'blur(6px)') : 'none',
+      transition: `opacity 0.7s cubic-bezier(0.16,1,0.3,1) ${delay}s, transform 0.7s cubic-bezier(0.16,1,0.3,1) ${delay}s, filter 0.7s ease ${delay}s`,
+      willChange: 'opacity, transform',
+    }}>
+      {children}
+    </div>
+  );
+}
+
+// Section-level enter/exit choreography — distinct from Reveal above
+// (which is a one-shot, per-item entrance that never disconnects its
+// visible state once triggered). SectionFX instead keeps observing for
+// the section's whole lifetime, so it also settles back toward its
+// hidden state as the section leaves the viewport in either direction —
+// a section you scroll past recedes the same way it arrived, rather
+// than snapping away. Each variant is deliberately slow (0.95-1.2s),
+// eased with no overshoot/bounce, and moves at most ~24px — restrained
+// on purpose, so five different sections read as one composed, serene
+// page rather than five separate animation demos.
+const SECTION_VARIANTS = {
+  // About — a curtain gently lifting: rises and settles, recedes the
+  // same way. The most "default/dignified" of the five.
+  curtain: {
+    hidden: { opacity: 0, transform: 'translateY(30px) scale(0.99)' },
+    shown: { opacity: 1, transform: 'translateY(0) scale(1)' },
+    duration: '1.1s', easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+  },
+  // Tiers — a slow unfurl from a slightly contracted state, like a
+  // scroll or map being opened out flat. Fitting for a section that's
+  // itself laid out as a set of cards to compare.
+  unfurl: {
+    hidden: { opacity: 0, transform: 'scale(0.965)' },
+    shown: { opacity: 1, transform: 'scale(1)' },
+    duration: '1.15s', easing: 'cubic-bezier(0.19, 1, 0.22, 1)',
+  },
+  // Developer — a quiet lateral drift, like a page turning open from
+  // the left rather than rising from below; visually distinguishes
+  // the one section that's a personal note rather than a product pitch.
+  drift: {
+    hidden: { opacity: 0, transform: 'translateX(-24px)' },
+    shown: { opacity: 1, transform: 'translateX(0)' },
+    duration: '1s', easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+  },
+  // Contact — resolves into focus rather than rising or unfolding; a
+  // closing section coming clear, fitting as the page's final ask.
+  glow: {
+    hidden: { opacity: 0, filter: 'blur(7px)', transform: 'translateY(16px)' },
+    shown: { opacity: 1, filter: 'blur(0px)', transform: 'translateY(0)' },
+    duration: '1.2s', easing: 'ease-out',
+  },
+  // Footer — the smallest, quietest move of the five; a hairline
+  // settle, not a statement.
+  hairline: {
+    hidden: { opacity: 0, transform: 'translateY(10px)' },
+    shown: { opacity: 1, transform: 'translateY(0)' },
+    duration: '0.9s', easing: 'ease-out',
+  },
+};
+
+function SectionFX({ variant, root, children, style }) {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // No disconnect() — stays alive for the section's whole lifetime so
+    // it can also settle back toward "hidden" on exit, not just fire
+    // once on the way in.
+    const observer = new IntersectionObserver(
+      ([entry]) => setVisible(entry.isIntersecting),
+      { root, threshold: 0.12 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [root]);
+
+  const v = SECTION_VARIANTS[variant];
+  const state = visible ? v.shown : v.hidden;
+  return (
+    <div ref={ref} style={{
+      ...style,
+      opacity: state.opacity,
+      transform: state.transform,
+      filter: state.filter || 'none',
+      transition: `opacity ${v.duration} ${v.easing}, transform ${v.duration} ${v.easing}, filter ${v.duration} ${v.easing}`,
+      willChange: 'opacity, transform, filter',
     }}>
       {children}
     </div>
@@ -802,6 +890,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
 
       {/* About */}
       <div ref={el => sectionRefs.current.about = el} data-section="about" style={{ position: 'relative', padding: isMobile ? '60px 20px' : '100px 28px', borderTop: `1px solid ${S.border}` }}>
+        <SectionFX variant="curtain" root={scrollContainerRef.current}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>About</div>
@@ -891,6 +980,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
             ))}
           </div>
         </div>
+        </SectionFX>
       </div>
 
       {/* Tiers — graphical breakdown of the 4-way split (same data as
@@ -898,6 +988,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
           list per tier and a direct "Enter" CTA so this section works
           as a standalone pitch, not just a teaser for the modal). */}
       <div ref={el => sectionRefs.current.tiers = el} data-section="tiers" style={{ padding: isMobile ? '60px 20px' : '100px 28px', borderTop: `1px solid ${S.border}` }}>
+        <SectionFX variant="unfurl" root={scrollContainerRef.current}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Tiers</div>
@@ -932,10 +1023,12 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
             ))}
           </div>
         </div>
+        </SectionFX>
       </div>
 
       {/* Developer */}
       <div ref={el => sectionRefs.current.founder = el} data-section="founder" style={{ padding: isMobile ? '60px 20px' : '100px 28px', borderTop: `1px solid ${S.border}` }}>
+        <SectionFX variant="drift" root={scrollContainerRef.current}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Developer</div>
@@ -972,10 +1065,12 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
             </div>
           </Reveal>
         </div>
+        </SectionFX>
       </div>
 
 
       <div ref={el => sectionRefs.current.contact = el} data-section="contact" style={{ padding: isMobile ? '60px 20px' : '100px 28px', borderTop: `1px solid ${S.border}` }}>
+        <SectionFX variant="glow" root={scrollContainerRef.current}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Contact</div>
@@ -983,10 +1078,12 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
             <ContactForm apiUrl={apiUrl} />
           </Reveal>
         </div>
+        </SectionFX>
       </div>
 
       {/* Footer */}
       <div style={{ borderTop: `1px solid ${S.border}`, padding: isMobile ? '22px 20px' : '28px 28px' }}>
+        <SectionFX variant="hairline" root={scrollContainerRef.current}>
         <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: isMobile ? 'center' : 'space-between', textAlign: isMobile ? 'center' : 'left' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <img src="/logo.png" alt="" width="15" height="15" style={{ display: 'block', opacity: 0.7 }} />
@@ -996,6 +1093,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
           </div>
           <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 1, color: S.text4 }}>VAYU — Geospatial &amp; Business Intelligence</div>
         </div>
+        </SectionFX>
       </div>
     </div>
   );
