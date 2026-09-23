@@ -45,7 +45,7 @@ const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
 };
 
-const SECTIONS = [['home', 'Home'], ['about', 'About'], ['tiers', 'Tiers'], ['founder', 'Founder'], ['contact', 'Contact']];
+const SECTIONS = [['home', 'Home'], ['about', 'About'], ['tiers', 'Tiers'], ['founder', 'Developer'], ['contact', 'Contact']];
 
 // Short feature bullets per tier, for the new landing-page Tiers section
 // (SERVICE_OPTIONS itself stays as-is — still used by TierPickerModal —
@@ -923,27 +923,22 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         </div>
       </div>
 
-      {/* Founder */}
+      {/* Developer */}
       <div ref={el => sectionRefs.current.founder = el} data-section="founder" style={{ padding: isMobile ? '60px 20px' : '100px 28px', borderTop: `1px solid ${S.border}` }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal root={scrollContainerRef.current}>
-            <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Founder</div>
+            <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Developer</div>
             <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 30 }}>Who's building this</div>
             <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 20 : 40, alignItems: isMobile ? 'flex-start' : 'center' }}>
-              <div style={{
-                width: 96, height: 96, borderRadius: '50%', flexShrink: 0, background: S.surface2, border: `1px solid ${S.goldDim}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Georgia, serif', fontSize: 32, color: S.goldBright,
-              }}>
-                RT
-              </div>
+              <img src="/images/founder.jpg" alt="Rohit Thanvi" style={{
+                width: 96, height: 96, borderRadius: '50%', flexShrink: 0, objectFit: 'cover',
+                border: `1px solid ${S.goldDim}`, display: 'block',
+              }} />
               <div style={{ maxWidth: 640 }}>
                 <div style={{ fontFamily: S.mono, fontSize: 16, color: S.text, marginBottom: 6 }}>Rohit Thanvi</div>
-                <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 1.5, color: S.gold, textTransform: 'uppercase', marginBottom: 16 }}>Founder &amp; sole builder, Vayu</div>
+                <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 1.5, color: S.gold, textTransform: 'uppercase', marginBottom: 16 }}>Developer, Vayu</div>
                 <div style={{ fontFamily: S.mono, fontSize: 13, color: S.text2, lineHeight: 1.85, marginBottom: 20 }}>
-                  Computer Science undergraduate at SKIT, Jaipur, building Vayu end-to-end —
-                  backend, frontend, and every tool in the Spectra remote-sensing tab.
-                  Previously interned at ISRO, working on retrieval and code-analysis systems
-                  for aerospace software.
+                  A former ISRO intern who never quite stopped looking skyward — Vayu is what came of it.
                 </div>
                 <div className="vayu-founder-links" style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                   {[
