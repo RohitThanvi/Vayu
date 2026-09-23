@@ -45,7 +45,17 @@ const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
 };
 
-const SECTIONS = [['home', 'Home'], ['about', 'About'], ['contact', 'Contact']];
+const SECTIONS = [['home', 'Home'], ['about', 'About'], ['tiers', 'Tiers'], ['founder', 'Founder'], ['contact', 'Contact']];
+
+// Short feature bullets per tier, for the new landing-page Tiers section
+// (SERVICE_OPTIONS itself stays as-is — still used by TierPickerModal —
+// this is additive detail keyed by the same `id`).
+const TIER_DETAILS = {
+  business: ['Maritime & aviation live tracking', 'Commodity & market prices', 'Chokepoint risk scoring', 'Orbital (3D globe) view', 'Satellite analysis on any AOI'],
+  agri: ['Composite 0-100 agri risk score', 'Drought & groundwater trend', 'Mandi (crop market) prices', 'Irrigation advisory', 'Crop-stage & extent mapping'],
+  remote_sensing: ['16 Spectra remote-sensing tools', 'Spectral indices, SAR, LULC, terrain', 'ML classification + accuracy assessment', 'Change detection & burn severity', 'GeoTIFF export + PDF reports'],
+  full: ['Every Business panel', 'Every Agri panel', 'Every Remote Sensing tool', 'Nothing hidden or gated'],
+};
 
 const STATS = [
   { n: '9+', label: 'Fixed satellite analysis metrics', icon: 'M4 17l5-5 3 3 6-8M4 17V7M4 17h16' },
@@ -65,6 +75,20 @@ const FEATURES = [
   { title: 'Weather & Air Quality', desc: 'Live temperature, wind, pressure overlays, and real-time CPCB air quality across India.', img: '/screenshots/weather-layers.jpg' },
   { title: 'Agricultural Intelligence', desc: 'A composite 0-100 risk score fusing vegetation stress, drought, and soil moisture into one plain-language read.', img: '/screenshots/agri-dashboard.jpg' },
   { title: 'Orbital Tracking', desc: 'Live aircraft and satellite positions rendered on an interactive 3D globe.', img: '/screenshots/orbital-view.jpg' },
+];
+
+// Data-source badge strip for About — a quick-scan "where the numbers
+// actually come from" graphic, since that's a real trust signal for a
+// product whose whole pitch is fusing many feeds into one read.
+const DATA_SOURCES = [
+  { name: 'Google Earth Engine', desc: 'Satellite imagery & analysis' },
+  { name: 'USGS', desc: 'Terrain, seismic & water data' },
+  { name: 'NASA FIRMS', desc: 'Active fire detection' },
+  { name: 'GDELT', desc: 'Global news & event tone' },
+  { name: 'ACLED', desc: 'Conflict events & forecasts' },
+  { name: 'AISStream', desc: 'Live vessel positions' },
+  { name: 'adsb.lol', desc: 'Live aircraft positions' },
+  { name: 'CelesTrak', desc: 'Satellite orbital data' },
 ];
 
 // One shared stylesheet for everything that needs a real CSS animation
@@ -99,6 +123,8 @@ const GlobalStyle = () => (
     .vayu-cta-secondary:hover { border-color: #c9a86a; color: #f5d98a; }
     .vayu-stat-card { transition: border-color 0.25s ease, transform 0.25s ease; }
     .vayu-stat-card:hover { border-color: #c9a86a55; transform: translateY(-3px); }
+    .vayu-tier-card { transition: border-color 0.2s ease, transform 0.2s ease; }
+    .vayu-tier-card:hover { border-color: #c9a86a66; transform: translateY(-3px); }
     .vayu-tier-option { transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease; }
     .vayu-tier-option:hover { border-color: #c9a86a99; background: rgba(201,168,106,0.08); transform: translateY(-3px); }
     .vayu-flow-node { transition: opacity 0.4s ease; }
@@ -767,13 +793,37 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
           <Reveal root={scrollContainerRef.current}>
             <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>About</div>
             <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 18 }}>What Vayu actually does</div>
-            <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.85, maxWidth: 760, marginBottom: isMobile ? 40 : 56 }}>
+            <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.85, maxWidth: 760, marginBottom: 20 }}>
               Vayu pulls together satellite imagery, maritime &amp; flight traffic, weather and
               air quality, commodity prices, and government agricultural data into one
               continuously-updating picture — instead of a dozen dashboards, tabs, and stale
               PDFs. Point it at any area on Earth and it runs the analysis, scores the risk,
               and explains what changed in plain language, then keeps watching so you don't
               have to check back manually.
+            </div>
+            <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.85, maxWidth: 760, marginBottom: isMobile ? 32 : 44 }}>
+              It's built as four focused terminals rather than one sprawling dashboard —
+              Business, Agri, Remote Sensing, or all of it combined — so whoever's using it
+              only sees the panels relevant to what they actually do. Under the hood, every
+              number is traceable back to a named public source and a stated method, not a
+              black-box score; the Spectra remote-sensing tab alone carries 16 separate
+              analysis tools, each reporting its own uncertainty and citation.
+            </div>
+          </Reveal>
+
+          {/* Data sources — a quick-scan "where the numbers actually come
+              from" strip. Real trust signal for a product whose whole
+              pitch is fusing many feeds into one read, so it's worth a
+              dedicated graphic rather than a line of prose. */}
+          <Reveal root={scrollContainerRef.current}>
+            <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 2.5, color: S.text3, textTransform: 'uppercase', marginBottom: 16 }}>Real data, named sources</div>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: isMobile ? 44 : 64 }}>
+              {DATA_SOURCES.map((d) => (
+                <div key={d.name} style={{ border: `1px solid ${S.border}`, borderRadius: 6, padding: '10px 12px', background: S.surface2 }}>
+                  <div style={{ fontFamily: S.mono, fontSize: 11.5, color: S.text, marginBottom: 3 }}>{d.name}</div>
+                  <div style={{ fontFamily: S.mono, fontSize: 10, color: S.text3 }}>{d.desc}</div>
+                </div>
+              ))}
             </div>
           </Reveal>
 
@@ -830,7 +880,74 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         </div>
       </div>
 
-      {/* Contact */}
+      {/* Tiers — graphical breakdown of the 4-way split (same data as
+          TierPickerModal's SERVICE_OPTIONS, elaborated with a bullet
+          list per tier and a direct "Enter" CTA so this section works
+          as a standalone pitch, not just a teaser for the modal). */}
+      <div ref={el => sectionRefs.current.tiers = el} data-section="tiers" style={{ padding: isMobile ? '60px 20px' : '100px 28px', borderTop: `1px solid ${S.border}` }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+          <Reveal root={scrollContainerRef.current}>
+            <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Tiers</div>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 18 }}>Four terminals, one platform</div>
+            <div style={{ fontFamily: S.mono, fontSize: 13.5, color: S.text2, lineHeight: 1.85, maxWidth: 760, marginBottom: isMobile ? 32 : 48 }}>
+              No accounts, no paywalls, no waiting — pick a tier and you're straight into
+              the terminal. Switch any time from inside the app.
+            </div>
+          </Reveal>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(260px, 1fr))', gap: isMobile ? 16 : 20 }}>
+            {SERVICE_OPTIONS.map((opt, i) => (
+              <Reveal key={opt.id} delay={i * 0.1} variant="scale" root={scrollContainerRef.current}>
+                <div className="vayu-tier-card" style={{ background: S.surface2, border: `1px solid ${opt.id === 'full' ? S.goldDim : S.border}`, borderRadius: 10, padding: '22px 20px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+                  <Icon path={opt.icon} size={24} />
+                  <div style={{ fontFamily: S.mono, fontSize: 15, color: S.goldBright, marginTop: 14, marginBottom: 4, letterSpacing: 0.3 }}>{opt.label}</div>
+                  <div style={{ fontFamily: S.mono, fontSize: 10.5, color: S.text3, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 14 }}>{opt.tagline}</div>
+                  <ul style={{ margin: 0, padding: 0, listStyle: 'none', marginBottom: 20, flex: 1 }}>
+                    {(TIER_DETAILS[opt.id] || []).map((line) => (
+                      <li key={line} style={{ fontFamily: S.mono, fontSize: 11.5, color: S.text2, lineHeight: 1.9, paddingLeft: 16, position: 'relative' }}>
+                        <span style={{ position: 'absolute', left: 0, color: S.gold }}>&#8226;</span>{line}
+                      </li>
+                    ))}
+                  </ul>
+                  <button onClick={() => onSelectTier(opt.id)} className="vayu-cta-secondary" style={{
+                    padding: '10px 16px', fontFamily: S.mono, fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase',
+                    background: 'rgba(13,17,23,0.7)', border: `1px solid ${S.borderLight}`, borderRadius: 4, color: S.text, cursor: 'pointer', width: '100%',
+                  }}>
+                    Enter as {opt.label}
+                  </button>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Founder */}
+      <div ref={el => sectionRefs.current.founder = el} data-section="founder" style={{ padding: isMobile ? '60px 20px' : '100px 28px', borderTop: `1px solid ${S.border}` }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+          <Reveal root={scrollContainerRef.current}>
+            <div style={{ fontFamily: S.mono, fontSize: 12, letterSpacing: 3, color: S.gold, textTransform: 'uppercase', marginBottom: 8 }}>Founder</div>
+            <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 24 : 30, color: S.text, marginBottom: 30 }}>Who's building this</div>
+            <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 20 : 40, alignItems: isMobile ? 'flex-start' : 'center' }}>
+              <div style={{
+                width: 96, height: 96, borderRadius: '50%', flexShrink: 0, background: S.surface2, border: `1px solid ${S.goldDim}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Georgia, serif', fontSize: 32, color: S.goldBright,
+              }}>
+                RT
+              </div>
+              <div style={{ maxWidth: 640 }}>
+                <div style={{ fontFamily: S.mono, fontSize: 16, color: S.text, marginBottom: 6 }}>Rohit Thanvi</div>
+                <div style={{ fontFamily: S.mono, fontSize: 11, letterSpacing: 1.5, color: S.gold, textTransform: 'uppercase', marginBottom: 16 }}>Founder &amp; sole builder, Vayu</div>
+                <div style={{ fontFamily: S.mono, fontSize: 13, color: S.text2, lineHeight: 1.85 }}>
+                  Building Vayu solo — architecture, backend, frontend, and every one of the
+                  16 Spectra remote-sensing tools. {/* placeholder — bio details pending, see chat */}
+                </div>
+              </div>
+            </div>
+          </Reveal>
+        </div>
+      </div>
+
+
       <div ref={el => sectionRefs.current.contact = el} data-section="contact" style={{ padding: isMobile ? '60px 20px' : '100px 28px', borderTop: `1px solid ${S.border}` }}>
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal root={scrollContainerRef.current}>
