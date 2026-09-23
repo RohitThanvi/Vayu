@@ -142,6 +142,31 @@ const GlobalStyle = () => (
     .vayu-tier-option:hover { border-color: #c9a86a99; background: rgba(201,168,106,0.08); transform: translateY(-3px); }
     .vayu-flow-node { transition: opacity 0.4s ease; }
     input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.4); }
+    /* Ambient backdrop — carries the hero's "still in space" feeling
+       down through About/Tiers/Developer/Contact instead of those
+       sections dropping to flat black. Fixed (not absolute), so it
+       reads as a constant skybox behind the page rather than content
+       that scrolls — two very soft, wide gradient glows (echoing the
+       hero's gold/cyan palette) plus a barely-there star scatter and
+       one thin orbital ring watermark. Every layer stays under ~0.07
+       opacity on purpose: this should read as ambiance on second
+       glance, not a background image, and never compete with text
+       contrast. z-index -1 keeps it behind all normal content while
+       still painting above the page's own flat background color. */
+    .vayu-ambient-backdrop {
+      position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden;
+      background:
+        radial-gradient(ellipse 900px 700px at 84% 6%, rgba(212,175,55,0.055), transparent 60%),
+        radial-gradient(ellipse 800px 900px at 6% 72%, rgba(56,189,248,0.035), transparent 65%),
+        radial-gradient(1.3px 1.3px at 12% 18%, rgba(255,255,255,0.5), transparent 60%),
+        radial-gradient(1px 1px at 68% 42%, rgba(255,255,255,0.4), transparent 60%),
+        radial-gradient(1.5px 1.5px at 40% 78%, rgba(255,255,255,0.42), transparent 60%),
+        radial-gradient(1px 1px at 85% 88%, rgba(255,255,255,0.35), transparent 60%),
+        radial-gradient(1.2px 1.2px at 25% 55%, rgba(255,255,255,0.38), transparent 60%),
+        radial-gradient(1px 1px at 55% 12%, rgba(255,255,255,0.3), transparent 60%);
+      background-repeat: no-repeat, no-repeat, repeat, repeat, repeat, repeat, repeat, repeat;
+      background-size: 100% 100%, 100% 100%, 260px 260px, 320px 320px, 240px 240px, 300px 300px, 280px 280px, 340px 340px;
+    }
     /* Cursor-follow ambient glow — the "every mouse movement does
        something" touch, applied page-wide rather than just in the
        hero. Deliberately faint (0.07 alpha) and additive (screen
@@ -805,6 +830,15 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
   return (
     <div ref={scrollContainerRef} style={{ position: 'fixed', inset: 0, overflowY: 'auto', overflowX: 'hidden', background: S.bg, color: S.text, scrollBehavior: 'smooth' }}>
       <GlobalStyle />
+      <div className="vayu-ambient-backdrop">
+        {/* Thin orbital-ring watermark — the one deliberate "Vayu" motif
+            carried into the backdrop, echoing the hero's satellite pass.
+            No fill, hairline stroke, ~5% opacity — a detail you notice
+            on the second look, not the first. */}
+        <svg width="900" height="900" viewBox="0 0 900 900" style={{ position: 'absolute', top: -220, right: -260, opacity: 0.05 }}>
+          <ellipse cx="450" cy="450" rx="420" ry="175" fill="none" stroke="#D4AF37" strokeWidth="1" transform="rotate(-18 450 450)" />
+        </svg>
+      </div>
       <div className="vayu-cursor-glow" />
 
       {tierModalOpen && (
