@@ -123,6 +123,152 @@ const ATMOSPHERE_FRAGMENT = `
 // thematically right choice for a geospatial-intelligence product: it's
 // a real Earth-observation satellite, not just any satellite.
 // ---------------------------------------------------------------------
+
+// The Landsat 7 model's own materials are real geometry but flat data:
+// every material ships metalness=0/roughness=0 (verified against the
+// source glTF — it's a shape-accurate export with no PBR art pass and
+// no texture maps at all), and two materials (the solar cells and the
+// panel backing) have no baseColor set, so they render as the loader's
+// plain-white fallback. That flatness — not the geometry — is what
+// reads as "not a real satellite". This pass fixes it after load:
+// per-material metalness/roughness tuned by what the part actually is
+// (gold MLI foil, brushed aluminum hardware, a mirror-like imaging
+// aperture, painted white panels, solar cells), the two colorless
+// materials given their real-world colors, and two small procedural
+// canvas textures (grayscale roughness noise for the foil's crinkle,
+// a cell-grid pattern for the solar panel) standing in for the texture
+// maps the source file doesn't have. None of this touches geometry.
+function makeNoiseRoughnessTexture(size, base, variance, repeat) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(size, size);
+  for (let i = 0; i < size * size; i++) {
+    const v = Math.max(0, Math.min(255, base + (Math.random() - 0.5) * variance * 2));
+    img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeat, repeat);
+  return tex;
+}
+
+function makeSolarCellTexture(size = 256, cells = 8) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#050810';
+  ctx.fillRect(0, 0, size, size);
+  const step = size / cells;
+  for (let y = 0; y < cells; y++) {
+    for (let x = 0; x < cells; x++) {
+      ctx.fillStyle = `rgba(120,150,210,${0.05 + Math.random() * 0.05})`;
+      ctx.fillRect(x * step + 1, y * step + 1, step - 2, step - 2);
+    }
+  }
+  ctx.strokeStyle = 'rgba(150,175,220,0.4)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= cells; i++) {
+    ctx.beginPath(); ctx.moveTo(i * step, 0); ctx.lineTo(i * step, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i * step); ctx.lineTo(size, i * step); ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function tuneSatelliteMaterials(model) {
+  const foilRoughnessMap = makeNoiseRoughnessTexture(128, 165, 55, 3);
+  const solarCellMap = makeSolarCellTexture();
+  const seen = new Set();
+
+  model.traverse((o) => {
+    if (!o.isMesh || !o.material) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    mats.forEach((m) => {
+      if (seen.has(m.id)) return; // materials are shared across meshes — tune each once
+      seen.add(m.id);
+      const name = (m.name || '').toLowerCase();
+      m.envMapIntensity = 1.1;
+
+      if (name === 'mirror') {
+        // Imaging-optics aperture — the one part of an Earth-observation
+        // satellite that's genuinely mirror-like.
+        m.metalness = 0.95; m.roughness = 0.08;
+      } else if (name.includes('solarpanelsolar')) {
+        // No source color at all — give it the real deep blue-black
+        // glassy-cell look instead of the loader's plain-white default.
+        m.color.setRGB(0.02, 0.035, 0.08);
+        m.metalness = 0.35; m.roughness = 0.28;
+        m.map = solarCellMap; m.roughnessMap = solarCellMap;
+      } else if (name === 'solarpanelback') {
+        m.color.setRGB(0.06, 0.06, 0.07);
+        m.metalness = 0.1; m.roughness = 0.65;
+      } else if (name.includes('solarpanelhardware')) {
+        m.metalness = 0.75; m.roughness = 0.38;
+      } else if (name === 'rest' || name === 'rest.001' || name === 'body' || name === 'body.001') {
+        // Gold MLI thermal-blanket foil — real satellites' most
+        // recognizable material, and the one that most needs the
+        // crinkle variation the noise roughness map provides; a
+        // uniform-roughness gold is what read as "toy" before.
+        m.metalness = 0.85; m.roughness = 0.34;
+        m.roughnessMap = foilRoughnessMap;
+      } else if (name.includes('whiteflat') || name === 'comm') {
+        // Painted white panels/antenna backing — matte paint, not bare metal.
+        m.metalness = 0.05; m.roughness = 0.55;
+      } else if (name.includes('silver') || name.includes('hardware')) {
+        // Structural hardware, brushed aluminum.
+        m.metalness = 0.78; m.roughness = 0.34;
+      } else {
+        m.metalness = 0.4; m.roughness = 0.45;
+      }
+      m.needsUpdate = true;
+    });
+  });
+}
+
+// Procedural PMREM environment — without SOMETHING to reflect, setting
+// metalness>0 on a material makes it render nearly black rather than
+// realistic, since there's no light source data at grazing/reflection
+// angles for it to pick up (only the single directional sun light
+// would show, and only exactly where its specular highlight falls).
+// This builds a minimal deep-space environment (near-black gradient +
+// a bright glint in the sun's own direction, so reflections agree with
+// the scene's actual lighting) via three's standard PMREMGenerator.fromScene
+// technique — cheap (one small offscreen render, done once) and needs
+// no external HDRI asset.
+function buildSatelliteEnvironment(renderer) {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  const envScene = new THREE.Scene();
+  const geo = new THREE.SphereGeometry(50, 32, 16);
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: { sunDir: { value: SUN_DIR } },
+    vertexShader: `
+      varying vec3 vPos;
+      void main() { vPos = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+    `,
+    fragmentShader: `
+      uniform vec3 sunDir;
+      varying vec3 vPos;
+      void main() {
+        float sun = pow(max(dot(normalize(vPos), normalize(sunDir)), 0.0), 26.0);
+        vec3 base = mix(vec3(0.008,0.009,0.014), vec3(0.02,0.023,0.035), vPos.y * 0.5 + 0.5);
+        gl_FragColor = vec4(base + vec3(1.0,0.96,0.88) * sun * 1.6, 1.0);
+      }
+    `,
+  });
+  const sphere = new THREE.Mesh(geo, mat);
+  envScene.add(sphere);
+  const rt = pmrem.fromScene(envScene, 0.035);
+  pmrem.dispose();
+  geo.dispose(); mat.dispose();
+  return rt.texture;
+}
+
 function loadSatelliteModel(onReady, isCancelled) {
   const dracoLoader = new DRACOLoader();
   dracoLoader.setDecoderPath('/draco/');
@@ -176,6 +322,7 @@ function loadSatelliteModel(onReady, isCancelled) {
         if (o.isMesh) hitMeshes.push(o);
       });
 
+      tuneSatelliteMaterials(model);
       attitude.add(model);
       console.log(`HeroEarth: satellite loaded — ${hitMeshes.length} meshes, scale ${scale.toFixed(3)}, source size`, size);
       onReady();
@@ -232,7 +379,20 @@ export default function HeroEarth({ disabled = false, style }) {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Filmic tone mapping — only affects PBR materials (the satellite,
+    // the cloud shell), not the Earth/atmosphere shaders above, which
+    // write gl_FragColor directly without the tonemapping shader chunk.
+    // This is what makes the satellite's tuned metal/foil materials
+    // (see tuneSatelliteMaterials below) read as rich highlights rather
+    // than flat, blown-out white — the standard "give PBR metal a
+    // proper response curve" step.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
     mount.appendChild(renderer.domElement);
+    // Procedural deep-space environment so the satellite's metal/foil/
+    // mirror materials have something to reflect (see
+    // buildSatelliteEnvironment's own comment for why this matters).
+    scene.environment = buildSatelliteEnvironment(renderer);
 
     const texManager = new THREE.LoadingManager();
     let texturesReady = false;
@@ -470,6 +630,7 @@ export default function HeroEarth({ disabled = false, style }) {
       });
       sat.dispose();
 
+      scene.environment?.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };
