@@ -31,8 +31,16 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 const EARTH_RADIUS = 5;
-const EARTH_TEXTURE_URL = 'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_atmos_2048.jpg';
-const EARTH_BUMP_URL = 'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_normal_2048.jpg';
+// Local Blue Marble set (already shipped for the landing-page globe) —
+// day color, night city-lights, cloud shell, specular ocean mask, and a
+// bump/normal map. Using the bundled assets instead of an external CDN
+// URL means no extra runtime dependency on raw.githubusercontent.com
+// staying up, and gives us the specular + cloud layers the old
+// single-flat-texture setup didn't have.
+const EARTH_TEXTURE_URL = '/earth/earth_atmos_2048.jpg';
+const EARTH_BUMP_URL = '/earth/earth_normal_2048.jpg';
+const EARTH_SPECULAR_URL = '/earth/earth_specular_2048.jpg';
+const EARTH_CLOUDS_URL = '/earth/earth_clouds_1024.png';
 
 const COLORS = {
   station:   0xff6b6b,
@@ -219,39 +227,67 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     controls.rotateSpeed = 0.5;
     controls.zoomSpeed = 0.8;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+    // Brighter, evenly-lit sphere on purpose — this is the "visible light"
+    // difference from the moodier day/night hero globe: high ambient plus
+    // a soft fill light from the opposite side of the sun keeps the far
+    // hemisphere clearly readable instead of falling into deep shadow.
+    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.25);
     sun.position.set(5, 3, 5);
     scene.add(sun);
+    const fill = new THREE.DirectionalLight(0xbfd4ff, 0.4);
+    fill.position.set(-5, -2, -4);
+    scene.add(fill);
 
     const loader = new THREE.TextureLoader();
     const geometry = new THREE.SphereGeometry(EARTH_RADIUS, 64, 64);
-    const material = new THREE.MeshPhongMaterial({ color: 0x223344, shininess: 5 });
+    const material = new THREE.MeshPhongMaterial({ color: 0x223344, shininess: 14, specular: 0x333333 });
     const earth = new THREE.Mesh(geometry, material);
     scene.add(earth);
-    loader.load(EARTH_TEXTURE_URL, (tex) => { material.map = tex; material.color.set(0xffffff); material.needsUpdate = true; });
-    loader.load(EARTH_BUMP_URL, (tex) => { material.bumpMap = tex; material.bumpScale = 0.02; material.needsUpdate = true; });
+    loader.load(EARTH_TEXTURE_URL, (tex) => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      material.map = tex; material.color.set(0xffffff); material.needsUpdate = true;
+    });
+    loader.load(EARTH_BUMP_URL, (tex) => { material.bumpMap = tex; material.bumpScale = 0.025; material.needsUpdate = true; });
+    loader.load(EARTH_SPECULAR_URL, (tex) => { material.specularMap = tex; material.needsUpdate = true; });
+
+    // Cloud shell — thin, slightly larger sphere, independently and
+    // slowly rotated. Purely decorative/visual: it carries no position
+    // data, so spinning it doesn't touch the fixed lat/lon->vec3 mapping
+    // the satellite/station/aircraft glyphs and the base globe rely on.
+    const cloudsGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.008, 64, 64);
+    const cloudsMat = new THREE.MeshLambertMaterial({ transparent: true, opacity: 0.55, depthWrite: false });
+    const clouds = new THREE.Mesh(cloudsGeo, cloudsMat);
+    scene.add(clouds);
+    loader.load(EARTH_CLOUDS_URL, (tex) => { tex.colorSpace = THREE.SRGBColorSpace; cloudsMat.map = tex; cloudsMat.needsUpdate = true; });
 
     // Atmosphere glow — fresnel rim-light shell, the single biggest thing
     // separating "a sphere with a texture on it" from something that
-    // reads as an actual planet.
-    const atmosphereGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.04, 64, 64);
+    // reads as an actual planet. Slightly thicker/brighter shell + a
+    // warmer secondary tone at the limb reads closer to a real
+    // Rayleigh-scattering halo than a single flat blue rim.
+    const atmosphereGeo = new THREE.SphereGeometry(EARTH_RADIUS * 1.055, 64, 64);
     const atmosphereMat = new THREE.ShaderMaterial({
-      uniforms: { glowColor: { value: new THREE.Color(0x5fa8ff) } },
+      uniforms: {
+        glowColor: { value: new THREE.Color(0x6fb4ff) },
+        rimColor: { value: new THREE.Color(0xffe9c4) },
+      },
       vertexShader: `
         varying float intensity;
         void main() {
           vec3 vNormal = normalize(normalMatrix * normal);
           vec3 vViewDir = normalize(-(modelViewMatrix * vec4(position, 1.0)).xyz);
-          intensity = pow(0.65 - dot(vNormal, vViewDir), 2.5);
+          intensity = pow(0.62 - dot(vNormal, vViewDir), 2.2);
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
       `,
       fragmentShader: `
         uniform vec3 glowColor;
+        uniform vec3 rimColor;
         varying float intensity;
         void main() {
-          gl_FragColor = vec4(glowColor, clamp(intensity, 0.0, 1.0) * 0.55);
+          vec3 col = mix(glowColor, rimColor, clamp(intensity * 0.6, 0.0, 1.0));
+          gl_FragColor = vec4(col, clamp(intensity, 0.0, 1.0) * 0.65);
         }
       `,
       side: THREE.BackSide,
@@ -360,6 +396,7 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       // tick instead of surfacing to the ErrorBoundary — one bad frame
       // should not kill the whole loop.
       try {
+        clouds.rotation.y += 0.0004; // decorative only — earth itself never rotates (see note above)
         if (cameraAnimRef.current) {
           const { startTime, startDist, endDist, duration } = cameraAnimRef.current;
           const t = Math.min((performance.now() - startTime) / duration, 1);
@@ -409,6 +446,10 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       renderer.dispose();
       geometry.dispose();
       material.dispose();
+      material.map?.dispose(); material.bumpMap?.dispose(); material.specularMap?.dispose();
+      cloudsGeo.dispose();
+      cloudsMat.map?.dispose();
+      cloudsMat.dispose();
       atmosphereGeo.dispose();
       atmosphereMat.dispose();
       // Null out the refs, not just dispose their contents — StrictMode

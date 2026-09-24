@@ -928,8 +928,9 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
         <div style={{
           position: 'relative', zIndex: 1, height: '100%', display: 'flex', alignItems: 'center', maxWidth: 1200, margin: '0 auto', padding: isMobile ? '0 20px' : '0 28px',
           opacity: Math.max(0, 1 - parallaxY / 260), transform: `translateY(${parallaxY * 0.15}px)`,
+          pointerEvents: 'none',
         }}>
-          <div ref={heroTextRef} style={{ maxWidth: 560 }}>
+          <div ref={heroTextRef} style={{ maxWidth: 560, pointerEvents: 'auto' }}>
             <div style={{ fontFamily: S.mono, fontSize: isMobile ? 10.5 : 12, letterSpacing: isMobile ? 2 : 3, color: S.text3, textTransform: 'uppercase', marginBottom: isMobile ? 12 : 16 }}>
               Geospatial &amp; Business Intelligence
             </div>
