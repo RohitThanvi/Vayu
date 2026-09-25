@@ -82,8 +82,8 @@ STALE_MINUTES = 30
 MAX_VESSELS = 5000
 PRUNE_INTERVAL_S = 10 * 60
 
-# Same curated chokepoints as before — kept bounded rather than subscribing
-# to the whole globe, to keep memory/bandwidth sane on a free-tier host.
+# Chokepoints — kept as their own named boxes so the frontend can still
+# label/filter by chokepoint specifically.
 CHOKEPOINTS = {
     "strait_of_hormuz":    [[24.5, 54.5], [27.5, 57.0]],
     "strait_of_malacca":   [[1.0, 100.0], [6.5, 104.5]],
@@ -92,6 +92,29 @@ CHOKEPOINTS = {
     "strait_of_gibraltar": [[35.7, -6.0], [36.3, -5.0]],
     "panama_canal":        [[8.8, -80.2], [9.4, -79.4]],
     "english_channel":     [[49.8, -2.0], [51.2, 2.0]],
+}
+
+# Broader open-ocean regions — WITHOUT these, AISStream's subscription was
+# literally bounded to just the 7 narrow chokepoint boxes above, so a ship
+# sailing the open Indian Ocean (or anywhere else outside a strait) never
+# generated a single PositionReport, no matter what the frontend/"live
+# mode" did. These are the actual fix: real subscribed regions covering
+# the major ocean traffic areas, not just the pinch points. Chosen to
+# cover where merchant traffic actually concentrates (not literal
+# wall-to-wall ocean tiling) to keep this reasonably bounded against the
+# Render free-tier bandwidth cap (see vayu-project notes on the 5GB/mo
+# limit) — adjust/trim if bandwidth becomes an issue.
+OCEAN_REGIONS = {
+    # Full Indian Ocean incl. Arabian Sea / Bay of Bengal — this is the
+    # specific gap the user hit ("ships near Indian Ocean" showing none).
+    "indian_ocean":         [[-35.0, 30.0], [25.0, 100.0]],
+    "north_atlantic":       [[0.0, -80.0], [60.0, 0.0]],
+    "mediterranean":        [[30.0, -6.0], [46.0, 37.0]],
+    "south_china_sea":      [[-5.0, 100.0], [25.0, 122.0]],
+    # North Pacific split in two — a single box can't cross the
+    # antimeridian (180/-180) without wrapping incorrectly.
+    "north_pacific_west":   [[0.0, 122.0], [60.0, 180.0]],
+    "north_pacific_east":   [[0.0, -180.0], [60.0, -100.0]],
 }
 
 RECONNECT_DELAY_S = 10
@@ -640,7 +663,7 @@ class AISBridgeClient:
                 delay = min(delay * 2, MAX_RECONNECT_DELAY_S)
 
     async def _connect_and_stream(self):
-        bounding_boxes = list(CHOKEPOINTS.values())
+        bounding_boxes = list(CHOKEPOINTS.values()) + list(OCEAN_REGIONS.values())
         subscribe_message = {
             "APIKey": self.api_key,
             "BoundingBoxes": bounding_boxes,
@@ -649,7 +672,10 @@ class AISBridgeClient:
 
         async with websockets.connect(AISSTREAM_WS_URL, ping_interval=25, ping_timeout=40) as ws:
             await ws.send(json.dumps(subscribe_message))
-            logger.info(f"AISStream: subscribed to {len(bounding_boxes)} chokepoint regions")
+            logger.info(
+                f"AISStream: subscribed to {len(CHOKEPOINTS)} chokepoints + "
+                f"{len(OCEAN_REGIONS)} ocean regions ({len(bounding_boxes)} boxes total)"
+            )
             self._last_message_at = datetime.utcnow()  # fresh clock for this connection
 
             message_count = 0
