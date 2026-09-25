@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from ..core.rate_limit import limiter
 from ..core.job_store import job_store
 from ..services import gee_remote_sensing as rs
+from ..services import gee_cache
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/remote-sensing", tags=["Remote Sensing"])
@@ -119,82 +120,96 @@ class RemoteSensingRequest(BaseModel):
     polarization: Optional[str] = None  # flood_mapping: 'VH' (default) or 'VV'
 
 
+def _dispatch_tool(req: RemoteSensingRequest):
+    """The actual per-tool GEE dispatch (validation + compute), pulled out
+    of _run_tool so it can be wrapped by the cache without duplicating the
+    if/elif chain or changing any of the existing validation/error
+    behavior."""
+    if req.tool == "spectral_indices":
+        if not req.start_date or not req.end_date:
+            raise ValueError("spectral_indices requires start_date and end_date.")
+        return rs.compute_spectral_indices(req.aoi_geojson, req.start_date, req.end_date, req.indices)
+    elif req.tool == "terrain":
+        return rs.compute_terrain_analysis(req.aoi_geojson)
+    elif req.tool == "lulc":
+        return rs.compute_lulc_classification(req.aoi_geojson)
+    elif req.tool == "snow_cover":
+        if not req.start_date or not req.end_date:
+            raise ValueError("snow_cover requires start_date and end_date.")
+        return rs.compute_snow_cover(req.aoi_geojson, req.start_date, req.end_date)
+    elif req.tool == "sar_backscatter":
+        if not req.start_date or not req.end_date:
+            raise ValueError("sar_backscatter requires start_date and end_date.")
+        return rs.compute_sar_backscatter(req.aoi_geojson, req.start_date, req.end_date)
+    elif req.tool == "change_detection":
+        if not all([req.index, req.period1_start, req.period1_end, req.period2_start, req.period2_end]):
+            raise ValueError("change_detection requires index, period1_start, period1_end, period2_start, period2_end.")
+        return rs.compute_change_detection(req.aoi_geojson, req.index, req.period1_start, req.period1_end, req.period2_start, req.period2_end)
+    elif req.tool == "burn_severity":
+        if not all([req.pre_start, req.pre_end, req.post_start, req.post_end]):
+            raise ValueError("burn_severity requires pre_start, pre_end, post_start, post_end.")
+        return rs.compute_burn_severity(req.aoi_geojson, req.pre_start, req.pre_end, req.post_start, req.post_end)
+    elif req.tool == "atmospheric_composition":
+        if not req.start_date or not req.end_date:
+            raise ValueError("atmospheric_composition requires start_date and end_date.")
+        return rs.compute_atmospheric_composition(req.aoi_geojson, req.start_date, req.end_date)
+    elif req.tool == "index_time_series":
+        if not all([req.index, req.start_date, req.end_date]):
+            raise ValueError("index_time_series requires index, start_date, end_date.")
+        return rs.compute_index_time_series(req.aoi_geojson, req.index, req.start_date, req.end_date, req.interval or "month")
+    elif req.tool == "land_surface_temperature":
+        if not req.start_date or not req.end_date:
+            raise ValueError("land_surface_temperature requires start_date and end_date.")
+        return rs.compute_land_surface_temperature(req.aoi_geojson, req.start_date, req.end_date)
+    elif req.tool == "surface_water_dynamics":
+        return rs.compute_surface_water_dynamics(req.aoi_geojson)
+    elif req.tool == "supervised_classification":
+        if not req.start_date or not req.end_date:
+            raise ValueError("supervised_classification requires start_date and end_date.")
+        if not req.training_samples:
+            raise ValueError("supervised_classification requires training_samples: [{lat, lon, class_id, class_label}, ...].")
+        return rs.compute_supervised_classification(
+            req.aoi_geojson, req.start_date, req.end_date, req.training_samples,
+            req.num_trees or rs.DEFAULT_NUM_TREES,
+        )
+    elif req.tool == "dynamic_world":
+        if not req.start_date or not req.end_date:
+            raise ValueError("dynamic_world requires start_date and end_date.")
+        return rs.compute_dynamic_world_classification(req.aoi_geojson, req.start_date, req.end_date)
+    elif req.tool == "accuracy_assessment":
+        if not req.assess_tool:
+            raise ValueError(f"accuracy_assessment requires assess_tool: one of {sorted(rs.ACCURACY_ASSESSABLE_TOOLS)}.")
+        if not req.reference_points:
+            raise ValueError("accuracy_assessment requires reference_points: [{lat, lon, true_class}, ...].")
+        tool_params = {
+            "start_date": req.start_date, "end_date": req.end_date,
+            "pre_start": req.pre_start, "pre_end": req.pre_end,
+            "post_start": req.post_start, "post_end": req.post_end,
+        }
+        return rs.compute_accuracy_assessment(req.assess_tool, req.aoi_geojson, req.reference_points, tool_params)
+    elif req.tool == "flood_mapping":
+        if not all([req.pre_start, req.pre_end, req.post_start, req.post_end]):
+            raise ValueError("flood_mapping requires pre_start, pre_end, post_start, post_end.")
+        return rs.compute_flood_mapping(req.aoi_geojson, req.pre_start, req.pre_end, req.post_start, req.post_end, req.polarization or "VH")
+    elif req.tool == "soil_moisture":
+        if not req.start_date or not req.end_date:
+            raise ValueError("soil_moisture requires start_date and end_date.")
+        return rs.compute_soil_moisture(req.aoi_geojson, req.start_date, req.end_date)
+    else:
+        raise ValueError(f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}")
+
+
 def _run_tool(request_id: uuid.UUID, req: RemoteSensingRequest):
     job_store.set(request_id, {"status": "processing", "stage": "computing", "progress_pct": 30})
     try:
-        if req.tool == "spectral_indices":
-            if not req.start_date or not req.end_date:
-                raise ValueError("spectral_indices requires start_date and end_date.")
-            result = rs.compute_spectral_indices(req.aoi_geojson, req.start_date, req.end_date, req.indices)
-        elif req.tool == "terrain":
-            result = rs.compute_terrain_analysis(req.aoi_geojson)
-        elif req.tool == "lulc":
-            result = rs.compute_lulc_classification(req.aoi_geojson)
-        elif req.tool == "snow_cover":
-            if not req.start_date or not req.end_date:
-                raise ValueError("snow_cover requires start_date and end_date.")
-            result = rs.compute_snow_cover(req.aoi_geojson, req.start_date, req.end_date)
-        elif req.tool == "sar_backscatter":
-            if not req.start_date or not req.end_date:
-                raise ValueError("sar_backscatter requires start_date and end_date.")
-            result = rs.compute_sar_backscatter(req.aoi_geojson, req.start_date, req.end_date)
-        elif req.tool == "change_detection":
-            if not all([req.index, req.period1_start, req.period1_end, req.period2_start, req.period2_end]):
-                raise ValueError("change_detection requires index, period1_start, period1_end, period2_start, period2_end.")
-            result = rs.compute_change_detection(req.aoi_geojson, req.index, req.period1_start, req.period1_end, req.period2_start, req.period2_end)
-        elif req.tool == "burn_severity":
-            if not all([req.pre_start, req.pre_end, req.post_start, req.post_end]):
-                raise ValueError("burn_severity requires pre_start, pre_end, post_start, post_end.")
-            result = rs.compute_burn_severity(req.aoi_geojson, req.pre_start, req.pre_end, req.post_start, req.post_end)
-        elif req.tool == "atmospheric_composition":
-            if not req.start_date or not req.end_date:
-                raise ValueError("atmospheric_composition requires start_date and end_date.")
-            result = rs.compute_atmospheric_composition(req.aoi_geojson, req.start_date, req.end_date)
-        elif req.tool == "index_time_series":
-            if not all([req.index, req.start_date, req.end_date]):
-                raise ValueError("index_time_series requires index, start_date, end_date.")
-            result = rs.compute_index_time_series(req.aoi_geojson, req.index, req.start_date, req.end_date, req.interval or "month")
-        elif req.tool == "land_surface_temperature":
-            if not req.start_date or not req.end_date:
-                raise ValueError("land_surface_temperature requires start_date and end_date.")
-            result = rs.compute_land_surface_temperature(req.aoi_geojson, req.start_date, req.end_date)
-        elif req.tool == "surface_water_dynamics":
-            result = rs.compute_surface_water_dynamics(req.aoi_geojson)
-        elif req.tool == "supervised_classification":
-            if not req.start_date or not req.end_date:
-                raise ValueError("supervised_classification requires start_date and end_date.")
-            if not req.training_samples:
-                raise ValueError("supervised_classification requires training_samples: [{lat, lon, class_id, class_label}, ...].")
-            result = rs.compute_supervised_classification(
-                req.aoi_geojson, req.start_date, req.end_date, req.training_samples,
-                req.num_trees or rs.DEFAULT_NUM_TREES,
-            )
-        elif req.tool == "dynamic_world":
-            if not req.start_date or not req.end_date:
-                raise ValueError("dynamic_world requires start_date and end_date.")
-            result = rs.compute_dynamic_world_classification(req.aoi_geojson, req.start_date, req.end_date)
-        elif req.tool == "accuracy_assessment":
-            if not req.assess_tool:
-                raise ValueError(f"accuracy_assessment requires assess_tool: one of {sorted(rs.ACCURACY_ASSESSABLE_TOOLS)}.")
-            if not req.reference_points:
-                raise ValueError("accuracy_assessment requires reference_points: [{lat, lon, true_class}, ...].")
-            tool_params = {
-                "start_date": req.start_date, "end_date": req.end_date,
-                "pre_start": req.pre_start, "pre_end": req.pre_end,
-                "post_start": req.post_start, "post_end": req.post_end,
-            }
-            result = rs.compute_accuracy_assessment(req.assess_tool, req.aoi_geojson, req.reference_points, tool_params)
-        elif req.tool == "flood_mapping":
-            if not all([req.pre_start, req.pre_end, req.post_start, req.post_end]):
-                raise ValueError("flood_mapping requires pre_start, pre_end, post_start, post_end.")
-            result = rs.compute_flood_mapping(req.aoi_geojson, req.pre_start, req.pre_end, req.post_start, req.post_end, req.polarization or "VH")
-        elif req.tool == "soil_moisture":
-            if not req.start_date or not req.end_date:
-                raise ValueError("soil_moisture requires start_date and end_date.")
-            result = rs.compute_soil_moisture(req.aoi_geojson, req.start_date, req.end_date)
-        else:
-            job_store.update(request_id, {"status": "failed", "error": f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}"})
-            return
+        # cache_params covers every field that can affect the GEE result;
+        # a cache hit only ever comes from an identical prior request that
+        # already passed _dispatch_tool's own validation, and a raised
+        # ValueError is never cached (it propagates before reaching
+        # gee_cache's store step) — so validation still runs on every
+        # genuinely new/invalid request, just not on a repeat.
+        cache_params = req.model_dump(exclude={"tool"}, exclude_none=True)
+        result = gee_cache.cached_compute(req.tool, cache_params, lambda: _dispatch_tool(req))
     except ValueError as e:
         logger.warning(f"[{request_id}] Remote sensing validation error: {e}")
         job_store.update(request_id, {"status": "failed", "error": str(e)})
