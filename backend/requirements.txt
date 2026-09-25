@@ -31,3 +31,7 @@ tzdata==2024.2
 # PDF report generation
 reportlab==4.2.5
 Pillow==11.0.0
+
+# Redis cache for GEE remote-sensing results (optional — falls back to
+# in-memory cache if REDIS_URL isn't set, see services/gee_cache.py)
+redis==5.2.1

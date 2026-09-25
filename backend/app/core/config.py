@@ -112,6 +112,13 @@ class Settings(BaseSettings):
     # Job TTL
     JOB_TTL_SECONDS: int = 3600
 
+    # Redis cache for GEE remote-sensing results (see services/gee_cache.py).
+    # Optional — empty string means "no Redis configured", and the cache
+    # falls back to an in-memory TTL dict for this process instead of
+    # erroring or disabling caching. Any standard Redis URL works,
+    # including a free Upstash instance's rediss://... connection string.
+    REDIS_URL: str = ""
+
     @property
     def ALLOWED_ORIGINS(self) -> List[str]:
         return [o.strip() for o in self.ALLOWED_ORIGINS_STR.split(",") if o.strip()]
