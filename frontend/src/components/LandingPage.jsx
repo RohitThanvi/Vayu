@@ -586,7 +586,8 @@ function TierPickerModal({ onSelect, onClose, isMobile }) {
 
   return (
     <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isMobile ? 12 : 20,
+      position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: isMobile ? 'flex-start' : 'center', justifyContent: 'center',
+      padding: isMobile ? '28px 12px' : 20, overflowY: 'auto', WebkitOverflowScrolling: 'touch',
       background: 'rgba(5,7,12,0.55)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
       animation: 'vayu-modal-fade-in 0.2s ease',
     }}>

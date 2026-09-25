@@ -1650,7 +1650,7 @@ function MapOverlay({ result, isLoading, drawnAOI, isMobile }) {
 // ── Root App ──────────────────────────────────────────────────────────────────
 export default function App({ tier = 'full', onChangeTier }) {
   const isMobile = useIsMobile(MOBILE_BREAKPOINT);
-  const [mobilePanel, setMobilePanel] = useState('map'); // 'map' | 'analyze' | 'intel'
+  const [mobilePanel, setMobilePanel] = useState('map'); // 'map' | 'analyze' | 'intel' | 'tools'
   // Light/dark toggle — applied as a data-theme attribute on <html>,
   // which the --vayu-* CSS variables in index.css key off of. See
   // App.jsx's S={...} object: every S.bg/S.text/etc. is a var(--vayu-*)
@@ -1735,6 +1735,15 @@ export default function App({ tier = 'full', onChangeTier }) {
   // Full to Agri while on Business), fall back to Analyze — it's in
   // every tier's allowed list, so it's always a safe default.
   const [tab, setTab] = useState(() => (TIER_TABS[tier] || TIER_TABS.full).includes('Analyze') ? 'Analyze' : (TIER_TABS[tier] || TIER_TABS.full)[0]);
+
+  // The mobile "Tools" panel only exists for tabs that actually have a
+  // horizontal IntelBar (Business/Spectra/Agri) — if the user switches
+  // to a tab that doesn't (e.g. Orbital) while that panel is open,
+  // drop back to the map rather than leaving a blank/stale overlay up.
+  const TOOLS_BAR_TABS = ['Business', 'Spectra', 'Agri'];
+  useEffect(() => {
+    if (mobilePanel === 'tools' && !TOOLS_BAR_TABS.includes(tab)) setMobilePanel('map');
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
   const [queryText, setQueryText] = useState('');
   const [selMetric, setSelMetric] = useState(null);
   const [drawnAOI, setDrawnAOI]   = useState(null);
@@ -2642,8 +2651,28 @@ export default function App({ tier = 'full', onChangeTier }) {
           {rightPanelEl}
         </div>
       )}
+      {/* Mobile "Tools" panel — the same Business/Spectra/Agri IntelBar
+          that renders as a bottom strip on desktop, full-screen instead
+          on mobile (was previously not rendered on mobile AT ALL, so
+          Spectra's 16 tools, Business's Live/Analysis/Economics tabs,
+          and Agri's Groundwater/Analysis/Crop Stage/Irrigation/ML
+          Extent tabs were simply unreachable on a phone). Each bar's
+          own root layout already just fills its container (flexShrink:0,
+          no hardcoded width) so it drops into this overlay unchanged;
+          the isMobile prop lets each one adapt its internal spacing/
+          tab-row scrolling. */}
+      {isMobile && mobilePanel === 'tools' && (
+        <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:'#0a0c0f', overflowY:'auto' }}>
+          {tab === 'Business' && <BusinessIntelBar apiUrl={API_URL} isMobile />}
+          {tab === 'Spectra' && <SpectraIntelBar apiUrl={API_URL} drawnAOI={drawnAOI} isMobile />}
+          {tab === 'Agri' && (
+            <AgriIntelBar apiUrl={API_URL} drawnAOI={drawnAOI} isMobile
+              pointPickActive={pointPickActive} onSetPointPickHandler={setPointPickHandler} />
+          )}
+        </div>
+      )}
 
-      {isMobile && <MobileBottomNav active={mobilePanel} onChange={setMobilePanel} />}
+      {isMobile && <MobileBottomNav active={mobilePanel} onChange={setMobilePanel} showTools={TOOLS_BAR_TABS.includes(tab)} />}
 
       {/* Commodity ticker: desktop only, as a real flex sibling (not a
           fixed overlay) so it never covers the mobile bottom nav or
@@ -2686,11 +2715,12 @@ export default function App({ tier = 'full', onChangeTier }) {
 }
 
 // ── Mobile bottom navigation — switches between map / analyze / intel feed ──
-function MobileBottomNav({ active, onChange }) {
+function MobileBottomNav({ active, onChange, showTools }) {
   const ITEMS = [
     { id:'map',     label:'Map',     icon:'map' },
     { id:'analyze', label:'Analyze', icon:'sliders' },
     { id:'intel',   label:'Intel',   icon:'radio' },
+    ...(showTools ? [{ id:'tools', label:'Tools', icon:'layers' }] : []),
   ];
   return (
     <div style={{
