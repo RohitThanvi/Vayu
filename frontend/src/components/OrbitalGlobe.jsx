@@ -94,23 +94,32 @@ function vec3ToLatLon(v) {
 }
 
 // Faint decorative orbit path for a single object — a full circle at its
-// current display altitude/radius that passes through its live position.
-// We don't have real orbital elements (inclination, RAAN) from a single
-// lat/lon/alt sample, so the circle's plane is picked deterministically
-// from the object's own position (stable across re-renders, varied
-// between objects) rather than guessed — it's not the object's *true*
-// orbital plane, but it's a physically-valid circular orbit (a great
-// circle through Earth's center) that visibly passes through where the
-// object actually is right now, which is what a faint background path
-// needs to do. Read-only use of satelliteAltToVec3 — this never feeds
-// back into the actual position math above.
-function buildOrbitRingSegments(lat, lon, altKm, earthRadius, segments = 96) {
+// display altitude/radius, anchored so it passes through where the
+// object was first sighted. We don't have real orbital elements
+// (inclination, RAAN) from a single lat/lon/alt sample, so the circle's
+// plane is picked deterministically from the object's own STABLE
+// identity (name/id string — never its lat/lon), not its live position:
+// hashing on lat/lon meant every few-second position refresh (the
+// object's real, correct, ongoing movement) fed a completely different
+// value into the hash and reoriented the whole ring — a fixed path
+// visibly jumping to a new tilt on every poll. This is called exactly
+// once per object (see the caching in the effect below), so "stable
+// hash vs. live position" only matters for getting a good-looking
+// orientation on that first call; nothing here re-runs afterward.
+// Read-only use of satelliteAltToVec3 — this never feeds back into the
+// actual position math above.
+function stableHash01(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 100000) / 100000;
+}
+
+function buildOrbitRingSegments(lat, lon, altKm, identityKey, earthRadius, segments = 96) {
   const posVec = satelliteAltToVec3(lat, lon, altKm, earthRadius);
   const radius = posVec.length();
-  const e1 = posVec.clone().normalize(); // in-plane basis — guarantees the ring passes through the live position at t=0
+  const e1 = posVec.clone().normalize(); // in-plane basis — guarantees the ring passes through the anchor position at t=0
 
-  const seed = Math.abs(Math.sin(lat * 12.9898 + lon * 78.233 + altKm * 0.0031) * 43758.5453);
-  const hash = seed - Math.floor(seed);
+  const hash = stableHash01(identityKey);
   const refAxis = new THREE.Vector3(
     Math.sin(hash * Math.PI * 2),
     Math.cos(hash * Math.PI * 4 + 1.7),
@@ -270,6 +279,7 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
   const satelliteDataRef = useRef([]);
   const aircraftDataRef = useRef([]);
   const orbitLinesRef = useRef(null);
+  const orbitRingCacheRef = useRef(new Map()); // identityKey -> Float32Array-ready segment array, computed once and never touched again
   const onSelectRef = useRef(onSelect);
   // The render loop below is set up once in the mount effect and closes
   // over this ref rather than the `active` prop directly, for the same
@@ -583,6 +593,7 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
         orbitLinesRef.current.material.dispose();
         orbitLinesRef.current = null;
       }
+      orbitRingCacheRef.current.clear();
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
     };
   }, []);
@@ -649,11 +660,23 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     fill(stationPts, validStations);
     fill(satPts, validSats);
 
-    // Faint orbit rings, rebuilt alongside the positions they track.
+    // Faint orbit rings — computed exactly ONCE per object (cached by a
+    // stable identity key) and never recomputed on subsequent position
+    // refreshes, so the ring itself stays visually fixed while only the
+    // satellite glyph moves along it. Recomputing this from live lat/lon
+    // every poll was the earlier bug: the ring would jump to a new tilt
+    // every time the object's real position updated.
     const ringPts = orbitLinesRef.current ? [] : null;
     if (ringPts) {
-      [...validStations, ...validSats].forEach((s) => {
-        for (const v of buildOrbitRingSegments(s.lat, s.lon, s.alt_km, EARTH_RADIUS)) ringPts.push(v);
+      const cache = orbitRingCacheRef.current;
+      [...validStations, ...validSats].forEach((s, i) => {
+        const key = s.name || s.norad_id || s.id || `unnamed-${s.group || ''}-${i}`;
+        let ring = cache.get(key);
+        if (!ring) {
+          ring = buildOrbitRingSegments(s.lat, s.lon, s.alt_km, key, EARTH_RADIUS);
+          cache.set(key, ring);
+        }
+        for (const v of ring) ringPts.push(v);
       });
       orbitLinesRef.current.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ringPts), 3));
       orbitLinesRef.current.geometry.computeBoundingSphere();
