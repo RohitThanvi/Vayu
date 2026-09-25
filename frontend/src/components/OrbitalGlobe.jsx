@@ -156,151 +156,108 @@ function makeGlyphTexture(kind, colorHex) {
   const c = size / 2;
 
   if (kind === 'station') {
-    // Sleek space-station glyph, same visual language as the satellite
-    // one below — a compact hab module with two long truss arms, each
-    // ending in a segmented (cell-divider) solar array, plus a small
-    // radiator/docking nub. Real stations (ISS, Tiangong) really are
-    // built on this cross-shaped truss layout, so the silhouette stays
-    // a "+", but rendered as actual structure instead of a plain
-    // blocky plus-sign.
+    // Bold, no-blur space-station glyph. A cross-shaped truss with two
+    // solid solar-panel blocks per arm and a dark, thick outline for
+    // contrast against both bright clouds and dark ocean. Deliberately
+    // few, thick shapes rather than fine detail — at the small sprite
+    // sizes these render at, thin hairlines and shadowBlur glow just
+    // wash into a blurry smear (that was the earlier bug); a handful
+    // of bold, high-contrast shapes is what actually stays legible.
+    const dark = 'rgba(8,10,16,0.92)';
     ctx.save();
     ctx.translate(c, c);
     const s = 1.55;
     ctx.scale(s, s);
-    ctx.shadowColor = hex;
-    ctx.shadowBlur = 5;
     ctx.lineJoin = 'round';
+    ctx.strokeStyle = dark;
 
     [0, 90].forEach((deg) => {
       ctx.save();
       ctx.rotate((deg * Math.PI) / 180);
 
-      // Thin truss spanning the full arm.
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.6;
+      ctx.lineWidth = 2.4;
       ctx.beginPath();
       ctx.moveTo(-27, 0); ctx.lineTo(27, 0);
       ctx.stroke();
 
-      // Segmented solar arrays on both ends of this truss.
       [-1, 1].forEach((side) => {
         const x0 = side > 0 ? 12 : -30;
         ctx.beginPath();
-        ctx.roundRect(x0, -5.5, 18, 11, 1.8);
+        ctx.roundRect(x0, -6, 18, 12, 2);
         ctx.fill();
-        ctx.lineWidth = 1.4;
+        ctx.lineWidth = 2.2;
         ctx.stroke();
-        ctx.save();
-        ctx.shadowBlur = 0;
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-        ctx.lineWidth = 0.9;
+        // One bold center divider — enough to read as "paneled" without
+        // dissolving at small scale.
         ctx.beginPath();
-        for (let i = 1; i < 4; i++) {
-          const x = x0 + i * 4.5;
-          ctx.moveTo(x, -5.5); ctx.lineTo(x, 5.5);
-        }
+        ctx.moveTo(x0 + 9, -6); ctx.lineTo(x0 + 9, 6);
+        ctx.lineWidth = 1.6;
         ctx.stroke();
-        ctx.restore();
       });
       ctx.restore();
     });
 
-    // Central hab module — rounded, with a soft top highlight.
-    ctx.shadowBlur = 7;
+    // Central hab module.
     ctx.beginPath();
-    ctx.roundRect(-8, -8, 16, 16, 3.5);
+    ctx.roundRect(-8.5, -8.5, 17, 17, 4);
     ctx.fill();
-    ctx.lineWidth = 1.8;
-    ctx.stroke();
-    ctx.save();
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(-5.5, -6); ctx.lineTo(5.5, -6);
-    ctx.stroke();
-    ctx.restore();
-
-    // Small radiator/docking node.
-    ctx.shadowBlur = 3;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.roundRect(-3, 9, 6, 5, 1.2);
-    ctx.fill();
+    ctx.lineWidth = 2.6;
     ctx.stroke();
 
     ctx.restore();
   } else if (kind === 'satellite') {
-    // Sleek line-art satellite glyph — a soft outer glow, segmented
-    // solar wings (cell dividers, not flat blocks), a rounded bus with
-    // a subtle top highlight, and a fine dish/antenna — reads as a
-    // clean tracking-HUD icon at a glance instead of a blocky sprite.
+    // Bold, no-blur satellite glyph — same design language as the
+    // station glyph above (few thick shapes, dark high-contrast
+    // outline) scaled down: a rounded bus, two solid solar wings with
+    // one bold divider each, and a short antenna + dish. Legible as a
+    // clean silhouette at a glance rather than a detailed miniature —
+    // the earlier shadowBlur version looked good only at full canvas
+    // resolution and turned to mush once rendered as a small sprite.
+    const dark = 'rgba(8,10,16,0.92)';
     ctx.save();
     ctx.translate(c, c);
-    const s = 1.7; // scale up the whole glyph within the larger canvas
+    const s = 1.9;
     ctx.scale(s, s);
-
-    ctx.shadowColor = hex;
-    ctx.shadowBlur = 5;
     ctx.lineJoin = 'round';
-
-    // Solar wings, each side of the bus on a short connecting strut.
-    ctx.lineWidth = 1.6;
-    [-1, 1].forEach((side) => {
-      const x0 = side > 0 ? 9 : -29;
-      ctx.beginPath();
-      ctx.roundRect(x0, -6.5, 20, 13, 2.2);
-      ctx.fill();
-      ctx.stroke();
-      // Cell-divider lines across the panel — what separates a "solar
-      // wing" from a plain colored rectangle.
-      ctx.save();
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let i = 1; i < 4; i++) {
-        const x = x0 + i * 5;
-        ctx.moveTo(x, -6.5); ctx.lineTo(x, 6.5);
-      }
-      ctx.stroke();
-      ctx.restore();
-    });
+    ctx.strokeStyle = dark;
 
     // Struts linking the wings to the central bus.
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.8;
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(-9, 0); ctx.lineTo(-6.5, 0);
-    ctx.moveTo(6.5, 0); ctx.lineTo(9, 0);
+    ctx.moveTo(-9.5, 0); ctx.lineTo(-6, 0);
+    ctx.moveTo(6, 0); ctx.lineTo(9.5, 0);
     ctx.stroke();
 
-    // Central bus — rounded body with a soft top-edge highlight for a
-    // touch of dimensionality instead of a flat-filled square.
-    ctx.shadowBlur = 7;
+    // Solar wings, each with one bold center divider.
+    [-1, 1].forEach((side) => {
+      const x0 = side > 0 ? 9.5 : -29.5;
+      ctx.beginPath();
+      ctx.roundRect(x0, -7, 20, 14, 2.5);
+      ctx.fill();
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x0 + 10, -7); ctx.lineTo(x0 + 10, 7);
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+    });
+
+    // Central bus.
     ctx.beginPath();
     ctx.roundRect(-6.5, -6.5, 13, 13, 3);
     ctx.fill();
-    ctx.lineWidth = 1.6;
+    ctx.lineWidth = 2.4;
     ctx.stroke();
-    ctx.save();
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(-4.5, -5); ctx.lineTo(4.5, -5);
-    ctx.stroke();
-    ctx.restore();
 
-    // Fine antenna mast + dish.
-    ctx.shadowBlur = 3;
-    ctx.lineWidth = 1.4;
+    // Antenna mast + dish.
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(0, -6.5); ctx.lineTo(0, -15);
+    ctx.moveTo(0, -6.5); ctx.lineTo(0, -14);
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(0, -17, 2.6, 0, Math.PI * 2);
+    ctx.arc(0, -16.5, 3, 0, Math.PI * 2);
     ctx.fill();
+    ctx.lineWidth = 1.8;
     ctx.stroke();
 
     ctx.restore();
@@ -497,21 +454,21 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       return pts;
     };
     stationPointsRef.current = makePoints('station', 0.36);
-    satellitePointsRef.current = makePoints('satellite', 0.26);
+    satellitePointsRef.current = makePoints('satellite', 0.3);
     aircraftPointsRef.current = makePoints('aircraft', 0.22);
 
     // Faint orbit paths — one merged LineSegments draw call for every
-    // station ring combined — one ring per station, each its own
-    // independent segment pairs so rings never visually connect to
-    // each other. Deliberately scoped to stations only (a handful of
-    // objects), not every tracked satellite (~100): drawing a ring per
-    // satellite made them all overlap into an undifferentiated grid
-    // wash across the whole globe, so no individual ring read as
-    // "belonging" to any specific visible icon — with just the
-    // stations, each ring stays a recognizable path under its own dot.
+    // station/satellite ring combined, each its own independent segment
+    // pairs so rings never visually connect to each other. Every
+    // tracked object gets its own ring again (an earlier attempt scoped
+    // this to stations only to avoid visual noise, but that meant the
+    // ~100 regular satellites had no ring at all — exactly the ones a
+    // user zoomed in on). Opacity kept low so the combined effect at a
+    // zoomed-out view reads as ambient motion rather than a solid grid,
+    // while a zoomed-in single ring is still clearly there.
     const orbitLinesGeo = new THREE.BufferGeometry();
     const orbitLinesMat = new THREE.LineBasicMaterial({
-      color: 0x9fb4ff, transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending,
+      color: 0x9fb4ff, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending,
     });
     const orbitLines = new THREE.LineSegments(orbitLinesGeo, orbitLinesMat);
     scene.add(orbitLines);
@@ -726,17 +683,17 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     fill(stationPts, validStations);
     fill(satPts, validSats);
 
-    // Faint orbit rings — stations only (see the material comment above
-    // for why), computed exactly ONCE per object (cached by a stable
-    // identity key) and never recomputed on subsequent position
-    // refreshes, so the ring itself stays visually fixed while only the
-    // glyph moves along it. Recomputing this from live lat/lon every
-    // poll was an earlier bug: the ring would jump to a new tilt every
-    // time the object's real position updated.
+    // Faint orbit rings — every station and satellite, computed exactly
+    // ONCE per object (cached by a stable identity key) and never
+    // recomputed on subsequent position refreshes, so the ring itself
+    // stays visually fixed while only the glyph moves along it.
+    // Recomputing this from live lat/lon every poll was an earlier bug:
+    // the ring would jump to a new tilt every time the object's real
+    // position updated.
     const ringPts = orbitLinesRef.current ? [] : null;
     if (ringPts) {
       const cache = orbitRingCacheRef.current;
-      validStations.forEach((s, i) => {
+      [...validStations, ...validSats].forEach((s, i) => {
         const key = s.name || s.norad_id || s.id || `unnamed-${s.group || ''}-${i}`;
         let ring = cache.get(key);
         if (!ring) {
