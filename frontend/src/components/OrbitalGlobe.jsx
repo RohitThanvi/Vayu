@@ -93,14 +93,56 @@ function vec3ToLatLon(v) {
   return { lat, lon };
 }
 
+// Faint decorative orbit path for a single object — a full circle at its
+// current display altitude/radius that passes through its live position.
+// We don't have real orbital elements (inclination, RAAN) from a single
+// lat/lon/alt sample, so the circle's plane is picked deterministically
+// from the object's own position (stable across re-renders, varied
+// between objects) rather than guessed — it's not the object's *true*
+// orbital plane, but it's a physically-valid circular orbit (a great
+// circle through Earth's center) that visibly passes through where the
+// object actually is right now, which is what a faint background path
+// needs to do. Read-only use of satelliteAltToVec3 — this never feeds
+// back into the actual position math above.
+function buildOrbitRingSegments(lat, lon, altKm, earthRadius, segments = 96) {
+  const posVec = satelliteAltToVec3(lat, lon, altKm, earthRadius);
+  const radius = posVec.length();
+  const e1 = posVec.clone().normalize(); // in-plane basis — guarantees the ring passes through the live position at t=0
+
+  const seed = Math.abs(Math.sin(lat * 12.9898 + lon * 78.233 + altKm * 0.0031) * 43758.5453);
+  const hash = seed - Math.floor(seed);
+  const refAxis = new THREE.Vector3(
+    Math.sin(hash * Math.PI * 2),
+    Math.cos(hash * Math.PI * 4 + 1.7),
+    Math.sin(hash * Math.PI * 6 + 3.1)
+  ).normalize();
+  let pole = new THREE.Vector3().crossVectors(e1, refAxis);
+  if (pole.lengthSq() < 1e-6) pole = new THREE.Vector3().crossVectors(e1, new THREE.Vector3(0, 1, 0));
+  pole.normalize();
+  const e2 = new THREE.Vector3().crossVectors(pole, e1).normalize();
+
+  const out = new Array(segments * 6);
+  for (let i = 0; i < segments; i++) {
+    const t0 = (i / segments) * Math.PI * 2;
+    const t1 = ((i + 1) / segments) * Math.PI * 2;
+    const c0 = Math.cos(t0) * radius, s0 = Math.sin(t0) * radius;
+    const c1 = Math.cos(t1) * radius, s1 = Math.sin(t1) * radius;
+    const o = i * 6;
+    out[o] = e1.x * c0 + e2.x * s0; out[o + 1] = e1.y * c0 + e2.y * s0; out[o + 2] = e1.z * c0 + e2.z * s0;
+    out[o + 3] = e1.x * c1 + e2.x * s1; out[o + 4] = e1.y * c1 + e2.y * s1; out[o + 5] = e1.z * c1 + e2.z * s1;
+  }
+  return out;
+}
+
 function makeGlyphTexture(kind, colorHex) {
-  const size = 64;
+  const size = kind === 'satellite' ? 128 : 64;
   const canvas = document.createElement('canvas');
   canvas.width = size; canvas.height = size;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, size, size);
+  const hex = `#${colorHex.toString(16).padStart(6, '0')}`;
   ctx.strokeStyle = '#ffffff';
-  ctx.fillStyle = `#${colorHex.toString(16).padStart(6, '0')}`;
+  ctx.fillStyle = hex;
   ctx.lineWidth = 2.5;
   const c = size / 2;
 
@@ -118,17 +160,78 @@ function makeGlyphTexture(kind, colorHex) {
     ctx.strokeRect(-7, -7, 14, 14);
     ctx.restore();
   } else if (kind === 'satellite') {
+    // Sleek line-art satellite glyph — a soft outer glow, segmented
+    // solar wings (cell dividers, not flat blocks), a rounded bus with
+    // a subtle top highlight, and a fine dish/antenna — reads as a
+    // clean tracking-HUD icon at a glance instead of a blocky sprite.
     ctx.save();
     ctx.translate(c, c);
-    ctx.fillRect(-6, -6, 12, 12);
-    ctx.strokeRect(-6, -6, 12, 12);
-    ctx.fillRect(-22, -5, 13, 10);
-    ctx.strokeRect(-22, -5, 13, 10);
-    ctx.fillRect(9, -5, 13, 10);
-    ctx.strokeRect(9, -5, 13, 10);
+    const s = 1.7; // scale up the whole glyph within the larger canvas
+    ctx.scale(s, s);
+
+    ctx.shadowColor = hex;
+    ctx.shadowBlur = 5;
+    ctx.lineJoin = 'round';
+
+    // Solar wings, each side of the bus on a short connecting strut.
+    ctx.lineWidth = 1.6;
+    [-1, 1].forEach((side) => {
+      const x0 = side > 0 ? 9 : -29;
+      ctx.beginPath();
+      ctx.roundRect(x0, -6.5, 20, 13, 2.2);
+      ctx.fill();
+      ctx.stroke();
+      // Cell-divider lines across the panel — what separates a "solar
+      // wing" from a plain colored rectangle.
+      ctx.save();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 1; i < 4; i++) {
+        const x = x0 + i * 5;
+        ctx.moveTo(x, -6.5); ctx.lineTo(x, 6.5);
+      }
+      ctx.stroke();
+      ctx.restore();
+    });
+
+    // Struts linking the wings to the central bus.
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.8;
     ctx.beginPath();
-    ctx.moveTo(0, -6); ctx.lineTo(0, -16);
+    ctx.moveTo(-9, 0); ctx.lineTo(-6.5, 0);
+    ctx.moveTo(6.5, 0); ctx.lineTo(9, 0);
     ctx.stroke();
+
+    // Central bus — rounded body with a soft top-edge highlight for a
+    // touch of dimensionality instead of a flat-filled square.
+    ctx.shadowBlur = 7;
+    ctx.beginPath();
+    ctx.roundRect(-6.5, -6.5, 13, 13, 3);
+    ctx.fill();
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    ctx.save();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-4.5, -5); ctx.lineTo(4.5, -5);
+    ctx.stroke();
+    ctx.restore();
+
+    // Fine antenna mast + dish.
+    ctx.shadowBlur = 3;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(0, -6.5); ctx.lineTo(0, -15);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, -17, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
     ctx.restore();
   } else if (kind === 'aircraft') {
     ctx.save();
@@ -166,6 +269,7 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
   const stationDataRef = useRef([]);
   const satelliteDataRef = useRef([]);
   const aircraftDataRef = useRef([]);
+  const orbitLinesRef = useRef(null);
   const onSelectRef = useRef(onSelect);
   // The render loop below is set up once in the mount effect and closes
   // over this ref rather than the `active` prop directly, for the same
@@ -324,6 +428,19 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     satellitePointsRef.current = makePoints('satellite', 0.26);
     aircraftPointsRef.current = makePoints('aircraft', 0.22);
 
+    // Faint orbit paths — one merged LineSegments draw call for every
+    // station/satellite ring combined (each ring contributes its own
+    // independent segment pairs, so rings never visually connect to
+    // each other), kept subtle enough to read as ambient motion context
+    // rather than compete with the actual satellite glyphs.
+    const orbitLinesGeo = new THREE.BufferGeometry();
+    const orbitLinesMat = new THREE.LineBasicMaterial({
+      color: 0x9fb4ff, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const orbitLines = new THREE.LineSegments(orbitLinesGeo, orbitLinesMat);
+    scene.add(orbitLines);
+    orbitLinesRef.current = orbitLines;
+
     const raycaster = new THREE.Raycaster();
     raycaster.params.Points.threshold = EARTH_RADIUS * 0.06;
     const pointer = new THREE.Vector2();
@@ -461,6 +578,11 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
         if (ref.current) { ref.current.geometry.dispose(); ref.current.material.map?.dispose(); ref.current.material.dispose(); }
         ref.current = null;
       });
+      if (orbitLinesRef.current) {
+        orbitLinesRef.current.geometry.dispose();
+        orbitLinesRef.current.material.dispose();
+        orbitLinesRef.current = null;
+      }
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
     };
   }, []);
@@ -526,6 +648,17 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     };
     fill(stationPts, validStations);
     fill(satPts, validSats);
+
+    // Faint orbit rings, rebuilt alongside the positions they track.
+    const ringPts = orbitLinesRef.current ? [] : null;
+    if (ringPts) {
+      [...validStations, ...validSats].forEach((s) => {
+        for (const v of buildOrbitRingSegments(s.lat, s.lon, s.alt_km, EARTH_RADIUS)) ringPts.push(v);
+      });
+      orbitLinesRef.current.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ringPts), 3));
+      orbitLinesRef.current.geometry.computeBoundingSphere();
+      orbitLinesRef.current.visible = showSatellites;
+    }
   }, [stations, otherSats, showSatellites]);
 
   // ── Update aircraft point positions whenever props change ──────────────
