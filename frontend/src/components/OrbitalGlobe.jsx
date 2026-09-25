@@ -144,7 +144,7 @@ function buildOrbitRingSegments(lat, lon, altKm, identityKey, earthRadius, segme
 }
 
 function makeGlyphTexture(kind, colorHex) {
-  const size = kind === 'satellite' ? 128 : 64;
+  const size = kind === 'satellite' || kind === 'station' ? 128 : 64;
   const canvas = document.createElement('canvas');
   canvas.width = size; canvas.height = size;
   const ctx = canvas.getContext('2d');
@@ -156,17 +156,79 @@ function makeGlyphTexture(kind, colorHex) {
   const c = size / 2;
 
   if (kind === 'station') {
+    // Sleek space-station glyph, same visual language as the satellite
+    // one below — a compact hab module with two long truss arms, each
+    // ending in a segmented (cell-divider) solar array, plus a small
+    // radiator/docking nub. Real stations (ISS, Tiangong) really are
+    // built on this cross-shaped truss layout, so the silhouette stays
+    // a "+", but rendered as actual structure instead of a plain
+    // blocky plus-sign.
     ctx.save();
     ctx.translate(c, c);
-    [0, 90].forEach(deg => {
+    const s = 1.55;
+    ctx.scale(s, s);
+    ctx.shadowColor = hex;
+    ctx.shadowBlur = 5;
+    ctx.lineJoin = 'round';
+
+    [0, 90].forEach((deg) => {
       ctx.save();
       ctx.rotate((deg * Math.PI) / 180);
-      ctx.fillRect(-22, -6, 44, 12);
-      ctx.strokeRect(-22, -6, 44, 12);
+
+      // Thin truss spanning the full arm.
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(-27, 0); ctx.lineTo(27, 0);
+      ctx.stroke();
+
+      // Segmented solar arrays on both ends of this truss.
+      [-1, 1].forEach((side) => {
+        const x0 = side > 0 ? 12 : -30;
+        ctx.beginPath();
+        ctx.roundRect(x0, -5.5, 18, 11, 1.8);
+        ctx.fill();
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+        ctx.save();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        for (let i = 1; i < 4; i++) {
+          const x = x0 + i * 4.5;
+          ctx.moveTo(x, -5.5); ctx.lineTo(x, 5.5);
+        }
+        ctx.stroke();
+        ctx.restore();
+      });
       ctx.restore();
     });
-    ctx.fillRect(-7, -7, 14, 14);
-    ctx.strokeRect(-7, -7, 14, 14);
+
+    // Central hab module — rounded, with a soft top highlight.
+    ctx.shadowBlur = 7;
+    ctx.beginPath();
+    ctx.roundRect(-8, -8, 16, 16, 3.5);
+    ctx.fill();
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    ctx.save();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-5.5, -6); ctx.lineTo(5.5, -6);
+    ctx.stroke();
+    ctx.restore();
+
+    // Small radiator/docking node.
+    ctx.shadowBlur = 3;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(-3, 9, 6, 5, 1.2);
+    ctx.fill();
+    ctx.stroke();
+
     ctx.restore();
   } else if (kind === 'satellite') {
     // Sleek line-art satellite glyph — a soft outer glow, segmented
@@ -434,18 +496,22 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       scene.add(pts);
       return pts;
     };
-    stationPointsRef.current = makePoints('station', 0.42);
+    stationPointsRef.current = makePoints('station', 0.36);
     satellitePointsRef.current = makePoints('satellite', 0.26);
     aircraftPointsRef.current = makePoints('aircraft', 0.22);
 
     // Faint orbit paths — one merged LineSegments draw call for every
-    // station/satellite ring combined (each ring contributes its own
-    // independent segment pairs, so rings never visually connect to
-    // each other), kept subtle enough to read as ambient motion context
-    // rather than compete with the actual satellite glyphs.
+    // station ring combined — one ring per station, each its own
+    // independent segment pairs so rings never visually connect to
+    // each other. Deliberately scoped to stations only (a handful of
+    // objects), not every tracked satellite (~100): drawing a ring per
+    // satellite made them all overlap into an undifferentiated grid
+    // wash across the whole globe, so no individual ring read as
+    // "belonging" to any specific visible icon — with just the
+    // stations, each ring stays a recognizable path under its own dot.
     const orbitLinesGeo = new THREE.BufferGeometry();
     const orbitLinesMat = new THREE.LineBasicMaterial({
-      color: 0x9fb4ff, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending,
+      color: 0x9fb4ff, transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending,
     });
     const orbitLines = new THREE.LineSegments(orbitLinesGeo, orbitLinesMat);
     scene.add(orbitLines);
@@ -660,16 +726,17 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     fill(stationPts, validStations);
     fill(satPts, validSats);
 
-    // Faint orbit rings — computed exactly ONCE per object (cached by a
-    // stable identity key) and never recomputed on subsequent position
+    // Faint orbit rings — stations only (see the material comment above
+    // for why), computed exactly ONCE per object (cached by a stable
+    // identity key) and never recomputed on subsequent position
     // refreshes, so the ring itself stays visually fixed while only the
-    // satellite glyph moves along it. Recomputing this from live lat/lon
-    // every poll was the earlier bug: the ring would jump to a new tilt
-    // every time the object's real position updated.
+    // glyph moves along it. Recomputing this from live lat/lon every
+    // poll was an earlier bug: the ring would jump to a new tilt every
+    // time the object's real position updated.
     const ringPts = orbitLinesRef.current ? [] : null;
     if (ringPts) {
       const cache = orbitRingCacheRef.current;
-      [...validStations, ...validSats].forEach((s, i) => {
+      validStations.forEach((s, i) => {
         const key = s.name || s.norad_id || s.id || `unnamed-${s.group || ''}-${i}`;
         let ring = cache.get(key);
         if (!ring) {
