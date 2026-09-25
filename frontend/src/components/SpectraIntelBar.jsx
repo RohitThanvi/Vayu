@@ -261,9 +261,9 @@ function ChangeDetectionTab({ apiUrl, drawnAOI }) {
   );
 }
 
-function ReferenceTab() {
+function ReferenceTab({ isMobile }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 10 }}>
       {REFERENCE_DATA.map(r => (
         <div key={r.tool} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 6, padding: '10px 12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 }}>
@@ -278,7 +278,7 @@ function ReferenceTab() {
   );
 }
 
-export default function SpectraIntelBar({ apiUrl, drawnAOI }) {
+export default function SpectraIntelBar({ apiUrl, drawnAOI, isMobile }) {
   const [open, setOpen] = useState(true);
   const [view, setView] = useState('timeseries'); // 'timeseries' | 'change' | 'reference'
 
@@ -295,12 +295,12 @@ export default function SpectraIntelBar({ apiUrl, drawnAOI }) {
       </button>
 
       {open && (
-        <div style={{ display: 'flex', gap: 2, padding: '6px 16px 0', borderBottom: `1px solid ${S.border}` }}>
+        <div style={{ display: 'flex', gap: 2, padding: '6px 16px 0', borderBottom: `1px solid ${S.border}`, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {[['timeseries', 'Time Series'], ['change', 'Change Detection'], ['reference', 'Reference']].map(([id, label]) => (
             <button key={id} onClick={() => setView(id)} style={{
               background: 'none', border: 'none', borderBottom: view === id ? `2px solid ${S.accent}` : '2px solid transparent',
               color: view === id ? S.accent : S.text3, fontFamily: S.mono, fontSize: 11.5, letterSpacing: 1, textTransform: 'uppercase',
-              padding: '6px 12px', cursor: 'pointer', marginBottom: -1,
+              padding: '6px 12px', cursor: 'pointer', marginBottom: -1, flexShrink: 0, whiteSpace: 'nowrap',
             }}>
               {label}
             </button>
@@ -312,7 +312,7 @@ export default function SpectraIntelBar({ apiUrl, drawnAOI }) {
         <div style={{ height: 300, overflowY: 'auto', padding: '14px 16px' }}>
           {view === 'timeseries' && <TimeSeriesTab apiUrl={apiUrl} drawnAOI={drawnAOI} />}
           {view === 'change' && <ChangeDetectionTab apiUrl={apiUrl} drawnAOI={drawnAOI} />}
-          {view === 'reference' && <ReferenceTab />}
+          {view === 'reference' && <ReferenceTab isMobile={isMobile} />}
         </div>
       )}
     </div>

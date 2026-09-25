@@ -413,7 +413,7 @@ function ChokepointMarketCorrelation({ apiUrl, chokepoint, days }) {
   );
 }
 
-export default function BusinessIntelBar({ apiUrl }) {
+export default function BusinessIntelBar({ apiUrl, isMobile }) {
   const [open, setOpen] = useState(true);
   const [view, setView] = useState('live'); // 'live' | 'analysis'
   const risk = useJson(apiUrl, '/api/v1/intel/business-risk');
@@ -443,12 +443,12 @@ export default function BusinessIntelBar({ apiUrl }) {
       </button>
 
       {open && (
-        <div style={{ display: 'flex', gap: 2, padding: '6px 16px 0', borderBottom: `1px solid ${S.border}` }}>
+        <div style={{ display: 'flex', gap: 2, padding: '6px 16px 0', borderBottom: `1px solid ${S.border}`, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {[['live', 'Live'], ['analysis', 'Analysis'], ['economics', 'Economics']].map(([id, label]) => (
             <button key={id} onClick={() => setView(id)} style={{
               background: 'none', border: 'none', borderBottom: view === id ? `2px solid ${S.accent}` : '2px solid transparent',
               color: view === id ? S.accent : S.text3, fontFamily: S.mono, fontSize: 11.5, letterSpacing: 1, textTransform: 'uppercase',
-              padding: '6px 12px', cursor: 'pointer', marginBottom: -1,
+              padding: '6px 12px', cursor: 'pointer', marginBottom: -1, flexShrink: 0, whiteSpace: 'nowrap',
             }}>
               {label}
             </button>

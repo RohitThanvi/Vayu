@@ -381,7 +381,7 @@ function CropExtentTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
   );
 }
 
-export default function AgriIntelBar({ apiUrl, drawnAOI, pointPickActive, onSetPointPickHandler }) {
+export default function AgriIntelBar({ apiUrl, drawnAOI, pointPickActive, onSetPointPickHandler, isMobile }) {
   const [open, setOpen] = useState(true);
   const [view, setView] = useState('groundwater'); // 'groundwater' | 'analysis' | 'phenology' | 'irrigation' | 'cropextent'
 
@@ -405,12 +405,12 @@ export default function AgriIntelBar({ apiUrl, drawnAOI, pointPickActive, onSetP
       </button>
 
       {open && (
-        <div style={{ display: 'flex', gap: 2, padding: '6px 16px 0', borderBottom: `1px solid ${S.border}` }}>
+        <div style={{ display: 'flex', gap: 2, padding: '6px 16px 0', borderBottom: `1px solid ${S.border}`, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {[['groundwater', 'Groundwater'], ['analysis', 'Analysis'], ['phenology', 'Crop Stage'], ['irrigation', 'Irrigation'], ['cropextent', 'ML Extent']].map(([id, label]) => (
             <button key={id} onClick={() => setView(id)} style={{
               background: 'none', border: 'none', borderBottom: view === id ? `2px solid ${S.accent}` : '2px solid transparent',
               color: view === id ? S.accent : S.text3, fontFamily: S.mono, fontSize: 11.5, letterSpacing: 1, textTransform: 'uppercase',
-              padding: '6px 12px', cursor: 'pointer', marginBottom: -1,
+              padding: '6px 12px', cursor: 'pointer', marginBottom: -1, flexShrink: 0, whiteSpace: 'nowrap',
             }}>
               {label}
             </button>
