@@ -644,6 +644,13 @@ function SatelliteLayerToggles({ active, onToggle, loadingKey, currentZoom }) {
 // how every other tab's controls/details live in the sidebar. ─────────────
 const ORBITAL_COLORS = { station: '#ff6b6b', satellite: '#9b8ce8', aircraft: '#e8c15c', vessel: '#38bdf8' };
 const ORBITAL_KIND_LABEL = { station: 'Space Station', satellite: 'Tracked Satellite', aircraft: 'Aircraft', vessel: 'Vessel (AIS)' };
+// Vessel color varies by category (same as the 2D map) rather than one
+// flat color for every ship — falls back to the generic vessel color
+// above for a category VESSEL_COLORS doesn't recognize.
+function orbitalColorFor(kind, category) {
+  if (kind === 'vessel') return VESSEL_COLORS[category]?.fill || ORBITAL_COLORS.vessel;
+  return ORBITAL_COLORS[kind];
+}
 
 function OrbitalSidebarPanel({
   showSatellites, onToggleSatellites, showAircraft, onToggleAircraft, showVessels, onToggleVessels,
@@ -709,7 +716,7 @@ function OrbitalSidebarPanel({
       {selected && (
         <div style={{ margin:'0 14px 10px', padding:'10px 12px', background:S.surface2, border:`1px solid ${S.border}`, borderRadius:3 }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:10 }}>
-            <div style={{ fontSize:14, fontWeight:700, color: ORBITAL_COLORS[selected.kind], fontFamily:S.mono }}>
+            <div style={{ fontSize:14, fontWeight:700, color: orbitalColorFor(selected.kind, selected.category), fontFamily:S.mono }}>
               {selected.kind === 'aircraft' ? (selected.callsign || selected.icao24)
                 : selected.kind === 'vessel' ? (selected.name || `MMSI ${selected.mmsi}`)
                 : selected.name}
@@ -786,7 +793,7 @@ function OrbitalSidebarPanel({
                 (selected.kind !== 'aircraft' && selected.kind !== 'vessel' && item.kind !== 'aircraft' && item.kind !== 'vessel' && selected.name === item.data.name)
               ) ? 'rgba(155,140,232,0.10)' : 'transparent',
               border:'none', borderBottom:`1px solid ${S.border}`, cursor:'pointer',
-              color: ORBITAL_COLORS[item.kind], fontFamily:S.mono, fontSize:12,
+              color: orbitalColorFor(item.kind, item.data.category), fontFamily:S.mono, fontSize:12,
             }}>
             <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.label}</div>
             <div style={{ fontSize:10, opacity:0.55, marginTop:2, color:S.text3 }}>{item.sub}</div>
