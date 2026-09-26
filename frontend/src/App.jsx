@@ -28,6 +28,7 @@ import { useStrategicSites } from './hooks/useStrategicSites';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useSatelliteTracker } from './hooks/useSatelliteTracker';
 import { useAircraftTracker } from './hooks/useAircraftTracker';
+import { useWindField } from './hooks/useWindField';
 
 // Any string that ends up interpolated into a raw HTML string passed to
 // Leaflet's bindPopup() (Leaflet has no JSX-style auto-escaping — it's
@@ -654,6 +655,7 @@ function orbitalColorFor(kind, category) {
 
 function OrbitalSidebarPanel({
   showSatellites, onToggleSatellites, showAircraft, onToggleAircraft, showVessels, onToggleVessels,
+  showAtmosphere, onToggleAtmosphere,
   satelliteCount, aircraftCount, vesselCount, satLoaded, satDebug,
   search, onSearchChange, filteredList, selected, onSelect,
 }) {
@@ -697,6 +699,18 @@ function OrbitalSidebarPanel({
               <span style={{ fontSize:11, color:S.text3, display:'block', marginTop:1 }}>Live maritime AIS positions</span>
             </span>
             <span style={{ fontSize:11, letterSpacing:1, opacity:0.7 }}>{showVessels ? vesselCount : 'OFF'}</span>
+          </button>
+          {/* Smaller than the three above, by design — this is a visual
+              overlay (real current cloud imagery + real wind vectors), not
+              another tracked-object category with its own count/list. */}
+          <button onClick={onToggleAtmosphere}
+            style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 12px', minHeight:32, width:'100%',
+              fontFamily:S.mono, letterSpacing:0.3, fontSize:11.5,
+              background: showAtmosphere ? 'rgba(148,197,255,0.10)' : S.surface2,
+              border: `1px solid ${showAtmosphere ? '#94c5ff' : S.border}`, borderRadius:3,
+              color: showAtmosphere ? '#c3ddff' : S.text3, cursor:'pointer', textAlign:'left' }}>
+            <span style={{ flex:1 }}>Atmosphere — live clouds &amp; wind</span>
+            <span style={{ fontSize:10, letterSpacing:1, opacity:0.7 }}>{showAtmosphere ? 'ON' : 'OFF'}</span>
           </button>
         </div>
         <div style={{ fontSize:11, color:S.text3, lineHeight:1.5, marginTop:9 }}>
@@ -1378,6 +1392,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
   tier, onChangeTier,
   orbitalShowSatellites, setOrbitalShowSatellites, orbitalShowAircraft, setOrbitalShowAircraft,
   orbitalShowVessels, setOrbitalShowVessels, orbitalVessels,
+  orbitalShowAtmosphere, setOrbitalShowAtmosphere, orbitalWindField,
   orbitalSatellites, orbitalSatLoaded, orbitalSatDebug, orbitalAircraftStats, orbitalAircraftValid,
   orbitalSearch, setOrbitalSearch, orbitalFilteredList, orbitalSelected, setOrbitalSelected,
   onShowSpectraOverlay, onClearSpectraOverlay, theme, onToggleTheme,
@@ -1617,6 +1632,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
             showSatellites={orbitalShowSatellites} onToggleSatellites={() => setOrbitalShowSatellites(v => !v)}
             showAircraft={orbitalShowAircraft} onToggleAircraft={() => setOrbitalShowAircraft(v => !v)}
             showVessels={orbitalShowVessels} onToggleVessels={() => setOrbitalShowVessels(v => !v)}
+            showAtmosphere={orbitalShowAtmosphere} onToggleAtmosphere={() => setOrbitalShowAtmosphere(v => !v)}
             satelliteCount={orbitalSatellites.length} aircraftCount={orbitalAircraftStats.active_aircraft || orbitalAircraftValid.length}
             vesselCount={orbitalVessels.length}
             satLoaded={orbitalSatLoaded} satDebug={orbitalSatDebug}
@@ -1865,10 +1881,12 @@ export default function App({ tier = 'full', onChangeTier }) {
   }, []);
   const [orbitalShowAircraft, setOrbitalShowAircraft] = useState(false);
   const [orbitalShowVessels, setOrbitalShowVessels] = useState(false);
+  const [orbitalShowAtmosphere, setOrbitalShowAtmosphere] = useState(false);
   const [orbitalSelected, setOrbitalSelected] = useState(null);
   const [orbitalSearch, setOrbitalSearch] = useState('');
   const { satellites: orbitalSatellites, loaded: orbitalSatLoaded, debug: orbitalSatDebug } = useSatelliteTracker(API_URL, orbitalShowSatellites);
   const { aircraft: orbitalAircraft, stats: orbitalAircraftStats } = useAircraftTracker(API_URL, orbitalShowAircraft);
+  const { windField: orbitalWindField } = useWindField(API_URL, orbitalShowAtmosphere);
   const orbitalStations = orbitalSatellites.filter(s => s.group === 'stations');
   const orbitalOtherSats = orbitalSatellites.filter(s => s.group !== 'stations');
   const orbitalAircraftValid = orbitalAircraft.filter(a => typeof a.lat === 'number' && typeof a.lon === 'number');
@@ -2593,6 +2611,7 @@ export default function App({ tier = 'full', onChangeTier }) {
       orbitalShowSatellites={orbitalShowSatellites} setOrbitalShowSatellites={setOrbitalShowSatellites}
       orbitalShowAircraft={orbitalShowAircraft} setOrbitalShowAircraft={setOrbitalShowAircraft}
       orbitalShowVessels={orbitalShowVessels} setOrbitalShowVessels={setOrbitalShowVessels} orbitalVessels={orbitalVessels}
+      orbitalShowAtmosphere={orbitalShowAtmosphere} setOrbitalShowAtmosphere={setOrbitalShowAtmosphere} orbitalWindField={orbitalWindField}
       orbitalSatellites={orbitalSatellites} orbitalSatLoaded={orbitalSatLoaded} orbitalSatDebug={orbitalSatDebug}
       orbitalAircraftStats={orbitalAircraftStats} orbitalAircraftValid={orbitalAircraftValid}
       orbitalSearch={orbitalSearch} setOrbitalSearch={setOrbitalSearch}
@@ -2672,7 +2691,9 @@ export default function App({ tier = 'full', onChangeTier }) {
               }>
                 <OrbitalGlobe
                   stations={orbitalStations} otherSats={orbitalOtherSats} aircraft={orbitalAircraftValid} vessels={orbitalVessels}
+                  windField={orbitalWindField}
                   showSatellites={orbitalShowSatellites} showAircraft={orbitalShowAircraft} showVessels={orbitalShowVessels}
+                  showAtmosphere={orbitalShowAtmosphere}
                   onSelect={setOrbitalSelected}
                   active={tab === 'Orbital' && !globeCloseUp}
                   onEnterCloseZoom={(lat, lon) => setGlobeCloseUp({ lat, lon })}
