@@ -46,7 +46,19 @@ const COLORS = {
   station:   0xff6b6b,
   satellite: 0x9b8ce8,
   aircraft:  0xe8c15c,
-  vessel:    0x38bdf8,
+};
+
+// Same shapes + colors as VESSEL_ICON_FOR_CATEGORY / VESSEL_COLORS on the
+// 2D map (App.jsx) — kept in sync manually (same pattern as the ais-bridge
+// CHOKEPOINTS/vessel_store.py note) so a vessel looks like the same vessel
+// whether you're looking at the 2D map or the 3D globe, not a different
+// generic icon.
+const VESSEL_CATEGORY_STYLE = {
+  TANKER:    { shape: 'barrel',     color: 0xc9933a },
+  CARGO:     { shape: 'ship_cargo', color: 0x2a6abd },
+  PASSENGER: { shape: 'ferry',      color: 0x3a8a6a },
+  FISHING:   { shape: 'fishboat',   color: 0x6a5a8a },
+  OTHER:     { shape: 'ship_cargo', color: 0x5a6470 },
 };
 
 // Two SEPARATE altitude-display curves, not one shared formula — a single
@@ -284,28 +296,72 @@ function makeGlyphTexture(kind, colorHex) {
     ctx.fill();
     ctx.stroke();
     ctx.restore();
-  } else if (kind === 'vessel') {
-    // Simple hull silhouette — pointed bow, flat stern, a small bridge
-    // block — legible as "a ship" at the same small sprite size the
-    // aircraft glyph already reads fine at, without needing the
-    // multi-shape detail the satellite/station glyphs use.
+  } else if (kind === 'ship_cargo' || kind === 'barrel' || kind === 'ferry' || kind === 'fishboat') {
+    // Reproduces the exact same paths as the 2D map's SHIP_CARGO/BARREL/
+    // FERRY/FISHBOAT SVGs (App.jsx ICONS) on canvas, just rasterized
+    // instead of drawn as an SVG marker — same shapes, same colors, same
+    // white outline, so these read as the same vessel type in both views.
+    // Those SVGs use an 18x18 viewBox with absolute (non-centered)
+    // coordinates, so center them here rather than the translate(c,c)-
+    // around-origin convention the station/satellite/aircraft glyphs use.
+    const k = size / 18;
     ctx.save();
     ctx.translate(c, c);
-    ctx.beginPath();
-    ctx.moveTo(0, -18);       // bow tip
-    ctx.lineTo(9, 4);
-    ctx.lineTo(9, 12);
-    ctx.lineTo(-9, 12);
-    ctx.lineTo(-9, 4);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    // Bridge block, slightly aft of center.
-    ctx.beginPath();
-    ctx.roundRect(-5, -6, 10, 9, 2);
-    ctx.fill();
-    ctx.lineWidth = 1.8;
-    ctx.stroke();
+    ctx.scale(k, k);
+    ctx.translate(-9, -9);
+    ctx.fillStyle = hex;
+    ctx.strokeStyle = '#ffffff';
+
+    if (kind === 'ship_cargo') {
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(9, 1);
+      ctx.bezierCurveTo(11.4, 4.6, 12.6, 7.8, 12.6, 10.8);
+      ctx.lineTo(12.6, 13.6);
+      ctx.bezierCurveTo(12.6, 15, 11.4, 16.1, 10, 16.1);
+      ctx.lineTo(8, 16.1);
+      ctx.bezierCurveTo(6.6, 16.1, 5.4, 15, 5.4, 13.6);
+      ctx.lineTo(5.4, 10.8);
+      ctx.bezierCurveTo(5.4, 7.8, 6.6, 4.6, 9, 1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.beginPath();
+      ctx.roundRect(7, 11.4, 4, 3.2, 0.5);
+      ctx.fill();
+    } else if (kind === 'barrel') {
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.roundRect(4.6, 1.8, 8.8, 14.4, 2.6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath(); ctx.moveTo(4.6, 6); ctx.lineTo(13.4, 6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(4.6, 12); ctx.lineTo(13.4, 12); ctx.stroke();
+    } else if (kind === 'ferry') {
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(3.4, 12.4); ctx.lineTo(14.6, 12.4); ctx.lineTo(12.2, 16); ctx.lineTo(5.8, 16);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.beginPath();
+      ctx.roundRect(6.6, 6.8, 4.8, 5.6, 0.6);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillRect(8, 2.6, 2, 4.2);
+    } else if (kind === 'fishboat') {
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(3.4, 11.6); ctx.lineTo(14.6, 11.6); ctx.lineTo(12.2, 15.2); ctx.lineTo(5.8, 15.2);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.moveTo(9, 11.6); ctx.lineTo(9, 2.4); ctx.stroke();
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(9, 3.6); ctx.lineTo(13.4, 5.8); ctx.stroke();
+    }
+
     ctx.restore();
   }
 
@@ -330,11 +386,11 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
   const stationPointsRef = useRef(null);
   const satellitePointsRef = useRef(null);
   const aircraftPointsRef = useRef(null);
-  const vesselPointsRef = useRef(null);
+  const vesselPointsRef = useRef({}); // category -> THREE.Points
   const stationDataRef = useRef([]);
   const satelliteDataRef = useRef([]);
   const aircraftDataRef = useRef([]);
-  const vesselDataRef = useRef([]);
+  const vesselDataRef = useRef({}); // category -> filtered vessel list, in the same order as its Points geometry
   const orbitLinesRef = useRef(null);
   const orbitRingCacheRef = useRef(new Map()); // identityKey -> Float32Array-ready segment array, computed once and never touched again
   const onSelectRef = useRef(onSelect);
@@ -393,7 +449,7 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     // well-behaved (avoids near-plane clipping weirdness) rather than as
     // the primary blur-avoidance mechanism it used to be.
     controls.enablePan = false;
-    controls.minDistance = EARTH_RADIUS * 1.08;
+    controls.minDistance = EARTH_RADIUS * 1.04;
     controls.maxDistance = EARTH_RADIUS * 8;
     controls.rotateSpeed = 0.5;
     controls.zoomSpeed = 0.8;
@@ -483,18 +539,26 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
     scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.15, sizeAttenuation: true })));
 
-    const makePoints = (kind, size) => {
+    const makePoints = (kind, colorOverride, size) => {
       const geo = new THREE.BufferGeometry();
-      const tex = makeGlyphTexture(kind, COLORS[kind]);
+      const color = colorOverride != null ? colorOverride : COLORS[kind];
+      const tex = makeGlyphTexture(kind, color);
       const mat = new THREE.PointsMaterial({ map: tex, size, sizeAttenuation: true, transparent: true, alphaTest: 0.3, depthWrite: false });
       const pts = new THREE.Points(geo, mat);
       scene.add(pts);
       return pts;
     };
-    stationPointsRef.current = makePoints('station', 0.36);
-    satellitePointsRef.current = makePoints('satellite', 0.3);
-    aircraftPointsRef.current = makePoints('aircraft', 0.22);
-    vesselPointsRef.current = makePoints('vessel', 0.18);
+    stationPointsRef.current = makePoints('station', null, 0.36);
+    satellitePointsRef.current = makePoints('satellite', null, 0.3);
+    aircraftPointsRef.current = makePoints('aircraft', null, 0.22);
+    // One Points mesh per vessel category — each needs its own glyph
+    // texture (shape + color), and a THREE.Points mesh can only carry one
+    // texture for all the points in it, so a single shared "vessel" mesh
+    // couldn't show cargo ships, tankers, ferries, and fishing boats as
+    // their own distinct icons the way the 2D map does.
+    Object.entries(VESSEL_CATEGORY_STYLE).forEach(([cat, style]) => {
+      vesselPointsRef.current[cat] = makePoints(style.shape, style.color, 0.2);
+    });
 
     // Faint orbit paths — one merged LineSegments draw call for every
     // station/satellite ring combined, each its own independent segment
@@ -527,7 +591,9 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
           { kind: 'station', obj: stationPointsRef.current, data: stationDataRef.current },
           { kind: 'satellite', obj: satellitePointsRef.current, data: satelliteDataRef.current },
           { kind: 'aircraft', obj: aircraftPointsRef.current, data: aircraftDataRef.current },
-          { kind: 'vessel', obj: vesselPointsRef.current, data: vesselDataRef.current },
+          ...Object.keys(VESSEL_CATEGORY_STYLE).map(cat => ({
+            kind: 'vessel', obj: vesselPointsRef.current[cat], data: vesselDataRef.current[cat] || [],
+          })),
         ];
         let best = null;
         for (const c of candidates) {
@@ -562,8 +628,15 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     // the camera has pulled back out past REARM (a wider gap than ENTER,
     // not the same value) — otherwise a camera sitting exactly at the
     // boundary would flicker the 2D overlay on/off every frame.
-    const CLOSE_ZOOM_ENTER_DISTANCE = EARTH_RADIUS * 1.35;
-    const CLOSE_ZOOM_REARM_DISTANCE = EARTH_RADIUS * 1.9;
+    // Lowered from 1.35/1.9 — the old ENTER threshold handed off to the 2D
+    // map well before the user reached the globe's own zoom floor
+    // (minDistance), so most of the globe's actual zoom range was
+    // unreachable in 3D. Pulling ENTER down near minDistance (and REARM
+    // down to match, keeping a similar hysteresis gap) lets the user zoom
+    // in much further on the 3D globe itself before the high-res 2D
+    // handoff kicks in.
+    const CLOSE_ZOOM_ENTER_DISTANCE = EARTH_RADIUS * 1.12;
+    const CLOSE_ZOOM_REARM_DISTANCE = EARTH_RADIUS * 1.55;
 
     let raf;
     const animate = () => {
@@ -647,10 +720,14 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       // without nulling here, the data-population effects below could
       // write fresh positions onto an already-disposed Points object
       // during the gap before the next mount reassigns live ones.
-      [stationPointsRef, satellitePointsRef, aircraftPointsRef, vesselPointsRef].forEach(ref => {
+      [stationPointsRef, satellitePointsRef, aircraftPointsRef].forEach(ref => {
         if (ref.current) { ref.current.geometry.dispose(); ref.current.material.map?.dispose(); ref.current.material.dispose(); }
         ref.current = null;
       });
+      Object.values(vesselPointsRef.current).forEach(pts => {
+        if (pts) { pts.geometry.dispose(); pts.material.map?.dispose(); pts.material.dispose(); }
+      });
+      vesselPointsRef.current = {};
       if (orbitLinesRef.current) {
         orbitLinesRef.current.geometry.dispose();
         orbitLinesRef.current.material.dispose();
@@ -771,24 +848,35 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
   }, [aircraft, showAircraft]);
 
   // ── Update vessel point positions whenever props change ────────────────
+  // Grouped by category (falling back to OTHER for anything unrecognized)
+  // since each category is its own Points mesh/texture — see the mount
+  // effect's makePoints loop over VESSEL_CATEGORY_STYLE above.
   useEffect(() => {
-    const pts = vesselPointsRef.current;
-    if (!pts) return;
-    pts.visible = showVessels;
-    const list = vessels.filter(v => typeof v.lat === 'number' && typeof v.lon === 'number');
-    vesselDataRef.current = list;
+    const byCategory = {};
+    Object.keys(VESSEL_CATEGORY_STYLE).forEach(cat => { byCategory[cat] = []; });
+    vessels.forEach(v => {
+      if (typeof v.lat !== 'number' || typeof v.lon !== 'number') return;
+      const cat = VESSEL_CATEGORY_STYLE[v.category] ? v.category : 'OTHER';
+      byCategory[cat].push(v);
+    });
+    vesselDataRef.current = byCategory;
 
-    if (list.length === 0) {
-      pts.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
-    } else {
-      const positions = new Float32Array(list.length * 3);
-      list.forEach((v, i) => {
-        const p = vesselToVec3(v.lat, v.lon, EARTH_RADIUS);
-        positions[i*3] = p.x; positions[i*3+1] = p.y; positions[i*3+2] = p.z;
-      });
-      pts.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      pts.geometry.computeBoundingSphere();
-    }
+    Object.entries(vesselPointsRef.current).forEach(([cat, pts]) => {
+      if (!pts) return;
+      pts.visible = showVessels;
+      const list = byCategory[cat] || [];
+      if (list.length === 0) {
+        pts.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+      } else {
+        const positions = new Float32Array(list.length * 3);
+        list.forEach((v, i) => {
+          const p = vesselToVec3(v.lat, v.lon, EARTH_RADIUS);
+          positions[i*3] = p.x; positions[i*3+1] = p.y; positions[i*3+2] = p.z;
+        });
+        pts.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        pts.geometry.computeBoundingSphere();
+      }
+    });
   }, [vessels, showVessels]);
 
   return <div ref={containerRef} style={{ width:'100%', height:'100%' }} />;
