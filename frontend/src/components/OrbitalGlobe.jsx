@@ -46,6 +46,7 @@ const COLORS = {
   station:   0xff6b6b,
   satellite: 0x9b8ce8,
   aircraft:  0xe8c15c,
+  vessel:    0x38bdf8,
 };
 
 // Two SEPARATE altitude-display curves, not one shared formula — a single
@@ -65,6 +66,15 @@ function aircraftAltToVec3(lat, lon, altKm, earthRadius) {
   const clamped = Math.max(0, Math.min(altKm, 13));
   const displayAlt = earthRadius * (0.015 + (clamped / 13) * 0.035);
   return latLonRadiusToVec3(lat, lon, earthRadius + displayAlt);
+}
+
+// Vessels have no altitude at all — they sit right on the surface. A
+// fixed, tiny display offset (not zero) keeps their glyphs from
+// z-fighting/clipping into the Earth mesh itself, same reasoning as
+// aircraft's minimum offset at 0km, just smaller since there's no
+// altitude range to represent.
+function vesselToVec3(lat, lon, earthRadius) {
+  return latLonRadiusToVec3(lat, lon, earthRadius * 1.004);
 }
 
 function latLonRadiusToVec3(lat, lon, r) {
@@ -274,6 +284,29 @@ function makeGlyphTexture(kind, colorHex) {
     ctx.fill();
     ctx.stroke();
     ctx.restore();
+  } else if (kind === 'vessel') {
+    // Simple hull silhouette — pointed bow, flat stern, a small bridge
+    // block — legible as "a ship" at the same small sprite size the
+    // aircraft glyph already reads fine at, without needing the
+    // multi-shape detail the satellite/station glyphs use.
+    ctx.save();
+    ctx.translate(c, c);
+    ctx.beginPath();
+    ctx.moveTo(0, -18);       // bow tip
+    ctx.lineTo(9, 4);
+    ctx.lineTo(9, 12);
+    ctx.lineTo(-9, 12);
+    ctx.lineTo(-9, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Bridge block, slightly aft of center.
+    ctx.beginPath();
+    ctx.roundRect(-5, -6, 10, 9, 2);
+    ctx.fill();
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    ctx.restore();
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -283,20 +316,25 @@ function makeGlyphTexture(kind, colorHex) {
 
 /**
  * Props:
- *   stations, otherSats, aircraft — already-filtered/categorized arrays
- *     (stations/otherSats: {name, group, lat, lon, alt_km}; aircraft:
- *     {icao24, lat, lon, baro_altitude_m, ...})
- *   showSatellites, showAircraft — visibility toggles (state lives in Sidebar)
+ *   stations, otherSats, aircraft, vessels — already-filtered/categorized
+ *     arrays (stations/otherSats: {name, group, lat, lon, alt_km};
+ *     aircraft: {icao24, lat, lon, baro_altitude_m, ...}; vessels:
+ *     {mmsi, name, category, lat, lon, sog, cog, ...} — the same AIS
+ *     snapshot useVesselTracker already feeds the 2D map)
+ *   showSatellites, showAircraft, showVessels — visibility toggles (state
+ *     lives in Sidebar)
  *   onSelect(kindAndData | null) — called when a point is clicked
  */
-export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft = [], showSatellites, showAircraft, onSelect, active = true, onEnterCloseZoom, exitCloseZoomSignal }) {
+export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft = [], vessels = [], showSatellites, showAircraft, showVessels, onSelect, active = true, onEnterCloseZoom, exitCloseZoomSignal }) {
   const containerRef = useRef(null);
   const stationPointsRef = useRef(null);
   const satellitePointsRef = useRef(null);
   const aircraftPointsRef = useRef(null);
+  const vesselPointsRef = useRef(null);
   const stationDataRef = useRef([]);
   const satelliteDataRef = useRef([]);
   const aircraftDataRef = useRef([]);
+  const vesselDataRef = useRef([]);
   const orbitLinesRef = useRef(null);
   const orbitRingCacheRef = useRef(new Map()); // identityKey -> Float32Array-ready segment array, computed once and never touched again
   const onSelectRef = useRef(onSelect);
@@ -456,6 +494,7 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     stationPointsRef.current = makePoints('station', 0.36);
     satellitePointsRef.current = makePoints('satellite', 0.3);
     aircraftPointsRef.current = makePoints('aircraft', 0.22);
+    vesselPointsRef.current = makePoints('vessel', 0.18);
 
     // Faint orbit paths — one merged LineSegments draw call for every
     // station/satellite ring combined, each its own independent segment
@@ -488,6 +527,7 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
           { kind: 'station', obj: stationPointsRef.current, data: stationDataRef.current },
           { kind: 'satellite', obj: satellitePointsRef.current, data: satelliteDataRef.current },
           { kind: 'aircraft', obj: aircraftPointsRef.current, data: aircraftDataRef.current },
+          { kind: 'vessel', obj: vesselPointsRef.current, data: vesselDataRef.current },
         ];
         let best = null;
         for (const c of candidates) {
@@ -607,7 +647,7 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       // without nulling here, the data-population effects below could
       // write fresh positions onto an already-disposed Points object
       // during the gap before the next mount reassigns live ones.
-      [stationPointsRef, satellitePointsRef, aircraftPointsRef].forEach(ref => {
+      [stationPointsRef, satellitePointsRef, aircraftPointsRef, vesselPointsRef].forEach(ref => {
         if (ref.current) { ref.current.geometry.dispose(); ref.current.material.map?.dispose(); ref.current.material.dispose(); }
         ref.current = null;
       });
@@ -729,6 +769,27 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       pts.geometry.computeBoundingSphere();
     }
   }, [aircraft, showAircraft]);
+
+  // ── Update vessel point positions whenever props change ────────────────
+  useEffect(() => {
+    const pts = vesselPointsRef.current;
+    if (!pts) return;
+    pts.visible = showVessels;
+    const list = vessels.filter(v => typeof v.lat === 'number' && typeof v.lon === 'number');
+    vesselDataRef.current = list;
+
+    if (list.length === 0) {
+      pts.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+    } else {
+      const positions = new Float32Array(list.length * 3);
+      list.forEach((v, i) => {
+        const p = vesselToVec3(v.lat, v.lon, EARTH_RADIUS);
+        positions[i*3] = p.x; positions[i*3+1] = p.y; positions[i*3+2] = p.z;
+      });
+      pts.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      pts.geometry.computeBoundingSphere();
+    }
+  }, [vessels, showVessels]);
 
   return <div ref={containerRef} style={{ width:'100%', height:'100%' }} />;
 }
