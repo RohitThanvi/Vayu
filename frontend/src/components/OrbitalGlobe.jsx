@@ -377,16 +377,23 @@ function makeGlyphTexture(kind, colorHex) {
  *     aircraft: {icao24, lat, lon, baro_altitude_m, ...}; vessels:
  *     {mmsi, name, category, lat, lon, sog, cog, ...} — the same AIS
  *     snapshot useVesselTracker already feeds the 2D map)
- *   showSatellites, showAircraft, showVessels — visibility toggles (state
- *     lives in Sidebar)
+ *   windField — raw [{header,data}, {header,data}] U/V pair from
+ *     useWindField (same /api/v1/intel/wind-field data the 2D map's
+ *     leaflet-velocity layer uses); decoded into per-point vectors here
+ *   showSatellites, showAircraft, showVessels, showAtmosphere — visibility
+ *     toggles (state lives in Sidebar)
  *   onSelect(kindAndData | null) — called when a point is clicked
  */
-export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft = [], vessels = [], showSatellites, showAircraft, showVessels, onSelect, active = true, onEnterCloseZoom, exitCloseZoomSignal }) {
+export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft = [], vessels = [], windField = null, showSatellites, showAircraft, showVessels, showAtmosphere, onSelect, active = true, onEnterCloseZoom, exitCloseZoomSignal }) {
   const containerRef = useRef(null);
   const stationPointsRef = useRef(null);
   const satellitePointsRef = useRef(null);
   const aircraftPointsRef = useRef(null);
   const vesselPointsRef = useRef({}); // category -> THREE.Points
+  const windLinesRef = useRef(null);
+  const cloudsMatRef = useRef(null);
+  const liveCloudsTexRef = useRef(null);
+  const staticCloudsTexRef = useRef(null);
   const stationDataRef = useRef([]);
   const satelliteDataRef = useRef([]);
   const aircraftDataRef = useRef([]);
@@ -486,7 +493,20 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
     const cloudsMat = new THREE.MeshLambertMaterial({ transparent: true, opacity: 0.55, depthWrite: false });
     const clouds = new THREE.Mesh(cloudsGeo, cloudsMat);
     scene.add(clouds);
-    loader.load(EARTH_CLOUDS_URL, (tex) => { tex.colorSpace = THREE.SRGBColorSpace; cloudsMat.map = tex; cloudsMat.needsUpdate = true; });
+    loader.load(EARTH_CLOUDS_URL, (tex) => { tex.colorSpace = THREE.SRGBColorSpace; cloudsMat.map = tex; cloudsMat.needsUpdate = true; staticCloudsTexRef.current = tex; });
+    cloudsMatRef.current = cloudsMat;
+
+    // Wind vectors — a LineSegments mesh, one 2-vertex tick per wind-grid
+    // point, rebuilt whenever real wind data (windField prop) arrives; see
+    // the windField effect below. Empty until then.
+    const windGeo = new THREE.BufferGeometry();
+    windGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+    windGeo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(0), 3));
+    const windMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false });
+    const windLines = new THREE.LineSegments(windGeo, windMat);
+    windLines.visible = false;
+    scene.add(windLines);
+    windLinesRef.current = windLines;
 
     // Atmosphere glow — fresnel rim-light shell, the single biggest thing
     // separating "a sphere with a texture on it" from something that
@@ -713,6 +733,12 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       cloudsGeo.dispose();
       cloudsMat.map?.dispose();
       cloudsMat.dispose();
+      cloudsMatRef.current = null;
+      liveCloudsTexRef.current?.dispose();
+      liveCloudsTexRef.current = null;
+      windGeo.dispose();
+      windMat.dispose();
+      windLinesRef.current = null;
       atmosphereGeo.dispose();
       atmosphereMat.dispose();
       // Null out the refs, not just dispose their contents — StrictMode
@@ -878,6 +904,119 @@ export default function OrbitalGlobe({ stations = [], otherSats = [], aircraft =
       }
     });
   }, [vessels, showVessels]);
+
+  // ── Live atmosphere: real current cloud imagery ─────────────────────────
+  // Swaps the decorative static cloud texture for a real, current NASA
+  // GIBS true-color composite (VIIRS, daily) when the Atmosphere toggle is
+  // on. Fetched once and cached in liveCloudsTexRef — later toggles reuse
+  // it rather than re-fetching. If the fetch fails for any reason (GIBS
+  // down, CORS, network), onerror just leaves the static texture in place
+  // rather than breaking the globe.
+  useEffect(() => {
+    const mat = cloudsMatRef.current;
+    if (!mat) return;
+
+    if (!showAtmosphere) {
+      if (staticCloudsTexRef.current) { mat.map = staticCloudsTexRef.current; mat.needsUpdate = true; }
+      return;
+    }
+
+    if (liveCloudsTexRef.current) {
+      mat.map = liveCloudsTexRef.current;
+      mat.needsUpdate = true;
+      return;
+    }
+
+    // "Yesterday" (UTC), not "today" — VIIRS' daily global composite for
+    // the current UTC day is still being assembled for most of the day,
+    // so the latest COMPLETE composite is always the previous day's.
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const url = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=VIIRS_SNPP_CorrectedReflectance_TrueColor&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=2048&HEIGHT=1024&FORMAT=image/jpeg&TIME=${yesterday}`;
+
+    const gibsLoader = new THREE.TextureLoader();
+    gibsLoader.setCrossOrigin('anonymous');
+    gibsLoader.load(
+      url,
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        liveCloudsTexRef.current = tex;
+        if (cloudsMatRef.current) { cloudsMatRef.current.map = tex; cloudsMatRef.current.needsUpdate = true; }
+      },
+      undefined,
+      () => { /* GIBS unreachable — silently keep the static cloud texture already showing */ }
+    );
+  }, [showAtmosphere]);
+
+  // ── Live atmosphere: real wind vectors ───────────────────────────────────
+  // One short tangent-line tick per wind-grid point (real Open-Meteo
+  // U/V data via useWindField — same source the 2D map's animated wind
+  // layer uses), oriented along actual wind direction and scaled/colored
+  // by actual speed. Rebuilt whenever new wind data arrives; the geometry
+  // itself doesn't animate frame-to-frame (that's future work — this is a
+  // real, current snapshot, not a decorative effect).
+  useEffect(() => {
+    const lines = windLinesRef.current;
+    if (!lines) return;
+    lines.visible = !!showAtmosphere;
+    if (!showAtmosphere || !windField || windField.length < 2) return;
+
+    const [uRec, vRec] = windField;
+    const { la1, lo1, dx, dy, nx, ny } = uRec.header;
+    const uData = uRec.data, vData = vRec.data;
+    const EPS = 0.5; // degrees, for the finite-difference tangent basis below
+    const MAX_SPEED_FOR_SCALE = 35; // m/s — clamp so rare extreme values don't dwarf everything else
+    const TICK_BASE = EARTH_RADIUS * 0.012;
+    const TICK_PER_SPEED = EARTH_RADIUS * 0.028;
+    const positions = [];
+    const colors = [];
+
+    for (let row = 0; row < ny; row++) {
+      const lat = la1 - row * dy;
+      for (let col = 0; col < nx; col++) {
+        const idx = row * nx + col;
+        const u = uData[idx], v = vData[idx];
+        if (u == null || v == null) continue;
+        const speed = Math.sqrt(u * u + v * v);
+        if (speed < 0.5) continue; // skip calm/missing points — not worth a visible tick
+
+        let lon = lo1 + col * dx;
+        if (lon > 180) lon -= 360; // grid is 0..360, our coordinate math wants -180..180
+
+        const pos = latLonRadiusToVec3(lat, lon, EARTH_RADIUS * 1.012);
+        // East/north tangent basis at this point via finite differences on
+        // the same lat/lon->vec3 function used everywhere else here, so
+        // this always matches the actual globe orientation rather than a
+        // separately-derived (and possibly inconsistent) formula.
+        const east = latLonRadiusToVec3(lat, lon + EPS, EARTH_RADIUS * 1.012)
+          .sub(latLonRadiusToVec3(lat, lon - EPS, EARTH_RADIUS * 1.012)).normalize();
+        const north = latLonRadiusToVec3(lat + EPS, lon, EARTH_RADIUS * 1.012)
+          .sub(latLonRadiusToVec3(lat - EPS, lon, EARTH_RADIUS * 1.012)).normalize();
+
+        const clamped = Math.min(speed, MAX_SPEED_FOR_SCALE);
+        const halfLen = (TICK_BASE + TICK_PER_SPEED * (clamped / MAX_SPEED_FOR_SCALE)) / 2;
+        // Wind direction unit vector in tangent space (u=east, v=north).
+        const dirEast = u / speed, dirNorth = v / speed;
+        const tangent = east.clone().multiplyScalar(dirEast).add(north.clone().multiplyScalar(dirNorth));
+
+        const p0 = pos.clone().addScaledVector(tangent, -halfLen);
+        const p1 = pos.clone().addScaledVector(tangent, halfLen);
+        positions.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
+
+        // Calm blue -> white -> strong amber, same rough shape as the 2D
+        // map's wind legend (WEATHER_LEGENDS.wind in App.jsx) without
+        // importing app-level constants into this standalone component.
+        const t = clamped / MAX_SPEED_FOR_SCALE;
+        let r, g, b;
+        if (t < 0.5) { const k = t / 0.5; r = 0.35 + k * 0.65; g = 0.55 + k * 0.45; b = 0.95; }
+        else { const k = (t - 0.5) / 0.5; r = 1.0; g = 1.0 - k * 0.45; b = 0.95 - k * 0.85; }
+        colors.push(r, g, b, r, g, b);
+      }
+    }
+
+    lines.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    lines.geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
+    lines.geometry.computeBoundingSphere();
+  }, [windField, showAtmosphere]);
 
   return <div ref={containerRef} style={{ width:'100%', height:'100%' }} />;
 }
