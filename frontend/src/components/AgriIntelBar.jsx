@@ -8,12 +8,15 @@
  * Mandi); everything below is exploratory analysis that benefits from
  * room — same split Business made between its sidebar and its bar.
  *
- * Five sub-views:
+ * Six sub-views:
  *   - Groundwater: GRACE trend for the AOI, chart + trend read.
  *   - Analysis: NDVI + groundwater trend charts side by side.
  *   - Crop Stage: phenology read (green-up/peak/senescence) from the
  *     AOI's own NDVI curve.
  *   - Irrigation: irrigate now/monitor/hold off advisory.
+ *   - Crops: which crops suit a point/AOI (OpenLandMap soil + CHIRPS/ERA5
+ *     climate vs FAO EcoCrop ranges), farmer soil-test overrides, and a
+ *     mandi-based revenue estimate — via /agri/crop-suitability.
  *   - ML Extent: Random Forest crop-extent classification — same engine
  *     as Spectra's ML Classify tool, via the /agri/crop-extent wrapper.
  *     Training points can be added by clicking the map (pointPickActive/
@@ -246,6 +249,122 @@ function IrrigationTab({ apiUrl, drawnAOI }) {
   );
 }
 
+const CROP_RATING_COLOR = { high: '#2ecc71', moderate: '#c9a86a', low: '#ff9a45', unsuitable: '#ff5a5a' };
+const CROP_TEXTURES = ['Clay', 'Silty clay', 'Sandy clay', 'Clay loam', 'Silty clay loam', 'Sandy clay loam', 'Loam', 'Silt loam', 'Sandy loam', 'Silt', 'Loamy sand', 'Sand'];
+const inputStyle = { width: '100%', boxSizing: 'border-box', background: S.surface2, border: `1px solid ${S.border2}`, color: S.text, fontFamily: S.mono, fontSize: 11.5, padding: '5px 7px', borderRadius: 4 };
+
+function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
+  const [lat, setLat] = useState('');
+  const [lon, setLon] = useState('');
+  const [picking, setPicking] = useState(false);
+  const [irrigation, setIrrigation] = useState(false);
+  const [ph, setPh] = useState('');
+  const [oc, setOc] = useState('');
+  const [texture, setTexture] = useState('');
+  const [state, setState] = useState('');
+  const [open, setOpen] = useState(null);
+  const { run, loading, error, result } = useAgriFetch(apiUrl, 'crop-suitability');
+
+  const onMapClick = useCallback((la, lo) => { setLat(la.toFixed(5)); setLon(lo.toFixed(5)); setPicking(false); }, []);
+  useEffect(() => {
+    if (!picking || !onSetPointPickHandler) return;
+    onSetPointPickHandler(() => onMapClick);
+    return () => onSetPointPickHandler(null);
+  }, [picking, onMapClick, onSetPointPickHandler]);
+
+  const hasPoint = lat !== '' && lon !== '' && !Number.isNaN(parseFloat(lat)) && !Number.isNaN(parseFloat(lon));
+  const canRun = hasPoint || !!drawnAOI;
+
+  const submit = () => {
+    const overrides = {};
+    if (ph !== '' && !Number.isNaN(parseFloat(ph))) overrides.ph = parseFloat(ph);
+    if (oc !== '' && !Number.isNaN(parseFloat(oc))) overrides.organic_carbon_gkg = parseFloat(oc);
+    if (texture) overrides.texture = texture;
+    const body = { irrigation_available: irrigation, state: state.trim() || undefined, soil_overrides: Object.keys(overrides).length ? overrides : undefined };
+    if (hasPoint) { body.lat = parseFloat(lat); body.lon = parseFloat(lon); } else { body.aoi_geojson = drawnAOI; }
+    run(body);
+  };
+
+  const p = result?.profile;
+  const fmtRs = v => `₹${Number(v).toLocaleString('en-IN')}`;
+
+  return (
+    <div style={{ display: 'flex', gap: 16 }}>
+      <ControlsPanel width={260}>
+        <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginBottom: 10 }}>
+          Which crops suit a location — modeled soil (250m) + climate scored against FAO EcoCrop ranges. Tap the map, type a location, or draw an AOI.
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+          <input style={inputStyle} placeholder="lat" value={lat} onChange={e => setLat(e.target.value)} />
+          <input style={inputStyle} placeholder="lon" value={lon} onChange={e => setLon(e.target.value)} />
+        </div>
+        <button onClick={() => setPicking(v => !v)} style={{ width: '100%', marginBottom: 8, background: picking ? 'rgba(126,184,212,0.2)' : 'none', border: `1px solid ${S.border2}`, color: picking ? S.accent : S.text3, fontFamily: S.mono, fontSize: 10.5, padding: '5px 8px', borderRadius: 4, cursor: 'pointer' }}>
+          {picking ? 'CLICK THE MAP…' : 'PICK POINT ON MAP'}
+        </button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: S.text2, marginBottom: 8 }}>
+          <input type="checkbox" checked={irrigation} onChange={e => setIrrigation(e.target.checked)} /> Irrigation available
+        </label>
+        <div style={{ fontSize: 10, color: S.text3, marginBottom: 4 }}>Have a soil test? Enter it (replaces modeled values):</div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+          <input style={inputStyle} placeholder="pH" value={ph} onChange={e => setPh(e.target.value)} />
+          <input style={inputStyle} placeholder="OC g/kg" value={oc} onChange={e => setOc(e.target.value)} />
+        </div>
+        <select style={{ ...inputStyle, marginBottom: 6 }} value={texture} onChange={e => setTexture(e.target.value)}>
+          <option value="">Texture (modeled)</option>
+          {CROP_TEXTURES.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <input style={{ ...inputStyle, marginBottom: 8 }} placeholder="State for mandi prices (optional)" value={state} onChange={e => setState(e.target.value)} />
+        <RunButton onClick={submit} disabled={loading || !canRun} loading={loading} label="FIND SUITABLE CROPS" loadingLabel="ANALYSING..." />
+        {!canRun && <div style={{ fontSize: 10, color: '#e0c23c', marginTop: 8 }}>Enter a location, pick a point, or draw an AOI.</div>}
+        {error && <ErrorNote>{error}</ErrorNote>}
+      </ControlsPanel>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {!result && !loading && <div style={{ fontSize: 11.5, color: S.text3, fontStyle: 'italic', marginTop: 20 }}>Choose a location and find suitable crops.</div>}
+        {result && (
+          <div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 24px', marginBottom: 8 }}>
+              <StatRow label="Soil pH" value={`${p.ph ?? 'n/a'} (${p.value_source.ph})`} />
+              <StatRow label="Organic carbon" value={`${p.organic_carbon_gkg ?? 'n/a'} g/kg (${p.value_source.organic_carbon_gkg})`} />
+              <StatRow label="Texture" value={`${p.texture_name ?? 'n/a'} (${p.value_source.texture})`} />
+              <StatRow label="Rain / yr" value={p.annual_rain_mm != null ? `${p.annual_rain_mm} mm` : 'n/a'} />
+              <StatRow label="Mean temp" value={p.annual_mean_temp_c != null ? `${p.annual_mean_temp_c} °C` : 'n/a'} />
+            </div>
+            {result.crops.map(c => {
+              const rc = CROP_RATING_COLOR[c.rating];
+              const isOpen = open === c.crop_id;
+              return (
+                <div key={c.crop_id} style={{ borderBottom: `1px solid ${S.border}`, padding: '6px 0' }}>
+                  <div onClick={() => setOpen(isOpen ? null : c.crop_id)} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 4, background: rc, flexShrink: 0 }} />
+                    <span style={{ fontSize: 12.5, color: S.text, minWidth: 150 }}>{c.name} <span style={{ color: S.text3 }}>{c.name_hi}</span></span>
+                    <span style={{ fontFamily: S.mono, fontSize: 11.5, color: rc, minWidth: 90, textTransform: 'uppercase' }}>{c.rating} {c.score}</span>
+                    <span style={{ fontSize: 11, color: S.text3, flex: 1 }}>limited by {c.limiting_label.toLowerCase()}</span>
+                    {c.revenue?.status === 'ok' && <span style={{ fontSize: 11, fontFamily: S.mono, color: S.gold }}>~{fmtRs(c.revenue.revenue_rs_per_ha.modal)}/ha</span>}
+                    <span style={{ color: S.text3, fontSize: 11 }}>{isOpen ? '▾' : '▸'}</span>
+                  </div>
+                  {isOpen && (
+                    <div style={{ padding: '8px 0 4px 18px' }}>
+                      {Object.entries(c.factors).map(([k, f]) => (
+                        <StatRow key={k} label={`${k.replace('_', ' ')} (needs ${f.need})`} value={`${f.value ?? 'n/a'}${f.unit ? ' ' + f.unit : ''} → ${f.score ?? 'n/a'}`} />
+                      ))}
+                      {c.amendments.map((a, i) => <div key={i} style={{ fontSize: 11, color: S.text2, marginTop: 5, lineHeight: 1.5 }}>• {a}</div>)}
+                      {c.notes && <div style={{ fontSize: 10.5, color: S.text3, marginTop: 5 }}>{c.notes}</div>}
+                      {c.revenue?.status === 'ok' && <div style={{ fontSize: 10.5, color: S.text3, marginTop: 5, lineHeight: 1.5 }}>Revenue ₹{c.revenue.revenue_rs_per_ha.low.toLocaleString('en-IN')}–₹{c.revenue.revenue_rs_per_ha.high.toLocaleString('en-IN')}/ha at ~₹{c.revenue.price_rs_per_q_modal}/quintal ({c.revenue.markets_used} mandi records), yield ~{c.revenue.yield_q_per_ha} q/ha. {c.revenue.note}</div>}
+                      {c.revenue && c.revenue.status !== 'ok' && <div style={{ fontSize: 10.5, color: S.text3, marginTop: 5 }}>{c.revenue.note}</div>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 10 }}>{result.disclaimer}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const CROP_MIN_SAMPLES_PER_CLASS = 4;
 const CROP_MIN_CLASSES = 2;
 
@@ -383,13 +502,13 @@ function CropExtentTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
 
 export default function AgriIntelBar({ apiUrl, drawnAOI, pointPickActive, onSetPointPickHandler, isMobile }) {
   const [open, setOpen] = useState(true);
-  const [view, setView] = useState('groundwater'); // 'groundwater' | 'analysis' | 'phenology' | 'irrigation' | 'cropextent'
+  const [view, setView] = useState('groundwater'); // 'groundwater' | 'analysis' | 'phenology' | 'irrigation' | 'cropextent' | 'cropsuit'
 
   // Stop any active point-picking if the user collapses the bar or
   // switches away from the ML Extent tab — no reason to keep the map in
   // crosshair mode for a tab that's no longer visible.
   useEffect(() => {
-    if ((!open || view !== 'cropextent') && pointPickActive) onSetPointPickHandler?.(null);
+    if ((!open || (view !== 'cropextent' && view !== 'cropsuit')) && pointPickActive) onSetPointPickHandler?.(null);
   }, [open, view]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -406,7 +525,7 @@ export default function AgriIntelBar({ apiUrl, drawnAOI, pointPickActive, onSetP
 
       {open && (
         <div style={{ display: 'flex', gap: 2, padding: '6px 16px 0', borderBottom: `1px solid ${S.border}`, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-          {[['groundwater', 'Groundwater'], ['analysis', 'Analysis'], ['phenology', 'Crop Stage'], ['irrigation', 'Irrigation'], ['cropextent', 'ML Extent']].map(([id, label]) => (
+          {[['groundwater', 'Groundwater'], ['analysis', 'Analysis'], ['phenology', 'Crop Stage'], ['irrigation', 'Irrigation'], ['cropextent', 'ML Extent'], ['cropsuit', 'Crops']].map(([id, label]) => (
             <button key={id} onClick={() => setView(id)} style={{
               background: 'none', border: 'none', borderBottom: view === id ? `2px solid ${S.accent}` : '2px solid transparent',
               color: view === id ? S.accent : S.text3, fontFamily: S.mono, fontSize: 11.5, letterSpacing: 1, textTransform: 'uppercase',
@@ -424,6 +543,7 @@ export default function AgriIntelBar({ apiUrl, drawnAOI, pointPickActive, onSetP
           {view === 'analysis' && <AnalysisTab apiUrl={apiUrl} drawnAOI={drawnAOI} />}
           {view === 'phenology' && <PhenologyTab apiUrl={apiUrl} drawnAOI={drawnAOI} />}
           {view === 'irrigation' && <IrrigationTab apiUrl={apiUrl} drawnAOI={drawnAOI} />}
+          {view === 'cropsuit' && <CropSuitabilityTab apiUrl={apiUrl} drawnAOI={drawnAOI} onSetPointPickHandler={onSetPointPickHandler} />}
           {view === 'cropextent' && <CropExtentTab apiUrl={apiUrl} drawnAOI={drawnAOI} pointPickActive={pointPickActive} onSetPointPickHandler={onSetPointPickHandler} />}
         </div>
       )}
