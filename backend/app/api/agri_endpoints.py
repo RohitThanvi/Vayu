@@ -13,6 +13,7 @@ from ..services.agri.rollup import get_rollup
 from ..services.agri.whatsapp import build_twiml_reply, handle_inbound_message
 from ..services.agri.phenology import compute_phenology
 from ..services.agri.irrigation_advisory import compute_irrigation_advisory
+from ..services.agri import crop_suitability
 from ..services import gee_remote_sensing as rs
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,22 @@ class CropExtentRequest(BaseModel):
     end_date: str
     training_samples: list  # [{lat, lon, class_id, class_label}, ...] — same shape as Spectra's ML Classify
     num_trees: Optional[int] = None
+
+
+class SoilOverrides(BaseModel):
+    ph: Optional[float] = None
+    organic_carbon_gkg: Optional[float] = None
+    texture: Optional[str] = None  # e.g. "Sandy loam"
+
+
+class CropSuitabilityRequest(BaseModel):
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    aoi_geojson: Optional[Dict[str, Any]] = None
+    irrigation_available: bool = False
+    state: Optional[str] = None  # Agmarknet state name, narrows mandi prices
+    soil_overrides: Optional[SoilOverrides] = None
+    include_revenue: bool = True
 
 
 # ── Core intelligence ────────────────────────────────────────────────────────
@@ -285,3 +302,30 @@ async def whatsapp_webhook(request: Request):
     body_text = form.get("Body", "")
     reply_text = await handle_inbound_message(body_text)
     return Response(content=build_twiml_reply(reply_text), media_type="application/xml")
+
+
+@router.post("/crop-suitability", summary="Ranked crop suitability for a point/AOI from modeled soil + climate, with optional farmer soil-test overrides and mandi-based revenue estimate")
+async def crop_suitability_endpoint(req: CropSuitabilityRequest):
+    """Sampling (GEE) is cached by exact location/AOI — the override and
+    irrigation inputs are applied AFTER the cache, so a farmer changing their
+    soil-test values re-scores instantly without a new Earth Engine call."""
+    from ..services.gee_cache import cached_compute
+    if not req.aoi_geojson and (req.lat is None or req.lon is None):
+        raise HTTPException(status_code=422, detail="Provide lat+lon or aoi_geojson.")
+    try:
+        key = {"lat": req.lat, "lon": req.lon, "aoi": req.aoi_geojson}
+        profile = await asyncio.to_thread(
+            cached_compute, "agri_crop_profile", key,
+            lambda: crop_suitability.sample_location_profile(lat=req.lat, lon=req.lon, aoi=req.aoi_geojson),
+            86400 * 7,
+        )
+        overrides = req.soil_overrides.model_dump(exclude_none=True) if req.soil_overrides else None
+        result = crop_suitability.score_crops(profile, irrigation_available=req.irrigation_available, overrides=overrides)
+        if req.include_revenue:
+            await crop_suitability.add_profit_estimates(result, state=req.state)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"crop_suitability endpoint failed: {e}", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Crop suitability failed: {e}")
