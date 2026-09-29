@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import date
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -15,9 +16,36 @@ from ..services.agri.phenology import compute_phenology
 from ..services.agri.irrigation_advisory import compute_irrigation_advisory
 from ..services.agri import crop_suitability
 from ..services import gee_remote_sensing as rs
+from ..services.gee_cache import cached_compute, DEFAULT_TTL_SECONDS
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agri", tags=["Agriculture"])
+
+# Cache TTL policy for the GEE-backed endpoints below (crop-suitability's own
+# profile cache already followed this same idea; this extends it project-wide
+# so a repeat search for the same place/tab hits cache instead of recomputing
+# from Earth Engine every time).
+#
+# The key always carries a RESOLVED as_of date (never the raw None) via
+# _effective_as_of() -- a request with as_of=None means "as of today", and
+# resolving that into an actual date string before it goes into the cache key
+# means a new calendar day naturally produces a new key and a fresh compute,
+# with no separate short-TTL logic needed to avoid serving a stale "today"
+# days later. So the standard TTL is the full DEFAULT_TTL_SECONDS (30 days)
+# almost everywhere: once a date is pinned, that result is deterministic (see
+# gee_cache.py's own accuracy-guarantee docstring).
+#
+# ONE exception: /risk-score and /drought-dashboard's current-score leg mix in
+# a live, frequently-changing DB read (feedback_accuracy_rate, via region_id
+# -- see risk_scoring.py's _confidence()) that has nothing to do with the
+# as_of date and can change the moment someone submits feedback. Caching that
+# for 30 days would mean a fresh piece of feedback doesn't show up in the
+# confidence figure for a month, so those two get a much shorter TTL instead.
+FEEDBACK_MIXED_TTL_SECONDS = 30 * 60  # 30 min
+
+
+def _effective_as_of(as_of: Optional[str]) -> str:
+    return as_of or date.today().isoformat()
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -84,7 +112,12 @@ class CropSuitabilityRequest(BaseModel):
 @router.post("/risk-score", summary="Composite 0-100 agricultural risk score for an AOI")
 async def risk_score(req: RiskScoreRequest):
     try:
-        return compute_risk_score(aoi=req.aoi_geojson, as_of=req.as_of, region_id=req.region_id)
+        key = {"aoi": req.aoi_geojson, "as_of": _effective_as_of(req.as_of), "region_id": req.region_id}
+        return await asyncio.to_thread(
+            cached_compute, "agri_risk_score", key,
+            lambda: compute_risk_score(aoi=req.aoi_geojson, as_of=req.as_of, region_id=req.region_id),
+            FEEDBACK_MIXED_TTL_SECONDS,
+        )
     except Exception as e:
         logger.error(f"risk_score endpoint failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Risk scoring failed: {e}")
@@ -93,7 +126,12 @@ async def risk_score(req: RiskScoreRequest):
 @router.post("/baseline", summary="Multi-year seasonal-normal NDVI comparison for an AOI")
 async def baseline(req: BaselineRequest):
     try:
-        return compute_seasonal_baseline(aoi=req.aoi_geojson, as_of=req.as_of, years_back=req.years_back)
+        key = {"aoi": req.aoi_geojson, "as_of": _effective_as_of(req.as_of), "years_back": req.years_back}
+        return await asyncio.to_thread(
+            cached_compute, "agri_baseline", key,
+            lambda: compute_seasonal_baseline(aoi=req.aoi_geojson, as_of=req.as_of, years_back=req.years_back),
+            DEFAULT_TTL_SECONDS,
+        )
     except Exception as e:
         logger.error(f"baseline endpoint failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Baseline computation failed: {e}")
@@ -121,8 +159,22 @@ async def drought_dashboard(req: RiskScoreRequest):
     operation, so trend errors are captured and returned alongside a
     working current score rather than failing the whole request.
     """
-    current_task = asyncio.to_thread(compute_risk_score, aoi=req.aoi_geojson, as_of=req.as_of, region_id=req.region_id)
-    trend_task = asyncio.to_thread(compute_drought_trend, aoi=req.aoi_geojson, as_of=req.as_of)
+    eff = _effective_as_of(req.as_of)
+    current_key = {"aoi": req.aoi_geojson, "as_of": eff, "region_id": req.region_id}
+    trend_key = {"aoi": req.aoi_geojson, "as_of": eff}
+    # Same cache tool name ("agri_risk_score") as the standalone /risk-score endpoint
+    # above -- a call to /risk-score followed by /drought-dashboard for the same
+    # AOI+as_of shares one cache entry instead of computing the current score twice.
+    current_task = asyncio.to_thread(
+        cached_compute, "agri_risk_score", current_key,
+        lambda: compute_risk_score(aoi=req.aoi_geojson, as_of=req.as_of, region_id=req.region_id),
+        FEEDBACK_MIXED_TTL_SECONDS,
+    )
+    trend_task = asyncio.to_thread(
+        cached_compute, "agri_drought_trend", trend_key,
+        lambda: compute_drought_trend(aoi=req.aoi_geojson, as_of=req.as_of),
+        DEFAULT_TTL_SECONDS,
+    )
 
     current_result, trend_result = await asyncio.gather(current_task, trend_task, return_exceptions=True)
 
@@ -213,7 +265,15 @@ async def mandi_price(commodity: Optional[str] = None, state: Optional[str] = No
 @router.post("/groundwater-trend", summary="Groundwater depletion/rising trend for an AOI (GRACE, regional-scale)")
 async def groundwater_trend(req: BaselineRequest):
     try:
-        return groundwater.compute_groundwater_trend(aoi=req.aoi_geojson, years_back=req.years_back)
+        # No as_of in the key: compute_groundwater_trend doesn't take one (GRACE
+        # trend always ends "now"), and GRACE data itself only updates monthly,
+        # so the 30-day TTL already matches how often this could actually change.
+        key = {"aoi": req.aoi_geojson, "years_back": req.years_back}
+        return await asyncio.to_thread(
+            cached_compute, "agri_groundwater_trend", key,
+            lambda: groundwater.compute_groundwater_trend(aoi=req.aoi_geojson, years_back=req.years_back),
+            DEFAULT_TTL_SECONDS,
+        )
     except Exception as e:
         logger.error(f"groundwater_trend endpoint failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Groundwater trend failed: {e}")
@@ -222,7 +282,12 @@ async def groundwater_trend(req: BaselineRequest):
 @router.post("/phenology", summary="Crop-stage (green-up/peak/senescence) read from an AOI's own NDVI seasonal curve")
 async def phenology(req: PhenologyRequest):
     try:
-        return await asyncio.to_thread(compute_phenology, aoi=req.aoi_geojson, as_of=req.as_of, months_back=req.months_back)
+        key = {"aoi": req.aoi_geojson, "as_of": _effective_as_of(req.as_of), "months_back": req.months_back}
+        return await asyncio.to_thread(
+            cached_compute, "agri_phenology", key,
+            lambda: compute_phenology(aoi=req.aoi_geojson, as_of=req.as_of, months_back=req.months_back),
+            DEFAULT_TTL_SECONDS,
+        )
     except Exception as e:
         logger.error(f"phenology endpoint failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Phenology computation failed: {e}")
@@ -241,8 +306,14 @@ async def ndvi_trend(req: PhenologyRequest):
     from datetime import datetime, timedelta
     end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.utcnow()
     start_date = (end_dt - timedelta(days=30 * req.months_back)).strftime("%Y-%m-%d")
+    end_date_str = end_dt.strftime("%Y-%m-%d")
     try:
-        return await asyncio.to_thread(rs.compute_index_time_series, req.aoi_geojson, "ndvi", start_date, end_dt.strftime("%Y-%m-%d"), "month")
+        key = {"aoi": req.aoi_geojson, "index": "ndvi", "start": start_date, "end": end_date_str, "interval": "month"}
+        return await asyncio.to_thread(
+            cached_compute, "agri_ndvi_trend", key,
+            lambda: rs.compute_index_time_series(req.aoi_geojson, "ndvi", start_date, end_date_str, "month"),
+            DEFAULT_TTL_SECONDS,
+        )
     except Exception as e:
         logger.error(f"ndvi_trend endpoint failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"NDVI trend failed: {e}")
@@ -251,7 +322,12 @@ async def ndvi_trend(req: PhenologyRequest):
 @router.post("/irrigation-advisory", summary="Irrigate now / monitor / hold off, from soil moisture + rainfall context")
 async def irrigation_advisory(req: RiskScoreRequest):
     try:
-        return await asyncio.to_thread(compute_irrigation_advisory, aoi=req.aoi_geojson, as_of=req.as_of)
+        key = {"aoi": req.aoi_geojson, "as_of": _effective_as_of(req.as_of)}
+        return await asyncio.to_thread(
+            cached_compute, "agri_irrigation_advisory", key,
+            lambda: compute_irrigation_advisory(aoi=req.aoi_geojson, as_of=req.as_of),
+            DEFAULT_TTL_SECONDS,
+        )
     except Exception as e:
         logger.error(f"irrigation_advisory endpoint failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Irrigation advisory failed: {e}")
@@ -267,9 +343,13 @@ async def crop_extent(req: CropExtentRequest):
     flow (this is a small, synchronous-enough call for that, same as
     every other Agri endpoint)."""
     try:
+        num_trees = req.num_trees or rs.DEFAULT_NUM_TREES
+        key = {"aoi": req.aoi_geojson, "start_date": req.start_date, "end_date": req.end_date,
+               "training_samples": req.training_samples, "num_trees": num_trees}
         return await asyncio.to_thread(
-            rs.compute_supervised_classification, req.aoi_geojson, req.start_date, req.end_date,
-            req.training_samples, req.num_trees or rs.DEFAULT_NUM_TREES,
+            cached_compute, "agri_crop_extent", key,
+            lambda: rs.compute_supervised_classification(req.aoi_geojson, req.start_date, req.end_date, req.training_samples, num_trees),
+            DEFAULT_TTL_SECONDS,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
