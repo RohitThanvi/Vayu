@@ -95,7 +95,7 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
     soil_img = ee.Image.cat([ph_top, oc_top])
     tex_img = ee.Image(_TEX_ASSET).select("b10").rename("texture")
 
-    dem = ee.ImageCollection("COPERNICUS/DEM/GLO30").select("DEM").mosaic()
+    dem = ee.ImageCollection("COPERNICUS/DEM/GLO30_2024_1").select("DEM").mosaic()
     slope_img = ee.Terrain.slope(dem).rename("slope_deg")
 
     chirps = ee.ImageCollection(_RAIN_ASSET).filterDate(f"{y0}-01-01", f"{y1 + 1}-01-01").select("precipitation")
