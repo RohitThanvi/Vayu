@@ -412,6 +412,18 @@ async def add_profit_estimates(result: Dict[str, Any], state: Optional[str] = No
         except Exception as e:  # network/parse — never break the suitability result
             logger.warning(f"profit: mandi fetch failed for {c['name']}: {e}")
             data = {"records": [], "error": str(e)}
+        # Historical trend (avg price, CAGR) from CEDA, alongside the live data.gov.in
+        # price above. Optional and best-effort — CEDA lags data.gov.in by design (see
+        # ceda_prices.py), so its as_of_date is surfaced plainly rather than implying
+        # this is today's price. Never blocks the primary price if CEDA is unconfigured
+        # or fails.
+        from . import ceda_prices
+        trend = await ceda_prices.get_price_trend(commodity=c["mandi_commodity"], state=state)
+        if trend.get("available"):
+            r["price_trend"] = {
+                "avg_price_rs_per_q": trend["avg_price_modal"], "cagr_pct": trend["cagr_pct"],
+                "as_of": trend["as_of_date"], "period": trend["period"], "source": trend["source"],
+            }
         ps = price_summary(data.get("records", []))
         if not ps:
             r["revenue"] = {"status": "price_unavailable", "note": data.get("error") or "No recent mandi records found."}

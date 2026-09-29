@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     # data.gov.in (email signup, no card) and get a key from your account's
     # "My Account" -> API keys. See services/intel/air_quality.py.
     AQI_API_KEY: str = ""
+    CEDA_API_KEY: str = ""  # free key from api.ceda.ashoka.edu.in — used for historical mandi price trend (avg/CAGR), separate from AQI_API_KEY's live data.gov.in feed
 
     # Commodity price ticker — no config needed here anymore. Originally
     # used Alpha Vantage (needed a key, 25/day cap proved unworkable
