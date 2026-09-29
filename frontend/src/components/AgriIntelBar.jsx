@@ -351,6 +351,7 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
                       {c.amendments.map((a, i) => <div key={i} style={{ fontSize: 11, color: S.text2, marginTop: 5, lineHeight: 1.5 }}>• {a}</div>)}
                       {c.notes && <div style={{ fontSize: 10.5, color: S.text3, marginTop: 5 }}>{c.notes}</div>}
                       {c.revenue?.status === 'ok' && <div style={{ fontSize: 10.5, color: S.text3, marginTop: 5, lineHeight: 1.5 }}>Revenue ₹{c.revenue.revenue_rs_per_ha.low.toLocaleString('en-IN')}–₹{c.revenue.revenue_rs_per_ha.high.toLocaleString('en-IN')}/ha at ~₹{c.revenue.price_rs_per_q_modal}/quintal ({c.revenue.markets_used} mandi records), yield ~{c.revenue.yield_q_per_ha} q/ha. {c.revenue.note}</div>}
+                      {c.price_trend && <div style={{ fontSize: 10.5, color: S.text3, marginTop: 3 }}>Historical: ~₹{c.price_trend.avg_price_rs_per_q}/quintal avg{c.price_trend.cagr_pct != null ? `, ${c.price_trend.cagr_pct}%/yr` : ''} ({c.price_trend.period}, CEDA, as of {c.price_trend.as_of})</div>}
                       {c.revenue && c.revenue.status !== 'ok' && <div style={{ fontSize: 10.5, color: S.text3, marginTop: 5 }}>{c.revenue.note}</div>}
                     </div>
                   )}
