@@ -267,12 +267,12 @@ def compute_spectral_indices(aoi: Dict, start_date: str, end_date: str, indices:
 def compute_terrain_analysis(aoi: Dict) -> Dict[str, Any]:
     """Elevation/slope/aspect statistics from the Copernicus DEM GLO-30
     (30m global Digital Surface Model, TanDEM-X-derived — see
-    COPERNICUS/DEM/GLO30 in the GEE catalog). No date range: this is a
+    COPERNICUS/DEM/GLO30_2024_1 in the GEE catalog). No date range: this is a
     single static global DEM, not a time series."""
     logger.info("GEE (remote sensing): terrain_analysis")
     region = _polygon_geometry(aoi)
 
-    dem = ee.ImageCollection("COPERNICUS/DEM/GLO30").select("DEM").mosaic()
+    dem = ee.ImageCollection("COPERNICUS/DEM/GLO30_2024_1").select("DEM").mosaic()
     slope = ee.Terrain.slope(dem)     # degrees
     aspect = ee.Terrain.aspect(dem)   # degrees, 0=N, 90=E, 180=S, 270=W
 
@@ -312,7 +312,7 @@ def compute_terrain_analysis(aoi: Dict) -> Dict[str, Any]:
             "max": round(slope_stats.get("slope_max", 0) or 0, 2),
         },
         "dominant_aspect": {"degrees": round(circular_mean_aspect, 1), "compass": _compass(circular_mean_aspect)},
-        "vertical_datum": "EGM2008 (EPSG:3855) — a 0m reading here does NOT mean mean sea level; see COPERNICUS/DEM/GLO30 documentation.",
+        "vertical_datum": "EGM2008 (EPSG:3855) — a 0m reading here does NOT mean mean sea level; see COPERNICUS/DEM/GLO30_2024_1 documentation.",
         # Hillshade rather than raw elevation as the map layer — a flat
         # elevation color ramp needs a per-AOI min/max to look like
         # anything, while a hillshade reads as actual terrain relief at
@@ -1696,7 +1696,7 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
             img = _index_image(composite, index_id)
             return _fetch_thumb_bytes(img, region, INDEX_PALETTES.get(index_id, {"min": -1, "max": 1, "palette": ["#000000", "#ffffff"]}))
         if tool == "terrain":
-            dem = ee.Image("COPERNICUS/DEM/GLO30").select("DEM").clip(region)
+            dem = ee.ImageCollection("COPERNICUS/DEM/GLO30_2024_1").select("DEM").mosaic().clip(region)
             return _fetch_thumb_bytes(ee.Terrain.hillshade(dem), region, {"min": 0, "max": 255})
         if tool == "lulc":
             wc = ee.ImageCollection("ESA/WorldCover/v200").first().select("Map").clip(region)
