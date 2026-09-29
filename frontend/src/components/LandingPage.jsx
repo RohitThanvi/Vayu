@@ -34,7 +34,7 @@ import HeroEarth from './HeroEarth';
 const RESET_PASSWORD_ENABLED = false;
 
 const S = {
-  bg: '#05070c', surface: 'rgba(13,17,23,0.88)', surface2: '#0d1117', surface3: '#111826', border: '#2a3040', borderLight: '#3a4257',
+  bg: '#0a0e18', surface: 'rgba(22,31,51,0.88)', surface2: '#161f33', surface3: '#1c2740', border: '#3a4258', borderLight: '#4a5570',
   // Bumped from 0.5/0.75 — the old text3 sat around ~5:1 contrast on this
   // background, which reads as "washed out" for small mono body copy even
   // though it technically cleared AA. text2/text3 raised so descriptive
@@ -156,8 +156,8 @@ const GlobalStyle = () => (
     .vayu-ambient-backdrop {
       position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden;
       background:
-        radial-gradient(ellipse 900px 700px at 84% 6%, rgba(212,175,55,0.055), transparent 60%),
-        radial-gradient(ellipse 800px 900px at 6% 72%, rgba(56,189,248,0.035), transparent 65%),
+        radial-gradient(ellipse 900px 700px at 84% 6%, rgba(212,175,55,0.09), transparent 60%),
+        radial-gradient(ellipse 800px 900px at 6% 72%, rgba(56,189,248,0.06), transparent 65%),
         radial-gradient(1.3px 1.3px at 12% 18%, rgba(255,255,255,0.5), transparent 60%),
         radial-gradient(1px 1px at 68% 42%, rgba(255,255,255,0.4), transparent 60%),
         radial-gradient(1.5px 1.5px at 40% 78%, rgba(255,255,255,0.42), transparent 60%),
@@ -491,7 +491,7 @@ function AuthCard({ apiUrl, onAuthenticated }) {
           style={{
             marginTop: 6, padding: '11px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase',
             background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4,
-            color: '#05070c', fontWeight: 700, cursor: status === 'loading' ? 'wait' : 'pointer',
+            color: '#0a0e18', fontWeight: 700, cursor: status === 'loading' ? 'wait' : 'pointer',
             opacity: status === 'loading' ? 0.7 : 1,
           }}>
           {status === 'loading' ? '...' : mode === 'login' ? 'ENTER TERMINAL' : mode === 'signup' ? 'CREATE ACCOUNT' : 'SEND RESET LINK'}
@@ -534,11 +534,11 @@ function SpaceCard({ children, onClose, width = 380, padding = '32px 28px' }) {
         }} />
         <div style={{
           position: 'absolute', inset: 0,
-          background: `linear-gradient(160deg, rgba(5,7,12,0.94) 0%, rgba(5,7,12,0.9) 45%, rgba(13,17,23,0.93) 100%)`,
+          background: `linear-gradient(160deg, rgba(10,14,24,0.94) 0%, rgba(10,14,24,0.9) 45%, rgba(22,31,51,0.93) 100%)`,
         }} />
         {onClose && (
           <button onClick={onClose} aria-label="Close" type="button"
-            style={{ position: 'absolute', top: 10, right: 12, background: 'rgba(5,7,12,0.4)', border: 'none', borderRadius: '50%', width: 30, height: 30, color: S.text2, fontSize: 20, lineHeight: 1, cursor: 'pointer', zIndex: 2 }}>
+            style={{ position: 'absolute', top: 10, right: 12, background: 'rgba(10,14,24,0.4)', border: 'none', borderRadius: '50%', width: 30, height: 30, color: S.text2, fontSize: 20, lineHeight: 1, cursor: 'pointer', zIndex: 2 }}>
             &times;
           </button>
         )}
@@ -588,7 +588,7 @@ function TierPickerModal({ onSelect, onClose, isMobile }) {
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: isMobile ? 'flex-start' : 'center', justifyContent: 'center',
       padding: isMobile ? '28px 12px' : 20, overflowY: 'auto', WebkitOverflowScrolling: 'touch',
-      background: 'rgba(5,7,12,0.55)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+      background: 'rgba(10,14,24,0.55)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
       animation: 'vayu-modal-fade-in 0.2s ease',
     }}>
       <div onClick={e => e.stopPropagation()} style={{ animation: 'vayu-modal-pop-in 0.25s ease', width: 760, maxWidth: '100%', display: 'flex', justifyContent: 'center' }}>
@@ -602,7 +602,7 @@ function TierPickerModal({ onSelect, onClose, isMobile }) {
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(155px, 1fr))', gap: 12 }}>
             {SERVICE_OPTIONS.map((opt) => (
               <button key={opt.id} onClick={() => onSelect(opt.id)} className="vayu-tier-option" style={{
-                textAlign: 'left', cursor: 'pointer', background: 'rgba(13,17,23,0.7)', border: `1px solid ${S.border}`,
+                textAlign: 'left', cursor: 'pointer', background: 'rgba(22,31,51,0.7)', border: `1px solid ${S.border}`,
                 borderRadius: 8, padding: '16px 14px', color: S.text, fontFamily: S.mono,
               }}>
                 <Icon path={opt.icon} size={20} />
@@ -634,7 +634,7 @@ function AuthModal({ apiUrl, onAuthenticated, onClose }) {
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
-      background: 'rgba(5,7,12,0.55)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+      background: 'rgba(10,14,24,0.55)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
       animation: 'vayu-modal-fade-in 0.2s ease',
     }}>
       <div onClick={e => e.stopPropagation()} style={{ animation: 'vayu-modal-pop-in 0.25s ease' }}>
@@ -679,7 +679,7 @@ function ResetPasswordCard({ apiUrl, token }) {
           <PasswordField label="New Password" value={password} onChange={setPassword} onEnter={submit} />
           {message && <div style={{ fontFamily: S.mono, fontSize: 11.5, color: '#ff7a45' }}>{message}</div>}
           <button onClick={submit} disabled={status === 'loading'}
-            style={{ marginTop: 6, padding: '11px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#05070c', fontWeight: 700, cursor: status === 'loading' ? 'wait' : 'pointer' }}>
+            style={{ marginTop: 6, padding: '11px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#0a0e18', fontWeight: 700, cursor: status === 'loading' ? 'wait' : 'pointer' }}>
             {status === 'loading' ? '...' : 'UPDATE PASSWORD'}
           </button>
         </div>
@@ -687,7 +687,7 @@ function ResetPasswordCard({ apiUrl, token }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ fontFamily: S.mono, fontSize: 12.5, color: '#4a7c59' }}>{message}</div>
           <button onClick={() => { window.history.replaceState({}, '', '/'); window.location.reload(); }}
-            style={{ padding: '11px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#05070c', fontWeight: 700, cursor: 'pointer' }}>
+            style={{ padding: '11px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#0a0e18', fontWeight: 700, cursor: 'pointer' }}>
             GO TO LOGIN
           </button>
         </div>
@@ -847,7 +847,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
       )}
 
       {/* Navbar */}
-      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, background: 'rgba(5,7,12,0.85)', backdropFilter: 'blur(8px)', borderBottom: `1px solid ${S.border}` }}>
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, background: 'rgba(10,14,24,0.85)', backdropFilter: 'blur(8px)', borderBottom: `1px solid ${S.border}` }}>
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '12px 18px' : '14px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
             <img src="/logo.png" alt="Vayu" width="20" height="20" style={{ display: 'block', filter: 'drop-shadow(0 0 4px rgba(201,168,106,0.4))' }} />
@@ -890,7 +890,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
             this small). */}
         {isMobile && mobileMenuOpen && (
           <div style={{
-            borderTop: `1px solid ${S.border}`, background: 'rgba(5,7,12,0.96)', backdropFilter: 'blur(8px)',
+            borderTop: `1px solid ${S.border}`, background: 'rgba(10,14,24,0.96)', backdropFilter: 'blur(8px)',
             padding: '14px 18px 18px', display: 'flex', flexDirection: 'column', gap: 4,
             animation: 'vayu-modal-fade-in 0.15s ease',
           }}>
@@ -918,9 +918,9 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
 
         <div style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
-          background: 'linear-gradient(115deg, rgba(5,7,12,0.92) 0%, rgba(5,7,12,0.72) 32%, rgba(5,7,12,0.2) 62%, rgba(5,7,12,0.05) 100%)',
+          background: 'linear-gradient(115deg, rgba(10,14,24,0.8) 0%, rgba(10,14,24,0.56) 32%, rgba(10,14,24,0.14) 62%, rgba(10,14,24,0.02) 100%)',
         }} />
-        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(0deg, rgba(5,7,12,1) 0%, rgba(5,7,12,0) 18%)' }} />
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(0deg, rgba(10,14,24,1) 0%, rgba(10,14,24,0) 18%)' }} />
         <img src="/logo.png" alt="" aria-hidden style={{
           position: 'absolute', right: '6%', bottom: '10%', width: isMobile ? 120 : 220, opacity: 0.07,
           filter: 'grayscale(0.4)', pointerEvents: 'none',
@@ -945,11 +945,11 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
             </div>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               <button className="vayu-cta-primary" onClick={() => setTierModalOpen(true)}
-                style={{ padding: isMobile ? '13px 26px' : '14px 32px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#05070c', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 24px rgba(201,168,106,0.3)' }}>
+                style={{ padding: isMobile ? '13px 26px' : '14px 32px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: `linear-gradient(180deg, ${S.goldBright}, ${S.gold})`, border: 'none', borderRadius: 4, color: '#0a0e18', fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 24px rgba(201,168,106,0.3)' }}>
                 Enter Terminal
               </button>
               <button className="vayu-cta-secondary" onClick={() => scrollTo('about')}
-                style={{ padding: isMobile ? '13px 22px' : '14px 28px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: 'rgba(13,17,23,0.7)', backdropFilter: 'blur(4px)', border: `1px solid ${S.borderLight}`, borderRadius: 4, color: S.text, cursor: 'pointer' }}>
+                style={{ padding: isMobile ? '13px 22px' : '14px 28px', fontFamily: S.mono, fontSize: 12, letterSpacing: 2, textTransform: 'uppercase', background: 'rgba(22,31,51,0.7)', backdropFilter: 'blur(4px)', border: `1px solid ${S.borderLight}`, borderRadius: 4, color: S.text, cursor: 'pointer' }}>
                 See What It Does
               </button>
             </div>
@@ -1079,7 +1079,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
                   </ul>
                   <button onClick={() => onSelectTier(opt.id)} className="vayu-cta-secondary" style={{
                     padding: '10px 16px', fontFamily: S.mono, fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase',
-                    background: 'rgba(13,17,23,0.7)', border: `1px solid ${S.borderLight}`, borderRadius: 4, color: S.text, cursor: 'pointer', width: '100%',
+                    background: 'rgba(22,31,51,0.7)', border: `1px solid ${S.borderLight}`, borderRadius: 4, color: S.text, cursor: 'pointer', width: '100%',
                   }}>
                     Enter as {opt.label}
                   </button>
@@ -1120,7 +1120,7 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
                     <a key={label} href={href} target="_blank" rel="noreferrer" style={{
                       fontFamily: S.mono, fontSize: 11, letterSpacing: 1, textTransform: 'uppercase',
                       padding: '8px 14px', border: `1px solid ${S.borderLight}`, borderRadius: 4,
-                      color: S.text2, textDecoration: 'none', background: 'rgba(13,17,23,0.7)',
+                      color: S.text2, textDecoration: 'none', background: 'rgba(22,31,51,0.7)',
                     }}>
                       {label}
                     </a>
