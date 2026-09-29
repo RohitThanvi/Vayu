@@ -230,7 +230,17 @@ def apply_overrides(profile: Dict[str, Any], overrides: Optional[Dict[str, Any]]
 def score_crop(crop: Dict[str, Any], profile: Dict[str, Any], irrigation_available: bool) -> Dict[str, Any]:
     months = SEASON_MONTHS[crop["season"]]
     t = _season_mean_temp(profile["monthly_temp_c"], months)
-    rain = _season_rain(profile["monthly_rain_mm"], months)
+    # Water basis differs by season. Kharif crops are genuinely rainfed in-season,
+    # so in-season rainfall is the right figure. Rabi (and perennial) crops in India
+    # are grown mainly on soil moisture carried over from the monsoon plus irrigation
+    # from wells/canals recharged by the whole year's rain -- NOT on rainfall actually
+    # falling in the Nov-Mar dry season. Scoring rabi crops against Nov-Mar rainfall
+    # alone (the original approach) forces a false 0 for almost every rabi crop in a
+    # monsoon-climate region, since that window is dry by definition even in a good year.
+    # Annual rainfall is a much closer proxy for the water that's actually available to
+    # a rabi crop here.
+    rain = profile.get("annual_rain_mm") if crop["season"] in ("rabi", "perennial") else _season_rain(profile["monthly_rain_mm"], months)
+    water_basis = "annual rainfall (proxy for residual soil moisture + irrigation)" if crop["season"] in ("rabi", "perennial") else "in-season rainfall"
 
     factors: Dict[str, Dict[str, Any]] = {}
 
@@ -258,8 +268,8 @@ def score_crop(crop: Dict[str, Any], profile: Dict[str, Any], irrigation_availab
             water_status = "supplemental_irrigation"
         else:
             water_status = "irrigation_required"
-    factors["water"] = {"score": ws, "value": _r(rain, 0), "unit": "mm/season",
-                        "need": f"{wb}-{wc} mm", "status": water_status}
+    factors["water"] = {"score": ws, "value": _r(rain, 0), "unit": "mm",
+                        "need": f"{wb}-{wc} mm", "status": water_status, "basis": water_basis}
 
     # pH
     ps = trapezoid(profile.get("ph"), *crop["ph"])
@@ -346,7 +356,10 @@ def score_crops(profile: Dict[str, Any], irrigation_available: bool = False,
         "disclaimer": (
             "Indicative suitability from modeled soil (250m) and climate data, not a soil test. "
             "Confirm with a soil test at your nearest KVK / soil-testing lab before investing. "
-            "Temperature, rainfall, pH and texture ranges come from the FAO EcoCrop database (generic species ranges, not tuned to local varieties); "
+            "This scores whether land CAN physically support a crop, not whether it is commonly grown here -- "
+            "local adoption also depends on irrigation infrastructure, market access, and tradition, which this does not model. "
+            "Temperature, rainfall, pH and texture ranges come from the FAO EcoCrop database (generic species ranges, not tuned to local varieties, "
+            "with any regional override noted per-crop where local agronomy data contradicts it); "
             "organic-carbon and slope thresholds and yields are rough estimates."
         ),
     }
