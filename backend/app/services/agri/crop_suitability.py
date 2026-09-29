@@ -393,7 +393,16 @@ async def add_profit_estimates(result: Dict[str, Any], state: Optional[str] = No
     by_id = {c["id"]: c for c in CROPS}
     targets = [r for r in result["crops"] if r["rating"] in ("high", "moderate")][:top_n]
 
+    # Agmarknet (data.gov.in) is slow and flaky even for one request at a time
+    # (see mandi.py) -- firing up to top_n of these at once at the same key was
+    # making the whole crop-suitability call time out even when each individual
+    # lookup would have succeeded alone. Cap concurrency so requests queue
+    # instead of piling on together; mandi.py's own cache means only the first
+    # AOI/commodity combo actually pays this cost.
+    sem = asyncio.Semaphore(2)
+
     async def one(r):
+      async with sem:
         c = by_id[r["crop_id"]]
         if not c["mandi_commodity"] or not c["yield_q_per_ha"]:
             r["revenue"] = {"status": "no_price_data", "note": "No mandi price or typical-yield data for this crop."}
