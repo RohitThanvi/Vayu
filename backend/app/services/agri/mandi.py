@@ -64,7 +64,13 @@ async def get_mandi_prices(commodity: Optional[str] = None, state: Optional[str]
     # limit/timeout if that still doesn't come back in time. This resource is
     # small (limit<=20 typically) so the retry is about outrunning data.gov.in's
     # own latency, not payload size the way it is for the AQI pull.
-    attempts = [(limit, 60), (min(limit, 10), 30)]
+    # Observed in production: even the (limit,60)/(10,30) tiers below can both
+    # miss when data.gov.in is having a slow patch (logged ReadTimeouts at
+    # 30-32s against a 30s timeout). Widened both tiers; still two attempts,
+    # not more -- a third tier would push the worst case for one crop's
+    # lookup well past what's reasonable inside one page load, especially
+    # with add_profit_estimates() calling this for several crops.
+    attempts = [(limit, 75), (min(limit, 10), 45)]
     last_exc = None
     last_detail = None
     for attempt_limit, attempt_timeout in attempts:
