@@ -38,3 +38,13 @@ Python 3.10+. `pip install -r requirements.txt`
 Intel feeds (vessels, aircraft, USGS, FIRMS, GDELT, AIS), mandi/CEDA prices, the LLM `/query` pipeline, WhatsApp,
 groundwater-trend (needs well-level CGWB data in a form I haven't seen), crop-extent / supervised_classification
 (the server only reports its own random-split accuracy, which is spatially autocorrelated and optimistic).
+
+## Before / after a model change (the protocol)
+1. Commit the baseline code, run `python run_validation.py --cases cases.json --base-url ... --split tune` -> keep `report.md`.
+2. Change the model (cite sources for every range change). Commit it. Re-run the SAME tune command. Compare.
+   Responses are cached per commit hash, so old answers are never reused; an uncommitted tree disables the cache.
+3. Only after the change is final, run on a test set the model has never been tuned or diagnosed on. If the original
+   test states were already looked at, draw fresh ones:
+   `python build_ground_truth.py --exclude-states "haryana,madhyapradesh,maharashtra,mizoram,nagaland,rajasthan,uttarpradesh,westbengal" --max-districts 120`
+4. `crop_ranking` now also reports suitability as classification (binary confusion matrix, recall/precision/AUC at score>=0.5
+   vs observed major crops >=10% of area) and a top-1 confusion matrix per season (`confusion_*.csv`).
