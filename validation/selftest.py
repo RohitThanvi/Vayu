@@ -17,8 +17,10 @@ def check_metrics():
     try:
         from sklearn import metrics as sk
         from scipy import stats
-    except ImportError:
-        print("[skip] scikit-learn/scipy not installed - metric cross-check skipped"); return
+    except ImportError as e:
+        print(f"[skip] metric cross-check skipped: {type(e).__name__}: {e}")
+        print(f"       interpreter running this test: {sys.executable}")
+        print("       install into THAT interpreter:  python -m pip install -r requirements-dev.txt"); return
     rng = np.random.default_rng(0)
     y = rng.normal(10, 3, 60); p = y + rng.normal(0.5, 1.5, 60)
     m = regression_metrics(y, p)
