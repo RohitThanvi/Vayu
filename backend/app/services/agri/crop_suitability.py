@@ -251,8 +251,20 @@ def score_crop(crop: Dict[str, Any], profile: Dict[str, Any], irrigation_availab
 
     # Water: the LOW side is fixable with irrigation, the HIGH side is not.
     wa, wb, wc, wd = crop["water_mm"]
+    # Excess-rain (waterlogging/disease) side: judged on rain the crop is actually exposed to.
+    # For rabi crops, annual rainfall is a proxy for stored soil moisture + irrigation supply
+    # (the DEFICIT side, above), but the monsoon itself never falls on a Nov-Mar crop, so it must
+    # not trigger the excess penalty. Validation against district sown-area statistics showed
+    # wheat (observed dominant rabi crop in every tested district) being scored ~0 in humid
+    # districts purely because annual rain > its 900 mm optimum ceiling. Perennials live through
+    # the monsoon, so they keep the annual figure.
+    rain_hi = rain
+    if crop["season"] == "rabi":
+        in_season = _season_rain(profile.get("monthly_rain_mm") or [None] * 12, months)
+        if in_season is not None:
+            rain_hi = in_season
     lo = None if rain is None else (1.0 if rain >= wb else (0.0 if rain <= wa else (rain - wa) / (wb - wa)))
-    hi = None if rain is None else (1.0 if rain <= wc else (0.0 if rain >= wd else (wd - rain) / (wd - wc)))
+    hi = None if rain_hi is None else (1.0 if rain_hi <= wc else (0.0 if rain_hi >= wd else (wd - rain_hi) / (wd - wc)))
     if rain is None:
         ws, water_status = None, "unknown"
     else:
@@ -260,7 +272,7 @@ def score_crop(crop: Dict[str, Any], profile: Dict[str, Any], irrigation_availab
         # penalised in proportion to the deficit (down to 0.5) instead of being ignored.
         # Without irrigation the deficit counts in full.
         ws = min(hi, 1.0 - 0.5 * (1.0 - lo)) if irrigation_available else min(lo, hi)
-        if rain > wc:
+        if rain_hi is not None and rain_hi > wc:
             water_status = "excess_rain"
         elif rain >= wb:
             water_status = "rainfed_ok"
@@ -345,7 +357,14 @@ def score_crops(profile: Dict[str, Any], irrigation_available: bool = False,
                 overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     p = apply_overrides(profile, overrides)
     results = [score_crop(c, p, irrigation_available) for c in CROPS]
-    ranked = sorted([r for r in results if r["score"] is not None], key=lambda r: (-r["score"], r["name"]))
+    # Ties are common (Liebig minimum saturates at the same limiting factor for several crops).
+    # Break them by the mean of all factor scores (a crop with more headroom elsewhere ranks higher),
+    # and only then by name, so ordering never depends on the alphabet alone.
+    def _mean_factor(r):
+        v = [f["score"] for f in r["factors"].values() if f["score"] is not None]
+        return sum(v) / len(v) if v else 0.0
+    ranked = sorted([r for r in results if r["score"] is not None],
+                    key=lambda r: (-r["score"], -round(_mean_factor(r), 4), r["name"]))
     return {
         "profile": {k: p[k] for k in ("mode", "ph", "organic_carbon_gkg", "texture_class", "texture_name", "slope_pct",
                                       "annual_rain_mm", "annual_mean_temp_c", "climate_years", "value_source", "sources")},

@@ -97,8 +97,13 @@ class CropRanking:
         # tie awareness: how many of the model's top-k share a score with the crop just outside the top-k
         top_scores = [round(c["score"], 3) for c in crops[:k + 1]]
         tied = len(top_scores) > k and top_scores[k - 1] == top_scores[k]
+        shares = t.get("mean_area_share", {})
+        pairs = [[c["crop_id"], c["score"], float(shares.get(c["crop_id"], 0.0))]
+                 for c in crops if c.get("season") == season]
         return {"pred": "|".join(pred[:k]), "truth": "|".join(truth[:k]), "k": k, **m,
-                "baseline_overlap_frac": None if b is None else b["overlap_frac"], "tie_at_cutoff": int(tied)}
+                "baseline_overlap_frac": None if b is None else b["overlap_frac"], "tie_at_cutoff": int(tied),
+                "season": season, "top1_pred": pred[0] if pred else "", "top1_truth": truth[0] if truth else "",
+                "pairs": json.dumps(pairs)}
 
     def summarize(self, rows, ctx):
         """Separate metric blocks per `variant` (e.g. irrigated vs rainfed) so conditions are never pooled."""
@@ -120,6 +125,38 @@ class CropRanking:
         by = {}
         for x in r: by.setdefault(x["agro_zone"] or "unspecified", []).append(x["overlap_frac"])
         out["overlap_by_agro_zone"] = {k: {"n": len(v), "mean": round(float(np.mean(v)), 3)} for k, v in by.items()}
+        out.update(self._classification(r))
+        return out
+
+    SUITABLE_SCORE = 0.5       # Vayu "suitable" (rating moderate or better)
+    MAJOR_SHARE = 0.10         # observed "major crop" = >=10% of modelled-crop area
+
+    def _classification(self, r):
+        """Suitability as yes/no per (district x season x crop) + top-1 confusion matrices per season."""
+        out = {}
+        Y, S, Z, C = [], [], [], []
+        for x in r:
+            for cid, score, share in json.loads(x["pairs"]):
+                Y.append(int(share >= self.MAJOR_SHARE)); S.append(float(score)); Z.append(x["zone_id"]); C.append(cid)
+        if Y:
+            Y, S, Z, C = np.array(Y), np.array(S), np.array(Z), np.array(C)
+            b = binary_metrics(Y, S, self.SUITABLE_SCORE)
+            b = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in b.items()}
+            b["definition"] = f"observed major crop = share >= {self.MAJOR_SHARE}; Vayu suitable = score >= {self.SUITABLE_SCORE}"
+            b["recall_ci95_zone_bootstrap"] = ci_str(cluster_bootstrap(
+                lambda i: float((S[i][Y[i] == 1] >= self.SUITABLE_SCORE).mean()), list(Z)))
+            b["roc_auc_ci95_zone_bootstrap"] = ci_str(cluster_bootstrap(
+                lambda i: binary_metrics(Y[i], S[i], self.SUITABLE_SCORE)["roc_auc"], list(Z)))
+            b["recall_by_crop"] = {c: f"{int((S[(C == c) & (Y == 1)] >= self.SUITABLE_SCORE).sum())}/{int(((C == c) & (Y == 1)).sum())}"
+                                   for c in sorted(set(C[Y == 1]))}
+            out["suitability_binary"] = b
+        for season in sorted({x["season"] for x in r}):
+            g = [x for x in r if x["season"] == season and x["top1_truth"] and x["top1_pred"]]
+            if len(g) >= 3:
+                m, M, labels = classification_metrics([x["top1_truth"] for x in g], [x["top1_pred"] for x in g])
+                m = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in m.items()}
+                m["_matrix"] = {"labels": labels, "rows_true_cols_pred": M.tolist()}
+                out[f"top1_confusion_{season}"] = m
         return out
 
 

@@ -10,7 +10,7 @@ run_validation.py - run Vayu's analysis endpoints over ground-truth cases and co
 Re-running resumes from the on-disk response cache (pass --no-cache to force fresh calls).
 Outputs (validation_runs/<timestamp>/): results.csv, metrics.json, report.md, confusion_*.csv, manifest.json
 """
-import argparse, csv, hashlib, json, platform, subprocess, sys, time
+import argparse, csv, hashlib, json, platform, re, subprocess, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np, pandas as pd
@@ -20,8 +20,9 @@ from validators import VALIDATORS
 
 
 def git_hash():
+    """Short hash, with '-dirty' when the working tree has uncommitted changes."""
     try:
-        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL, text=True).strip()
+        return subprocess.check_output(["git", "describe", "--always", "--dirty", "--abbrev=7"], stderr=subprocess.DEVNULL, text=True).strip()
     except Exception:
         return "unknown"
 
@@ -59,7 +60,15 @@ def main():
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = Path(a.out) / run_id; run_dir.mkdir(parents=True, exist_ok=True)
-    cache_dir = Path(a.out) / "_cache"                      # shared across runs => resumable
+    version = a.model_version or git_hash()
+    # Responses are cached PER MODEL VERSION so a code change can never silently reuse old answers.
+    # A '-dirty' tree has no stable identity, so caching is switched off for it.
+    dirty = version.endswith("-dirty")
+    if dirty:
+        print(f"model version '{version}' has uncommitted changes -> response cache DISABLED for this run "
+              "(commit first, or pass --model-version, to make runs resumable)")
+        a.no_cache = True
+    cache_dir = Path(a.out) / "_cache" / re.sub(r"[^A-Za-z0-9_.-]+", "_", version)
     client = VayuClient(a.base_url, cache_dir, timeout=a.timeout, delay=a.delay)
 
     rows = []
@@ -89,12 +98,13 @@ def main():
                 else: strip(o[k], f"{path}_{k}")
     strip(metrics)
     for name, m in mats.items():
+        name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name)
         pd.DataFrame(m["rows_true_cols_pred"], index=[f"true:{l}" for l in m["labels"]],
                      columns=[f"pred:{l}" for l in m["labels"]]).to_csv(run_dir / f"confusion_{name}.csv")
     (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2, default=str), encoding="utf-8")
 
     manifest = {"run_id": run_id, "utc": datetime.now(timezone.utc).isoformat(), "base_url": a.base_url,
-                "split": a.split, "model_version": a.model_version or git_hash(), "n_cases": len(cases),
+                "split": a.split, "model_version": version, "n_cases": len(cases),
                 "cases_file_sha256": hashlib.sha256(cases_path.read_bytes()).hexdigest(),
                 "python": platform.python_version(), "numpy": np.__version__, "pandas": pd.__version__}
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
