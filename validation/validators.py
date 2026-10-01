@@ -55,7 +55,8 @@ def build_request(case, base_dir):
 def base_row(case):
     return {"case_id": case["case_id"], "zone_id": case.get("zone_id", case["case_id"]),
             "agro_zone": case.get("agro_zone", ""), "split": case.get("split", "test"),
-            "type": case["type"], "endpoint": case["endpoint"], "source": case.get("source", ""), "status": "ok"}
+            "type": case["type"], "endpoint": case["endpoint"], "source": case.get("source", ""),
+            "variant": case.get("variant", ""), "status": "ok"}
 
 
 def safe(fn):
@@ -100,9 +101,15 @@ class CropRanking:
                 "baseline_overlap_frac": None if b is None else b["overlap_frac"], "tie_at_cutoff": int(tied)}
 
     def summarize(self, rows, ctx):
+        """Separate metric blocks per `variant` (e.g. irrigated vs rainfed) so conditions are never pooled."""
+        variants = sorted({r.get("variant", "") for r in rows})
+        if variants == [""]:
+            return self._summ(rows)
+        return {f"variant={v or 'default'}": self._summ([r for r in rows if r.get("variant", "") == v]) for v in variants}
+
+    def _summ(self, rows):
         r = ok_rows(rows); out = {"n_cases": len(rows), "n_ok": len(r)}
         if not r: return out
-        z = [x["zone_id"] for x in r]
         for key in ("model_top1_in_truth_topk", "truth_top1_in_model_topk", "overlap_frac", "baseline_overlap_frac"):
             v = np.array([x[key] for x in r if x.get(key) is not None], float)
             if len(v):

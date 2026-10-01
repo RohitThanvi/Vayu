@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""
+build_ground_truth.py - builds REAL crop-suitability validation cases automatically (no manual data entry).
+
+  Ground truth : district x season crop AREA statistics (Kaggle "Crop Production in India", compiled from
+                 data.gov.in / Directorate of Economics & Statistics, 1997-2015), mirrored on GitHub.
+  AOIs         : Census-2011 district boundaries (datameet/maps), so the AOI is the SAME unit as the statistics.
+  Output       : cases.json, aoi/*.geojson, ground_truth/matching_report.csv, ground_truth/SOURCES.md
+
+  python build_ground_truth.py                       # ~60 districts, stratified across states
+  python build_ground_truth.py --max-districts 120 --years 2008-2014 --states "Rajasthan,Haryana,Punjab"
+
+What "truth" means here: for each district and season (Kharif / Rabi), the Vayu-modelled crops of that season ranked
+by mean annual sown area over the chosen years. Vayu ranks BIOPHYSICAL suitability, observed area also reflects
+irrigation, prices, policy and habit - so agreement will never be perfect. The state-level (leave-district-out)
+majority ranking is included as the naive baseline the model has to beat.
+"""
+import argparse, difflib, hashlib, io, json, re, sys
+from pathlib import Path
+import numpy as np, pandas as pd, requests, shapefile
+from shapely.geometry import shape, mapping
+
+HERE = Path(__file__).parent
+CROP_URL = "https://raw.githubusercontent.com/ritveek19/EDA_CropProduction/master/crop_production.csv"
+SHP_BASE = "https://raw.githubusercontent.com/datameet/maps/master/Districts/Census_2011/2011_Dist"
+
+# dataset crop name -> Vayu crop_id, and Vayu's own season tag (from backend crop_requirements.py)
+CROP_MAP = {"wheat": "wheat", "rice": "rice_paddy", "bajra": "bajra_pearl_millet", "jowar": "jowar_sorghum",
+            "maize": "maize", "barley": "barley", "gram": "gram_chickpea", "rapeseed &mustard": "mustard",
+            "groundnut": "groundnut", "soyabean": "soybean", "cotton(lint)": "cotton", "potato": "potato",
+            "onion": "onion"}
+VAYU_SEASON = {"wheat": "rabi", "barley": "rabi", "gram_chickpea": "rabi", "mustard": "rabi", "potato": "rabi", "onion": "rabi",
+               "rice_paddy": "kharif", "bajra_pearl_millet": "kharif", "jowar_sorghum": "kharif", "maize": "kharif",
+               "groundnut": "kharif", "soybean": "kharif", "cotton": "kharif"}
+STATE_ALIAS = {"orissa": "odisha", "uttaranchal": "uttarakhand", "nctofdelhi": "delhi", "andamanandnicobarisland": "andamanandnicobarislands",
+               "jammuandkashmir": "jammuandkashmir", "pondicherry": "puducherry"}
+
+
+def norm(s):
+    s = re.sub(r"\(.*?\)", "", str(s).lower()).replace("&", "and")
+    return re.sub(r"[^a-z]", "", s.replace("district", ""))
+
+
+def nstate(s):
+    n = norm(s); return STATE_ALIAS.get(n, n)
+
+
+def download(url, dest):
+    if dest.exists() and dest.stat().st_size > 0: return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    print("downloading", url)
+    r = requests.get(url, timeout=180); r.raise_for_status(); dest.write_bytes(r.content)
+
+
+def load_districts(cache):
+    for ext in ("shp", "shx", "dbf"): download(f"{SHP_BASE}.{ext}", cache / f"2011_Dist.{ext}")
+    rd = shapefile.Reader(str(cache / "2011_Dist"))
+    out = []
+    for sr in rd.iterShapeRecords():
+        out.append({"district": sr.record["DISTRICT"], "state": sr.record["ST_NM"], "geom": shape(sr.shape.__geo_interface__)})
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--years", default="2005-2014", help="reference years (dataset ends 2015; 2015 is incomplete)")
+    ap.add_argument("--min-years", type=int, default=5)
+    ap.add_argument("--min-area-ha", type=float, default=5000, help="min mean annual modelled-crop area in the season")
+    ap.add_argument("--min-share", type=float, default=0.03, help="drop crops below this share of modelled area (noise)")
+    ap.add_argument("--max-districts", type=int, default=60)
+    ap.add_argument("--states", default="", help="comma-separated state filter (default: all)")
+    ap.add_argument("--irrigation", default="both", choices=["both", "true", "false"])
+    ap.add_argument("--test-fraction", type=float, default=0.4, help="share of STATES held out whole (spatial holdout)")
+    ap.add_argument("--simplify-deg", type=float, default=0.003, help="boundary simplification (~330 m)")
+    a = ap.parse_args()
+    y0, y1 = (int(x) for x in a.years.split("-"))
+    cache = HERE / "ground_truth" / "_download_cache"
+
+    # ---- statistics ------------------------------------------------------------------
+    download(CROP_URL, cache / "crop_production.csv")
+    df = pd.read_csv(cache / "crop_production.csv"); df.columns = [c.strip() for c in df.columns]
+    for c in ("State_Name", "District_Name", "Season", "Crop"): df[c] = df[c].astype(str).str.strip()
+    df["Season"] = df["Season"].str.lower()
+    df = df[df.Season.isin(["kharif", "rabi"]) & df.Crop_Year.between(y0, y1)]
+    df["crop_id"] = df.Crop.str.lower().map(CROP_MAP)
+    df = df[df.crop_id.notna() & (df.Area > 0)]
+    df = df[df.apply(lambda r: VAYU_SEASON[r.crop_id] == r.Season, axis=1)]      # keep only crops Vayu tags for that season
+    df["sk"] = df.State_Name.map(nstate); df["dk"] = df.District_Name.map(norm)
+    df = df.groupby(["sk", "dk", "State_Name", "District_Name", "Season", "Crop_Year", "crop_id"], as_index=False).Area.sum()
+
+    stats = {}
+    for (sk, dk, season), g in df.groupby(["sk", "dk", "Season"]):
+        n_years = g.Crop_Year.nunique()
+        if n_years < a.min_years: continue
+        m = (g.groupby("crop_id").Area.sum() / n_years).sort_values(ascending=False)
+        stats[(sk, dk, season)] = {"mean_area": m, "n_years": n_years,
+                                   "state": g.State_Name.iloc[0], "district": g.District_Name.iloc[0]}
+
+    # ---- match to boundaries ---------------------------------------------------------
+    shp = load_districts(cache)
+    by_state = {}
+    for d in shp: by_state.setdefault(nstate(d["state"]), []).append(d)
+    match, report = {}, []
+    for (sk, dk) in sorted({(k[0], k[1]) for k in stats}):
+        cands = {norm(d["district"]): d for d in by_state.get(sk, [])}
+        if not cands: report.append((sk, dk, "", 0.0, "state_not_in_boundaries")); continue
+        if dk in cands: match[(sk, dk)] = cands[dk]; report.append((sk, dk, cands[dk]["district"], 1.0, "exact")); continue
+        best = difflib.get_close_matches(dk, list(cands), n=1, cutoff=0.9)
+        if best:
+            ratio = difflib.SequenceMatcher(None, dk, best[0]).ratio()
+            match[(sk, dk)] = cands[best[0]]; report.append((sk, dk, cands[best[0]]["district"], round(ratio, 3), "fuzzy>=0.9"))
+        else:
+            report.append((sk, dk, "", 0.0, "unmatched"))
+    gt_dir = HERE / "ground_truth"; gt_dir.mkdir(exist_ok=True)
+    pd.DataFrame(report, columns=["state_key", "dataset_district", "boundary_district", "name_similarity", "status"]).to_csv(
+        gt_dir / "matching_report.csv", index=False)
+
+    # ---- state baselines (leave-district-out) ------------------------------------------
+    state_tot = {}
+    for (sk, dk, season), v in stats.items():
+        t = state_tot.setdefault((sk, season), pd.Series(dtype=float)); state_tot[(sk, season)] = t.add(v["mean_area"], fill_value=0)
+
+    # ---- candidate districts ------------------------------------------------------------
+    wanted = {nstate(s) for s in a.states.split(",") if s.strip()}
+    cand = []
+    for (sk, dk, season), v in stats.items():
+        if (sk, dk) not in match or (wanted and sk not in wanted): continue
+        m = v["mean_area"]
+        if m.sum() < a.min_area_ha: continue
+        m = m[m / m.sum() >= a.min_share]
+        if len(m) < 2: continue                                  # a 1-crop truth cannot test a ranking
+        base = state_tot[(sk, season)].sub(v["mean_area"], fill_value=0).clip(lower=0).sort_values(ascending=False)
+        cand.append({"sk": sk, "dk": dk, "season": season, "truth": list(m.index), "shares": (m / m.sum()).round(3).to_dict(),
+                     "baseline": list(base.index[:5]), "info": v})
+    # districts that have >=1 usable season; stratified round-robin over states for diversity
+    dist = {}
+    for c in cand: dist.setdefault((c["sk"], c["dk"]), []).append(c)
+    per_state = {}
+    for (sk, dk) in sorted(dist, key=lambda k: hashlib.sha1("|".join(k).encode()).hexdigest()): per_state.setdefault(sk, []).append((sk, dk))
+    chosen, i = [], 0
+    while len(chosen) < a.max_districts and any(per_state.values()):
+        for sk in sorted(per_state):
+            if per_state[sk] and len(chosen) < a.max_districts: chosen.append(per_state[sk].pop(0))
+    states = sorted({k[0] for k in chosen})
+    test_states = {s for s in states if int(hashlib.sha1(("vayu-split|" + s).encode()).hexdigest(), 16) % 1000 < a.test_fraction * 1000}
+    if not test_states and states: test_states = {states[0]}
+
+    # ---- write AOIs + cases ---------------------------------------------------------------
+    (HERE / "aoi").mkdir(exist_ok=True); cases = []
+    variants = [("irrigated", True), ("rainfed", False)] if a.irrigation == "both" else [(("irrigated" if a.irrigation == "true" else "rainfed"), a.irrigation == "true")]
+    for sk, dk in chosen:
+        b = match[(sk, dk)]; zid = f"{re.sub(r'[^a-z0-9]+', '_', nstate(b['state']))}__{re.sub(r'[^a-z0-9]+', '_', norm(b['district']))}"
+        g = b["geom"].simplify(a.simplify_deg, preserve_topology=True)
+        (HERE / "aoi" / f"{zid}.geojson").write_text(json.dumps(mapping(g)), encoding="utf-8")
+        for c in dist[(sk, dk)]:
+            for vname, irr in variants:
+                cases.append({
+                    "case_id": f"{zid}__{c['season']}__{vname}", "zone_id": zid, "agro_zone": b["state"], "variant": vname,
+                    "split": "test" if sk in test_states else "tune", "type": "crop_ranking", "endpoint": "crop_suitability",
+                    "aoi": f"aoi/{zid}.geojson", "request": {"irrigation_available": irr},
+                    "truth": {"season": c["season"], "k": 3, "gt_crops": c["truth"], "baseline_crops": c["baseline"],
+                              "mean_area_share": c["shares"]},
+                    "source": f"Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area {y0}-{y1}, "
+                              f"{c['info']['n_years']} yrs; boundary: datameet Census 2011"})
+    meta = {"description": "AUTO-GENERATED by build_ground_truth.py. agro_zone = state (a proxy, NOT ICAR agro-climatic zones).",
+            "years": a.years, "test_states_held_out_whole": sorted(test_states)}
+    (HERE / "cases.json").write_text(json.dumps({"meta": meta, "cases": cases}, indent=1), encoding="utf-8")
+    (gt_dir / "SOURCES.md").write_text(f"""# Ground-truth sources (auto-generated)
+- **Crop statistics:** Kaggle 'Crop Production in India' (Abhinand05), compiled from data.gov.in / Directorate of Economics & Statistics,
+  Ministry of Agriculture; district x season x crop x area (ha), 1997-2015. Mirror used: {CROP_URL}
+- **District boundaries:** datameet/maps, Census-2011 districts. {SHP_BASE}.shp
+- **Reference years:** {a.years} (>= {a.min_years} years required per district-season).
+- Check each source's licence/terms before redistributing the raw data.
+
+## Known limitations (state these when you present results)
+1. Dataset ends in 2015 and has known reporting gaps/zeros; boundaries are Census-2011 while some districts were later split.
+2. Truth ranks only the {len(set(VAYU_SEASON))} crops Vayu models, using each crop's own Vayu season tag. Other crops are ignored.
+3. Observed area reflects irrigation, prices, policy and tradition, not only biophysical suitability.
+4. The dataset has no irrigation share, so every district is run twice (irrigated / rainfed) and reported separately;
+   it is NOT chosen per district. Replace with real irrigated-area shares (e.g. ICRISAT) for a sharper test.
+5. Name matching between sources is automatic; audit `matching_report.csv` (fuzzy matches are flagged).
+6. Split: whole STATES are held out (spatial holdout): {sorted(test_states)}.
+7. `agro_zone` is the state, not an ICAR agro-climatic zone.
+""", encoding="utf-8")
+    n_d = len(chosen)
+    print(f"\n{n_d} districts, {len(cases)} cases ({sum(c['split']=='test' for c in cases)} test / {sum(c['split']=='tune' for c in cases)} tune); "
+          f"{len(states)} states, held-out states: {sorted(test_states)}")
+    print(f"matching: {pd.DataFrame(report, columns=['k','d','b','r','status']).status.value_counts().to_dict()}")
+
+
+if __name__ == "__main__":
+    main()

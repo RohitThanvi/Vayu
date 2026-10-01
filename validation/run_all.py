@@ -20,8 +20,11 @@ def main():
     if "--cases" not in args:
         default = HERE / "cases.json"
         if not default.exists():
-            sys.exit("cases.json not found. Copy cases.example.json to cases.json and fill in real ground truth first.")
+            print("== cases.json missing: building ground truth (district crop statistics + boundaries) ==")
+            if subprocess.call([sys.executable, str(HERE / "build_ground_truth.py")], cwd=HERE):
+                sys.exit("Ground-truth build failed (needs internet access to raw.githubusercontent.com).")
         args += ["--cases", str(default)]
+    if "--timeout" not in args: args += ["--timeout", "300"]      # district-sized AOIs can be slow in GEE
     print("== 1/2 self-test ==")
     if subprocess.call([sys.executable, str(HERE / "selftest.py")], cwd=HERE):
         sys.exit("Self-test failed - not calling the API.")
