@@ -1,0 +1,61 @@
+{
+  "meta": {
+    "description": "TEMPLATE. Every value marked FILL_ is a placeholder you must replace with real, independently sourced ground truth. Nothing here is real data.",
+    "label_order": { "categorical": ["hold off", "monitor", "irrigate now"] }
+  },
+  "cases": [
+    {
+      "case_id": "FILL_DISTRICT_rabi_crop", "zone_id": "FILL_DISTRICT", "agro_zone": "FILL_AGROCLIMATIC_ZONE",
+      "split": "test", "type": "crop_ranking", "endpoint": "crop_suitability",
+      "aoi": "aoi/FILL_DISTRICT.geojson",
+      "request": { "irrigation_available": true },
+      "truth": { "season": "rabi", "k": 3, "gt_crops": ["crop_id_1", "crop_id_2", "crop_id_3"],
+                 "baseline_crops": ["crop_id_1", "crop_id_2", "crop_id_3"] },
+      "source": "FILL_DATASET_AND_YEAR (e.g. state agriculture dept / ICRISAT district database)"
+    },
+    {
+      "case_id": "FILL_SITE_elevation", "zone_id": "FILL_SITE", "split": "test", "type": "scalar",
+      "endpoint": "rs:terrain", "aoi": "aoi/FILL_SITE.geojson", "output_path": "elevation_m",
+      "truth": { "value": 0.0, "unit": "m" }, "source": "FILL_SURVEY_OR_GCP_SOURCE"
+    },
+    {
+      "case_id": "FILL_SITE_lst", "zone_id": "FILL_SITE", "split": "test", "type": "scalar",
+      "endpoint": "rs:land_surface_temperature", "aoi": "aoi/FILL_SITE.geojson", "output_path": "lst_celsius",
+      "request": { "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD" },
+      "truth": { "value": 0.0, "unit": "degC" }, "source": "FILL_INSITU_OR_REFERENCE"
+    },
+    {
+      "case_id": "FILL_EVENT_flood_area", "zone_id": "FILL_EVENT", "split": "test", "type": "scalar",
+      "endpoint": "rs:flood_mapping", "aoi": "aoi/FILL_EVENT.geojson", "output_path": "flood_extent_km2",
+      "request": { "pre_start": "YYYY-MM-DD", "pre_end": "YYYY-MM-DD", "post_start": "YYYY-MM-DD", "post_end": "YYYY-MM-DD", "polarization": "VH" },
+      "truth": { "value": 0.0, "unit": "km2" }, "source": "FILL_EMS_OR_UNOSAT_REFERENCE_POLYGON_AREA"
+    },
+    {
+      "case_id": "FILL_SITE_lulc_shares", "zone_id": "FILL_SITE", "split": "test", "type": "class_areas",
+      "endpoint": "rs:lulc", "aoi": "aoi/FILL_SITE.geojson",
+      "truth": { "class_pct": { "Cropland": 0.0, "Built-up": 0.0 } }, "source": "FILL_LAND_USE_STATS"
+    },
+    {
+      "case_id": "FILL_SITE_lulc_points", "zone_id": "FILL_SITE", "split": "test", "type": "confusion",
+      "endpoint": "rs:accuracy_assessment", "aoi": "aoi/FILL_SITE.geojson",
+      "request": { "assess_tool": "lulc" }, "reference_points_file": "ref_points/FILL_SITE.csv",
+      "source": "FILL_FIELD_SURVEY_OR_INDEPENDENT_VISUAL_INTERPRETATION"
+    },
+    {
+      "case_id": "FILL_DISTRICT_2018_risk", "zone_id": "FILL_DISTRICT", "split": "test", "type": "event",
+      "endpoint": "risk_score", "aoi": "aoi/FILL_DISTRICT.geojson", "threshold": 60,
+      "request": { "as_of": "YYYY-MM-DD" }, "truth": { "event": 1 },
+      "source": "FILL_DECLARED_DROUGHT_OR_NORMAL_SEASON_RECORD"
+    },
+    {
+      "case_id": "FILL_FIELD_phenology", "zone_id": "FILL_FIELD", "split": "test", "type": "phenology_dates",
+      "endpoint": "phenology", "aoi": "aoi/FILL_FIELD.geojson", "request": { "as_of": "YYYY-MM-DD", "months_back": 12 },
+      "truth": { "peak_date": "YYYY-MM-DD" }, "source": "FILL_CROP_CALENDAR_OR_REFERENCE_PHENOLOGY"
+    },
+    {
+      "case_id": "FILL_FIELD_irrigation", "zone_id": "FILL_FIELD", "split": "test", "type": "categorical",
+      "endpoint": "irrigation_advisory", "aoi": "aoi/FILL_FIELD.geojson", "output_path": "recommendation",
+      "request": { "as_of": "YYYY-MM-DD" }, "truth": { "label": "irrigate now" }, "source": "FILL_AGRONOMIST_OR_FIELD_RECORD"
+    }
+  ]
+}
