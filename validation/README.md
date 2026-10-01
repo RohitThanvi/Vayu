@@ -9,7 +9,7 @@ Python 3.10+. `pip install -r requirements.txt`
 
 0b. **One command:** `python run_all.py --base-url https://YOUR-BACKEND.onrender.com` (self-test, then every validator over `cases.json`).
 1. **Self-test first:** `python selftest.py` (checks the metrics against scikit-learn/scipy and runs the whole pipeline
-   against a local mock server. Needs `pip install scikit-learn scipy` for the metric cross-check only.)
+   against a local mock server. Metric cross-check needs `python -m pip install -r requirements-dev.txt`.)
 2. Copy `cases.example.json` to `cases.json`, put district/site polygons in `aoi/`, reference points in `ref_points/`.
 3. `python run_validation.py --cases cases.json --base-url https://YOUR-BACKEND.onrender.com --dry-run`
    (runs ONE case, prints the raw outcome; fix path/field mismatches here)
