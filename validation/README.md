@@ -2,7 +2,12 @@
 
 Python 3.10+. `pip install -r requirements.txt`
 
-0. **One command:** `python run_all.py --base-url https://YOUR-BACKEND.onrender.com` (self-test, then every validator over `cases.json`).
+0. **Ground truth is built for you** (`build_ground_truth.py`: real district boundaries + district crop statistics, ~60 districts / 22 states,
+   whole-state train/test holdout). `cases.json` and `aoi/` are already generated; re-generate or widen with
+   `python build_ground_truth.py --max-districts 120 --states "Rajasthan,Haryana"`. See `ground_truth/SOURCES.md` for sources and limitations.
+   Other endpoints (terrain, LST, flood, risk score, phenology...) still need reference data you supply - see `cases.example.json`.
+
+0b. **One command:** `python run_all.py --base-url https://YOUR-BACKEND.onrender.com` (self-test, then every validator over `cases.json`).
 1. **Self-test first:** `python selftest.py` (checks the metrics against scikit-learn/scipy and runs the whole pipeline
    against a local mock server. Needs `pip install scikit-learn scipy` for the metric cross-check only.)
 2. Copy `cases.example.json` to `cases.json`, put district/site polygons in `aoi/`, reference points in `ref_points/`.

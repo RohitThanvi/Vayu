@@ -2,3 +2,5 @@ requests>=2.31
 numpy>=1.26
 pandas>=2.0
 matplotlib>=3.8   # optional: scatter plots only
+pyshp>=2.3        # build_ground_truth.py
+shapely>=2.0      # build_ground_truth.py
