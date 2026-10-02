@@ -29,9 +29,10 @@ CROP_MAP = {"wheat": "wheat", "rice": "rice_paddy", "bajra": "bajra_pearl_millet
             "maize": "maize", "barley": "barley", "gram": "gram_chickpea", "rapeseed &mustard": "mustard",
             "groundnut": "groundnut", "soyabean": "soybean", "cotton(lint)": "cotton", "potato": "potato",
             "onion": "onion"}
-VAYU_SEASON = {"wheat": "rabi", "barley": "rabi", "gram_chickpea": "rabi", "mustard": "rabi", "potato": "rabi", "onion": "rabi",
-               "rice_paddy": "kharif", "bajra_pearl_millet": "kharif", "jowar_sorghum": "kharif", "maize": "kharif",
-               "groundnut": "kharif", "soybean": "kharif", "cotton": "kharif"}
+# Seasons each crop is evaluated in = where it is grown in practice (backend crop_seasons.py, derived by derive_crop_seasons.py).
+sys.path.insert(0, str(HERE.parent / "backend"))
+from app.services.agri.crop_seasons import GROWING_SEASONS          # noqa: E402
+VAYU_SEASONS = {cid: set(v["seasons"]) for cid, v in GROWING_SEASONS.items()}
 STATE_ALIAS = {"orissa": "odisha", "uttaranchal": "uttarakhand", "nctofdelhi": "delhi", "andamanandnicobarisland": "andamanandnicobarislands",
                "jammuandkashmir": "jammuandkashmir", "pondicherry": "puducherry"}
 
@@ -89,7 +90,7 @@ def main():
     df = df[df.Season.isin(["kharif", "rabi"]) & df.Crop_Year.between(y0, y1)]
     df["crop_id"] = df.Crop.str.lower().map(CROP_MAP)
     df = df[df.crop_id.notna() & (df.Area > 0)]
-    df = df[df.apply(lambda r: VAYU_SEASON[r.crop_id] == r.Season, axis=1)]      # keep only crops Vayu tags for that season
+    df = df[df.apply(lambda r: r.Season in VAYU_SEASONS[r.crop_id], axis=1)]       # keep a crop only in seasons Vayu evaluates it in
     df["sk"] = df.State_Name.map(nstate); df["dk"] = df.District_Name.map(norm)
     df = df.groupby(["sk", "dk", "State_Name", "District_Name", "Season", "Crop_Year", "crop_id"], as_index=False).Area.sum()
 
@@ -215,7 +216,7 @@ def main():
 
 ## Known limitations (state these when you present results)
 1. Dataset ends in 2015 and has known reporting gaps/zeros; boundaries are Census-2011 while some districts were later split.
-2. Truth ranks only the {len(set(VAYU_SEASON))} crops Vayu models, using each crop's own Vayu season tag. Other crops are ignored.
+2. Truth ranks only the {len(VAYU_SEASONS)} seasonal crops Vayu models, and a crop counts in a season only if Vayu evaluates it there (observed-practice eligibility). Other crops are ignored.
 3. Observed area reflects irrigation, prices, policy and tradition, not only biophysical suitability.
 4. The dataset has no irrigation share, so every district is run twice (irrigated / rainfed) and reported separately;
    it is NOT chosen per district. Replace with real irrigated-area shares (e.g. ICRISAT) for a sharper test.

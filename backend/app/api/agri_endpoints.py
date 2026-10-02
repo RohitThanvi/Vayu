@@ -102,6 +102,7 @@ class CropSuitabilityRequest(BaseModel):
     lon: Optional[float] = None
     aoi_geojson: Optional[Dict[str, Any]] = None
     irrigation_available: bool = False
+    season: Optional[str] = "best"  # best | kharif | rabi | zaid  (best = each crop in its best season)
     state: Optional[str] = None  # Agmarknet state name, narrows mandi prices
     soil_overrides: Optional[SoilOverrides] = None
     include_revenue: bool = True
@@ -400,7 +401,7 @@ async def crop_suitability_endpoint(req: CropSuitabilityRequest):
             86400 * 7,
         )
         overrides = req.soil_overrides.model_dump(exclude_none=True) if req.soil_overrides else None
-        result = crop_suitability.score_crops(profile, irrigation_available=req.irrigation_available, overrides=overrides)
+        result = crop_suitability.score_crops(profile, irrigation_available=req.irrigation_available, overrides=overrides, season=req.season)
         if req.include_revenue:
             await crop_suitability.add_profit_estimates(result, state=req.state)
         return result

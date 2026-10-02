@@ -212,11 +212,17 @@ def score_crop(crop: Dict[str, Any], profile: Dict[str, Any], irrigation_availab
 
 
 def score_crops(profile: Dict[str, Any], irrigation_available: bool = False,
-                overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                overrides: Optional[Dict[str, Any]] = None, season: Optional[str] = None) -> Dict[str, Any]:
+    """season: None / 'best' (each crop in its best eligible season) or 'kharif' | 'rabi' | 'zaid' (only crops grown in that season)."""
+    if season not in (None, "best", "kharif", "rabi", "zaid"):
+        raise ValueError(f"season must be best, kharif, rabi or zaid (got {season!r})")
     p = apply_overrides(profile, overrides)
     ev = build_evidence(p)                                   # evidence is computed ONCE per location
     cal = _engine.get_calibrator()
-    results = [_engine.score_crop_v2(c, p, irrigation_available, ev=ev, calibrator=cal) for c in CROPS]
+    results = [_engine.score_crop_seasons(c, p, irrigation_available, ev=ev, calibrator=cal, season_request=season) for c in CROPS]
+    not_grown = [{"crop_id": r["crop_id"], "name": r["name"], "name_hi": r["name_hi"], "observed_area_share": r["observed_area_share"]}
+                 for r in results if r.get("not_grown_in_season")]
+    results = [r for r in results if not r.get("not_grown_in_season")]
     ranked = _engine.rank_crops(results)                     # deterministic, tie-aware, on calibrated scores
     return {
         "profile": {**{k: p[k] for k in ("mode", "ph", "organic_carbon_gkg", "texture_class", "texture_name", "slope_pct",
@@ -224,6 +230,12 @@ def score_crops(profile: Dict[str, Any], irrigation_available: bool = False,
                     "monthly_rain_mm": p.get("monthly_rain_mm"), "monthly_temp_c": p.get("monthly_temp_c")},
         "evidence": {k: ev[k] for k in ("dry_months", "longest_dry_run_months", "wet_season_share", "drainage", "missing")},
         "irrigation_available": irrigation_available,
+        "season_requested": season or "best",
+        "season_windows": {k: v for k, v in SEASON_MONTHS.items() if k != "perennial"},
+        "not_grown_in_season": not_grown,
+        "seasonal_basis": ("Seasons a crop is evaluated in come from where it is actually grown (DES area by season, 2005-2014); "
+                           "suitability within each season is scored on that season's temperature and rainfall window. "
+                           "Sowing dates, varieties, photoperiod and vernalisation are not modelled."),
         "calibration_status": cal.status,
         "crops": ranked,
         "unscored": [r["crop_id"] for r in results if r["score"] is None],

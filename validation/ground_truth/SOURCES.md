@@ -7,7 +7,7 @@
 
 ## Known limitations (state these when you present results)
 1. Dataset ends in 2015 and has known reporting gaps/zeros; boundaries are Census-2011 while some districts were later split.
-2. Truth ranks only the 13 crops Vayu models, using each crop's own Vayu season tag. Other crops are ignored.
+2. Truth ranks only the 13 seasonal crops Vayu models, and a crop counts in a season only if Vayu evaluates it there (observed-practice eligibility). Other crops are ignored.
 3. Observed area reflects irrigation, prices, policy and tradition, not only biophysical suitability.
 4. The dataset has no irrigation share, so every district is run twice (irrigated / rainfed) and reported separately;
    it is NOT chosen per district. Replace with real irrigated-area shares (e.g. ICRISAT) for a sharper test.

@@ -20,10 +20,13 @@ from . import engine_config as cfg
 from .calibration import Calibrator
 from .crop_profile import normalize_crop
 from .crop_requirements import SEASON_MONTHS, TEXTURE_NAMES
+from .crop_seasons import GROWING_SEASONS, SOURCE as SEASON_SOURCE
 from .evidence import _season_mean_temp, _season_rain, build_evidence, trapezoid
 
 LABELS = {"temperature": "Temperature", "water": "Rainfall / water supply", "ph": "Soil pH",
           "texture": "Soil texture", "organic_carbon": "Organic carbon", "slope": "Slope"}
+SEASON_LABELS = {"kharif": "Kharif (Jun-Oct)", "rabi": "Rabi (Nov-Mar)", "zaid": "Zaid / summer (Mar-Jun)", "perennial": "Year-round"}
+SEASON_SHORT = {"kharif": "Kharif", "rabi": "Rabi", "zaid": "Summer (zaid)", "perennial": "Year-round"}
 COMPONENT_LABELS = {"deficit": "Rainfall deficit", "excess": "Excess rainfall", "seasonality": "Dry-season length"}
 _calibrator: Optional[Calibrator] = None
 
@@ -48,13 +51,15 @@ def _ramp_hi(x, c, d):
 
 
 # ═══════════════════════════ water model (deficit / excess / seasonality) ═══════════════════════════
-def water_model(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool) -> Dict[str, Any]:
-    season = crop["season"]
+def water_model(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool, season: Optional[str] = None) -> Dict[str, Any]:
+    season = season or crop["season"]
     in_season = _season_rain(ev["monthly_rain_mm"], SEASON_MONTHS[season])
     annual = ev.get("annual_rain_mm")
     # DEFICIT side: supply basis. Kharif is rainfed in-season; rabi/perennial draw on stored soil moisture and
     # irrigation recharged by the whole year's rain, so annual rainfall is the closer proxy.
+    # Zaid (Mar-Jun) is the dry pre-monsoon window: crops live on irrigation, so only in-window rain counts as free supply.
     supply, basis = (in_season, "in-season rainfall") if season == "kharif" else \
+                    (in_season, "in-window rainfall (summer crops depend on irrigation)") if season == "zaid" else \
                     (annual, "annual rainfall (proxy for stored soil moisture + irrigation)")
     # EXCESS side: the rain the crop is actually exposed to. A Nov-Mar crop never sees the monsoon;
     # perennials live through it.
@@ -79,7 +84,7 @@ def water_model(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool) -> D
     # (annual rain only matters to the extent it falls when the crop is vulnerable).
     drain = ev["drainage"]["class"]
     k = cfg.EXCESS_STRENGTH_BY_DRAINAGE[drain] + cfg.EXCESS_SENSITIVITY_ADJUST[crop["excess_sensitivity"]]
-    k = min(1.0, max(0.25, k))
+    k = min(1.0, max(cfg.EXCESS_STRENGTH_FLOOR[crop["excess_sensitivity"]], k))
     if seas is not None:
         k *= (1.0 - seas)
     excess = None if hi_raw is None else 1.0 - k * (1.0 - hi_raw)
@@ -106,9 +111,10 @@ def water_model(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool) -> D
 def _score_factors(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool):
     f: Dict[str, Dict[str, Any]] = {}
     ta, tb, tc, td = crop["temp_c"]
-    t = _season_mean_temp(ev["monthly_temp_c"], SEASON_MONTHS[crop["season"]])
+    window = SEASON_MONTHS[crop["season"]]
+    t = _season_mean_temp(ev["monthly_temp_c"], window)
     ts = trapezoid(t, ta, tb, tc, td)
-    f["temperature"] = {"raw": ts, "value": _r(t, 1), "unit": "°C", "need": f"{tb}-{tc} °C",
+    f["temperature"] = {"raw": ts, "value": _r(t, 1), "unit": "°C", "need": f"{tb}-{tc} °C", "window": window,
                         "hard": t is not None and (t <= ta or t >= td), "limits": (ta, td)}
 
     w = water_model(crop, ev, irrigation)
@@ -144,9 +150,10 @@ def _message(key: str, x: Dict[str, Any], crop: Dict[str, Any], irrigation: bool
     v, u, need = x["value"], x["unit"], x["need"]
     if key == "temperature":
         ta, td = x["limits"]
+        win = f" ({SEASON_SHORT[crop['season']]} window mean)" if crop["season"] != "perennial" else " (annual mean)"
         if x["severity"] == "hard":
-            return f"Temperature {v} °C is outside the range this crop can survive ({ta}-{td} °C)."
-        return f"Temperature {v} °C is outside the optimum {need}."
+            return f"Temperature {v} °C{win} is outside the range this crop can survive ({ta}-{td} °C)."
+        return f"Temperature {v} °C{win} is {'above' if v is not None and v > x['limits'][0] + (td - ta) / 2 else 'below'} the optimum {need}."
     if key == "water":
         m = x["model"]
         if comp == "deficit":
@@ -230,8 +237,12 @@ def category_of(score: float, hard: bool) -> str:
 
 
 def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: bool,
-                  ev: Optional[Dict[str, Any]] = None, calibrator: Optional[Calibrator] = None) -> Dict[str, Any]:
+                  ev: Optional[Dict[str, Any]] = None, calibrator: Optional[Calibrator] = None,
+                  season: Optional[str] = None) -> Dict[str, Any]:
+    """Score one crop in ONE season window (default: the crop's own tagged season). Perennials always use the whole year."""
     crop = normalize_crop(crop_in)
+    if season and crop["kind"] == "seasonal":
+        crop["season"] = season
     ev = ev or build_evidence(profile)
     cal = calibrator or get_calibrator()
     f = _score_factors(crop, ev, irrigation)
@@ -314,3 +325,72 @@ def rank_crops(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         r["tied_with"] = sum(1 for o in ranked if o is not r and o["rank"] == r["rank"])
         del r["_headroom"]
     return ranked
+
+
+# ═════════════════════════════════════ multi-season layer ═════════════════════════════════════
+def _season_entry(r: Dict[str, Any], season: str, share: Optional[float], ev: Dict[str, Any], primary: bool) -> Dict[str, Any]:
+    months = SEASON_MONTHS[season]
+    p = r["limiting_factors"]["primary"]
+    return {"score": r["score"], "category": r["category"], "confidence": r["confidence"], "months": months,
+            "window_temp_c": r["factors"]["temperature"]["value"], "window_rain_mm": _r(_season_rain(ev["monthly_rain_mm"], months), 0),
+            "limiting_label": r["limiting_label"], "message": (p["message"] if p else "No significant limitation."),
+            "hard_limit": bool(r["constraints"]["hard"]), "observed_area_share": share, "is_primary_season": primary}
+
+
+def _highlight(name: str, entries: Dict[str, Dict[str, Any]], best: str, not_grown: Dict[str, float]) -> str:
+    """Plain-language seasonal summary generated from the per-season results."""
+    b = entries[best]
+    if best == "perennial":
+        return f"Perennial crop: judged on the whole year. {b['category'].replace('_', ' ').capitalize()} ({b['score']})."
+    parts = [f"Grows best in {SEASON_SHORT[best]} ({b['category'].replace('_', ' ')}, {b['score']})."]
+    for s, e in entries.items():
+        if s == best: continue
+        why = "" if e["limiting_label"] == "No significant limitation" else f": {e['limiting_label'].lower()}"
+        if e["hard_limit"]:
+            parts.append(f"{SEASON_SHORT[s]}: unsuitable{why} (temperature {e['window_temp_c']} °C).")
+        else:
+            parts.append(f"{SEASON_SHORT[s]}: {e['category'].replace('_', ' ')} ({e['score']}){why}.")
+    if len(entries) == 1:
+        parts.append("Observed practice: grown in this season only.")
+    if not_grown:
+        parts.append("Not grown in practice: " + ", ".join(f"{SEASON_SHORT[s]} ({v:.0%} of national area)" for s, v in not_grown.items()) + ".")
+    return " ".join(parts)
+
+
+def score_crop_seasons(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: bool, ev: Optional[Dict[str, Any]] = None,
+                       calibrator: Optional[Calibrator] = None, season_request: Optional[str] = None) -> Dict[str, Any]:
+    """Score a crop in every season it is actually grown, pick the best, and keep the per-season results.
+    Eligible seasons come from observed practice (GROWING_SEASONS, DES area by season); suitability within a season is physical."""
+    crop = normalize_crop(crop_in)
+    ev = ev or build_evidence(profile)
+    cal = calibrator or get_calibrator()
+    info = GROWING_SEASONS.get(crop["id"])
+    if crop["kind"] == "perennial":
+        eligible, shares, primary = ["perennial"], {}, "perennial"
+    elif info:
+        eligible, shares, primary = list(info["seasons"]), info["area_share"], info["primary"]
+    else:                                                    # unknown crop: fall back to its tagged season
+        eligible, shares, primary = [crop["season"]], {}, crop["season"]
+    not_grown = {s: shares.get(s, 0.0) for s in ("kharif", "rabi", "zaid") if shares and s not in eligible}
+    if season_request and season_request != "best" and crop["kind"] == "seasonal":
+        if season_request not in eligible:
+            return {"crop_id": crop["id"], "name": crop["name"], "name_hi": crop["name_hi"], "not_grown_in_season": season_request,
+                    "observed_area_share": shares.get(season_request), "eligible_seasons": eligible}
+        eligible_eval = [season_request]
+    else:
+        eligible_eval = eligible
+    per = {s: score_crop_v2(crop_in, profile, irrigation, ev=ev, calibrator=cal, season=s) for s in eligible_eval}
+    valid = {s: r for s, r in per.items() if r["score"] is not None}
+    if not valid:
+        return {**next(iter(per.values())), "seasonal": {}, "eligible_seasons": eligible}
+    best = max(valid, key=lambda s: (valid[s]["calibrated_score"], valid[s]["_headroom"], s == primary))
+    out = dict(valid[best])
+    entries = {s: _season_entry(r, s, shares.get(s), ev, s == primary) for s, r in valid.items()}
+    out["season"] = best
+    out["best_season"] = best
+    out["eligible_seasons"] = eligible
+    out["seasonal"] = entries
+    out["season_highlight"] = _highlight(crop["name"], entries, best, {} if (season_request and season_request != "best") else not_grown)
+    out["seasons_not_grown"] = {s: round(v, 4) for s, v in not_grown.items()}
+    out["season_evidence"] = {"source": SEASON_SOURCE, "area_share_by_season": shares} if shares else None
+    return out

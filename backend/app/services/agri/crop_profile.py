@@ -14,7 +14,7 @@ Required (existing):
   oc_min_gkg, slope_max_pct, yield_q_per_ha, mandi_commodity
 
 Optional (new, all defaulted):
-  excess_sensitivity    'low' | 'medium' | 'high'   how badly the crop reacts to excess water.
+  excess_sensitivity    'tolerant' | 'low' | 'medium' | 'high'   how badly the crop reacts to excess water.
                         default: 'high' if tagged drought_tolerant else 'medium'
   rainfall_seasonality  {'months': [1-12, ...], 'source': str}   months in which the crop needs DRY weather
                         (e.g. flowering / fruit set). Annual excess rain then matters only in proportion to how
@@ -23,7 +23,7 @@ Optional (new, all defaulted):
 """
 from typing import Any, Dict, List
 
-SEASONS = ("kharif", "rabi", "perennial")
+SEASONS = ("kharif", "rabi", "zaid", "perennial")
 RANGE_KEYS = ("temp_c", "water_mm", "ph")
 REQUIRED = ("id", "name", "name_hi", "season", "temp_c", "water_mm", "ph", "texture_good", "texture_marginal",
             "oc_min_gkg", "slope_max_pct", "tags")
@@ -32,7 +32,7 @@ REQUIRED = ("id", "name", "name_hi", "season", "temp_c", "water_mm", "ph", "text
 def normalize_crop(crop: Dict[str, Any]) -> Dict[str, Any]:
     c = dict(crop)
     c["kind"] = "perennial" if c["season"] == "perennial" else "seasonal"
-    if c.get("excess_sensitivity") not in ("low", "medium", "high"):
+    if c.get("excess_sensitivity") not in ("tolerant", "low", "medium", "high"):
         c["excess_sensitivity"] = "high" if "drought_tolerant" in c.get("tags", ()) else "medium"
     c.setdefault("rainfall_seasonality", None)
     return c
