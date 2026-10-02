@@ -49,6 +49,7 @@ TEXTURE_NAMES: Dict[int, str] = {
 SEASON_MONTHS: Dict[str, List[int]] = {
     "kharif": [6, 7, 8, 9, 10],
     "rabi": [11, 12, 1, 2, 3],
+    "zaid": [3, 4, 5, 6],      # summer / zaid: irrigated Mar-Jun crops (DES season convention)
     "perennial": list(range(1, 13)),
 }
 
@@ -87,7 +88,7 @@ CROPS: List[Dict[str, Any]] = [{'id': 'wheat',
   'yield_q_per_ha': 26,
   'mandi_commodity': 'Paddy(Dhan)(Common)',
   'notes': 'EcoCrop indica-subspecies row. Needs standing water; drains-too-fast soils are poor.',
-  'excess_sensitivity': 'low',  # paddy is cultivated under standing water, so high rainfall is not an excess-water hazard in the way it is for upland crops
+  'excess_sensitivity': 'tolerant',  # paddy is cultivated under standing water, so high rainfall is not an excess-water hazard in the way it is for upland crops (e.g. grown at >3000 mm/yr on the Konkan and Kerala coasts)
   'ecocrop': {'code': 8143, 'scientific_name': 'Oryza sativa ssp. indica'},
   'source': 'FAO EcoCrop',
   'verified': True},

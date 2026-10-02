@@ -24,9 +24,11 @@ SOFT_FLOOR = 0.10                # ESTIMATE: lowest score a soft (amendable / mi
 EXCESS_STRENGTH_BY_DRAINAGE = {   # ESTIMATE
     "good": 0.50, "moderate": 0.75, "unknown": 0.75, "poor": 1.00,
 }
-EXCESS_SENSITIVITY_ADJUST = {     # ESTIMATE: added to the strength above (clamped to [0.25, 1.0])
+EXCESS_SENSITIVITY_ADJUST = {     # ESTIMATE: added to the strength above (clamped to [floor, 1.0])
+    "tolerant": -0.50,            # crops grown under standing water (paddy): excess rain is not a hazard until it floods the field
     "low": -0.25, "medium": 0.0, "high": +0.25,
 }
+EXCESS_STRENGTH_FLOOR = {"tolerant": 0.0, "low": 0.25, "medium": 0.25, "high": 0.25}
 
 # ---- drainage inference (no direct drainage layer is sampled yet; slope + texture are proxies)
 DRAINAGE_SLOPE_GOOD_PCT = 3.0     # ESTIMATE: >= this slope sheds water

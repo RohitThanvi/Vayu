@@ -249,7 +249,16 @@ function IrrigationTab({ apiUrl, drawnAOI }) {
   );
 }
 
-const CROP_RATING_COLOR = { high: '#2ecc71', moderate: '#c9a86a', low: '#ff9a45', unsuitable: '#ff5a5a' };
+const CROP_RATING_COLOR = { high: '#2ecc71', moderate: '#c9a86a', low: '#ff9a45', very_low: '#ff7a45', unsuitable: '#ff5a5a' };
+// Backward compatible: older API responses only have `rating`; newer ones add `category` (very_low) and an explanation built
+// from the factors that actually reduced the score.
+const SEASON_NAME = { kharif: 'Kharif', rabi: 'Rabi', zaid: 'Summer', perennial: 'Year-round' };
+const cropCategory = (c) => c.category ?? c.rating;
+const cropLimitText = (c) => {
+  if (c.limiting_factors === undefined) return `limited by ${c.limiting_label.toLowerCase()}`;           // old API
+  if (c.limiting_factor === 'none') return 'no significant limitation';
+  return `${c.category === 'unsuitable' ? 'hard limit' : 'main limitation'}: ${c.limiting_label.toLowerCase()}`;
+};
 const CROP_TEXTURES = ['Clay', 'Silty clay', 'Sandy clay', 'Clay loam', 'Silty clay loam', 'Sandy clay loam', 'Loam', 'Silt loam', 'Sandy loam', 'Silt', 'Loamy sand', 'Sand'];
 const inputStyle = { width: '100%', boxSizing: 'border-box', background: S.surface2, border: `1px solid ${S.border2}`, color: S.text, fontFamily: S.mono, fontSize: 11.5, padding: '5px 7px', borderRadius: 4 };
 
@@ -258,6 +267,7 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
   const [lon, setLon] = useState('');
   const [picking, setPicking] = useState(false);
   const [irrigation, setIrrigation] = useState(false);
+  const [season, setSeason] = useState('best');   // best | kharif | rabi | zaid
   const [ph, setPh] = useState('');
   const [oc, setOc] = useState('');
   const [texture, setTexture] = useState('');
@@ -280,13 +290,14 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
     if (ph !== '' && !Number.isNaN(parseFloat(ph))) overrides.ph = parseFloat(ph);
     if (oc !== '' && !Number.isNaN(parseFloat(oc))) overrides.organic_carbon_gkg = parseFloat(oc);
     if (texture) overrides.texture = texture;
-    const body = { irrigation_available: irrigation, state: state.trim() || undefined, soil_overrides: Object.keys(overrides).length ? overrides : undefined };
+    const body = { irrigation_available: irrigation, season, state: state.trim() || undefined, soil_overrides: Object.keys(overrides).length ? overrides : undefined };
     if (hasPoint) { body.lat = parseFloat(lat); body.lon = parseFloat(lon); } else { body.aoi_geojson = drawnAOI; }
     run(body);
   };
 
   const p = result?.profile;
   const fmtRs = v => `₹${Number(v).toLocaleString('en-IN')}`;
+  const notGrown = result?.not_grown_in_season || [];
 
   return (
     <div style={{ display: 'flex', gap: 16 }}>
@@ -304,6 +315,15 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: S.text2, marginBottom: 8 }}>
           <input type="checkbox" checked={irrigation} onChange={e => setIrrigation(e.target.checked)} /> Irrigation available
         </label>
+        <div style={{ margin: '8px 0 4px' }}>
+          <div style={{ fontSize: 10.5, color: S.text3, marginBottom: 4 }}>Season</div>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {[['best', 'Best'], ['kharif', 'Kharif'], ['rabi', 'Rabi'], ['zaid', 'Summer']].map(([id, label]) => (
+              <button key={id} onClick={() => setSeason(id)} title={id === 'best' ? 'Each crop shown in its best season' : id === 'kharif' ? 'Jun-Oct (monsoon)' : id === 'rabi' ? 'Nov-Mar (winter)' : 'Mar-Jun (summer, irrigated)'}
+                style={{ padding: '3px 8px', fontSize: 10.5, cursor: 'pointer', borderRadius: 3, border: `1px solid ${season === id ? S.accent : S.border}`, background: season === id ? 'rgba(201,168,106,0.15)' : 'transparent', color: season === id ? S.accent : S.text2 }}>{label}</button>
+            ))}
+          </div>
+        </div>
         <div style={{ fontSize: 10, color: S.text3, marginBottom: 4 }}>Have a soil test? Enter it (replaces modeled values):</div>
         <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
           <input style={inputStyle} placeholder="pH" value={ph} onChange={e => setPh(e.target.value)} />
@@ -331,22 +351,34 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
               <StatRow label="Mean temp" value={p.annual_mean_temp_c != null ? `${p.annual_mean_temp_c} °C` : 'n/a'} />
             </div>
             {result.crops.map(c => {
-              const rc = CROP_RATING_COLOR[c.rating];
+              const rc = CROP_RATING_COLOR[cropCategory(c)];
               const isOpen = open === c.crop_id;
               return (
                 <div key={c.crop_id} style={{ borderBottom: `1px solid ${S.border}`, padding: '6px 0' }}>
                   <div onClick={() => setOpen(isOpen ? null : c.crop_id)} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
                     <span style={{ width: 8, height: 8, borderRadius: 4, background: rc, flexShrink: 0 }} />
                     <span style={{ fontSize: 12.5, color: S.text, minWidth: 150 }}>{c.name} <span style={{ color: S.text3 }}>{c.name_hi}</span></span>
-                    <span style={{ fontFamily: S.mono, fontSize: 11.5, color: rc, minWidth: 90, textTransform: 'uppercase' }}>{c.rating} {c.score}</span>
-                    <span style={{ fontSize: 11, color: S.text3, flex: 1 }}>limited by {c.limiting_label.toLowerCase()}</span>
+                    <span style={{ fontFamily: S.mono, fontSize: 11.5, color: rc, minWidth: 90, textTransform: 'uppercase' }}>{cropCategory(c).replace('_', ' ')} {c.score}{c.confidence != null && <span style={{ color: S.text3 }}> · conf {c.confidence}</span>}</span>
+                    <span style={{ fontSize: 11, color: S.text3, flex: 1 }}>{c.best_season && <b style={{ color: S.accent, marginRight: 8, letterSpacing: 0.5 }}>{SEASON_NAME[c.best_season] || c.best_season}</b>}{cropLimitText(c)}</span>
                     {c.revenue?.status === 'ok' && <span style={{ fontSize: 11, fontFamily: S.mono, color: S.gold }}>~{fmtRs(c.revenue.revenue_rs_per_ha.modal)}/ha</span>}
                     <span style={{ color: S.text3, fontSize: 11 }}>{isOpen ? '▾' : '▸'}</span>
                   </div>
                   {isOpen && (
                     <div style={{ padding: '8px 0 4px 18px' }}>
+                      {c.season_highlight && <div style={{ fontSize: 11.5, lineHeight: 1.5, color: S.text1 ?? S.text2, marginBottom: 6, padding: '4px 8px', borderLeft: `2px solid ${S.accent}` }}>{c.season_highlight}</div>}
+                      {c.seasonal && Object.keys(c.seasonal).length > 1 && (
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                          {Object.entries(c.seasonal).map(([sn, e]) => (
+                            <div key={sn} style={{ fontSize: 10.5, padding: '2px 8px', borderRadius: 3, border: `1px solid ${sn === c.best_season ? S.accent : S.border}`, color: CROP_RATING_COLOR[e.hard_limit ? 'unsuitable' : e.category] || S.text2 }}
+                              title={e.message}>{SEASON_NAME[sn]}: {e.hard_limit ? 'unsuitable' : e.category.replace('_', ' ')} {e.score}{e.window_temp_c != null ? ` · ${e.window_temp_c}°C` : ''}</div>
+                          ))}
+                        </div>
+                      )}
+                      {c.evidence_summary && c.evidence_summary.map((line, i) => (
+                        <div key={`e${i}`} style={{ fontSize: 11, lineHeight: 1.5, color: line.startsWith('✓') ? '#2ecc71' : line.startsWith('?') ? S.text3 : '#ff9a45', marginBottom: 2 }}>{line}</div>
+                      ))}
                       {Object.entries(c.factors).map(([k, f]) => (
-                        <StatRow key={k} label={`${k.replace('_', ' ')} (needs ${f.need})`} value={`${f.value ?? 'n/a'}${f.unit ? ' ' + f.unit : ''} → ${f.score ?? 'n/a'}`} />
+                        <StatRow key={k} label={`${k.replace('_', ' ')} (needs ${f.need})`} value={`${f.value ?? 'n/a'}${f.unit ? ' ' + f.unit : ''} → ${f.score ?? 'n/a'}${f.effective_score != null && f.effective_score !== f.score ? ` (counted as ${f.effective_score})` : ''}`} />
                       ))}
                       {c.amendments.map((a, i) => <div key={i} style={{ fontSize: 11, color: S.text2, marginTop: 5, lineHeight: 1.5 }}>• {a}</div>)}
                       {c.notes && <div style={{ fontSize: 10.5, color: S.text3, marginTop: 5 }}>{c.notes}</div>}
@@ -358,6 +390,12 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
                 </div>
               );
             })}
+            {notGrown.length > 0 && (
+              <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 10 }}>
+                Not grown in {SEASON_NAME[result.season_requested] || result.season_requested} in practice (so not scored): {notGrown.map(n => `${n.name} (${Math.round((n.observed_area_share || 0) * 100)}% of national area)`).join(', ')}.
+              </div>
+            )}
+            {result.seasonal_basis && <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 8 }}>{result.seasonal_basis}</div>}
             <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 10 }}>{result.disclaimer}</div>
           </div>
         )}

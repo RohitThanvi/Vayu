@@ -65,6 +65,70 @@ def test_dry_window_penalises_year_round_wet_sites_by_the_same_rule():
     assert r["limiting_factors"]["primary"]["component"] == "seasonality"
 
 
+# ───────────────────────── A2. seasonal suitability
+from app.services.agri.crop_seasons import GROWING_SEASONS
+
+
+def test_every_seasonal_crop_has_observed_seasons_and_a_primary():
+    for c in CROPS:
+        if c["season"] == "perennial":
+            continue
+        info = GROWING_SEASONS[c["id"]]
+        assert info["seasons"] and info["primary"] in ("kharif", "rabi", "zaid")
+        assert abs(sum(info["area_share"].values()) - 1.0) < 0.01
+        assert all(info["area_share"][s] >= 0.05 for s in info["seasons"])
+
+
+def test_best_season_is_the_highest_scoring_eligible_season_and_seasonal_block_is_consistent():
+    for loc in LOCATIONS:
+        for r in score_crops(copy.deepcopy(LOCATIONS[loc]), True)["crops"]:
+            if r["best_season"] == "perennial":
+                continue
+            assert set(r["seasonal"]) <= set(r["eligible_seasons"])
+            assert r["score"] == max(e["score"] for e in r["seasonal"].values())
+            assert r["seasonal"][r["best_season"]]["score"] == r["score"]
+            assert r["best_season"].capitalize()[:4] in r["season_highlight"] or "Summer" in r["season_highlight"]
+
+
+def test_season_filter_ranks_only_crops_grown_in_that_season_and_lists_the_rest():
+    out = score_crops(copy.deepcopy(LOCATIONS["punjab"]), True, season="rabi")
+    ids = {r["crop_id"] for r in out["crops"]}
+    assert "wheat" in ids and "soybean" not in ids and "cotton" not in ids
+    assert {n["crop_id"] for n in out["not_grown_in_season"]} >= {"soybean", "cotton", "bajra_pearl_millet"}
+    assert all(r["season"] in ("rabi", "perennial") for r in out["crops"])
+    assert out["season_requested"] == "rabi"
+
+
+def test_summer_vs_winter_is_reported_when_a_crop_is_grown_in_both():
+    """A heat-loving crop must score differently across windows and the highlight must say where it does well / badly."""
+    hot_dry = copy.deepcopy(LOCATIONS["rajasthan_semiarid"])
+    r = next(c for c in score_crops(hot_dry, True)["crops"] if c["crop_id"] == "onion")
+    sc = {s: e["score"] for s, e in r["seasonal"].items()}
+    assert len(sc) == 3 and len(set(sc.values())) > 1, sc
+    assert "Grows best in" in r["season_highlight"]
+    assert any(e["hard_limit"] for e in r["seasonal"].values()) or min(sc.values()) < max(sc.values())
+
+
+def test_zaid_depends_on_irrigation_but_kharif_in_humid_site_does_not():
+    dry = copy.deepcopy(LOCATIONS["rajasthan_semiarid"])
+    a = next(c for c in score_crops(dry, False)["crops"] if c["crop_id"] == "groundnut")["seasonal"]["zaid"]["score"]
+    b = next(c for c in score_crops(dry, True)["crops"] if c["crop_id"] == "groundnut")["seasonal"]["zaid"]["score"]
+    assert b > a, (a, b)
+
+
+def test_invalid_season_is_rejected():
+    try:
+        score_crops(copy.deepcopy(LOCATIONS["punjab"]), True, season="winter")
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError")
+
+
+def test_paddy_is_not_penalised_for_monsoon_rain_at_a_high_rainfall_coast():
+    r = next(c for c in score_crops(copy.deepcopy(LOCATIONS["ratnagiri"]), False, season="kharif")["crops"] if c["crop_id"] == "rice_paddy")
+    assert r["seasonal"]["kharif"]["limiting_label"] != "Excess rainfall"
+
+
 # ───────────────────────── B. paired irrigation tests (same site + season + candidates, irrigated vs rainfed)
 def _water_pair(loc, cid):
     a, b = crop_result(loc, cid, False), crop_result(loc, cid, True)
@@ -177,7 +241,7 @@ def test_ranking_uses_calibrated_scores():
 def test_every_crop_profile_is_schema_valid():
     assert {c["id"]: validate_crop(c) for c in CROPS if validate_crop(c)} == {}
     assert normalize_crop(BY["bajra_pearl_millet"])["excess_sensitivity"] == "high"
-    assert normalize_crop(BY["rice_paddy"])["excess_sensitivity"] == "low"
+    assert normalize_crop(BY["rice_paddy"])["excess_sensitivity"] == "tolerant"
     assert normalize_crop(BY["mango"])["kind"] == "perennial"
 
 

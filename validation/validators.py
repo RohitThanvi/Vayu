@@ -90,9 +90,10 @@ class CropRanking:
     @safe
     def run_case(self, case, client, base_dir, use_cache):
         t = case["truth"]; season = t["season"]; k = int(t.get("k", 3))
-        resp = client.call("crop_suitability", {"include_revenue": False, **build_request(case, base_dir)}, use_cache)
+        resp = client.call("crop_suitability", {"include_revenue": False, "season": season, **build_request(case, base_dir)}, use_cache)
         crops = [c for c in resp["crops"] if c.get("score") is not None
                  and (c.get("season") == season or (t.get("include_perennials") and c.get("season") == "perennial"))]
+        # `season` is sent so the engine ranks every crop GROWN in that season by that season's score (older backends ignore it)
         pred = [c["crop_id"] for c in crops]
         known = lambda L: [c for c in L if c in CROP_IDS]
         truth, base = known(t["gt_crops"]), known(t.get("baseline_crops", []))

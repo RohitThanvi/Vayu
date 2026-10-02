@@ -82,6 +82,76 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
+   "case_id": "andhrapradesh__eastgodavari__rabi__irrigated",
+   "zone_id": "andhrapradesh__eastgodavari",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__eastgodavari.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "season": "rabi",
+    "k": 3,
+    "gt_crops": [
+     "maize",
+     "gram_chickpea",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "gram_chickpea",
+     "maize",
+     "groundnut",
+     "jowar_sorghum",
+     "onion"
+    ],
+    "mean_area_share": {
+     "maize": 0.929,
+     "gram_chickpea": 0.036,
+     "groundnut": 0.035
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__eastgodavari__rabi__rainfed",
+   "zone_id": "andhrapradesh__eastgodavari",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__eastgodavari.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "season": "rabi",
+    "k": 3,
+    "gt_crops": [
+     "maize",
+     "gram_chickpea",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "gram_chickpea",
+     "maize",
+     "groundnut",
+     "jowar_sorghum",
+     "onion"
+    ],
+    "mean_area_share": {
+     "maize": 0.929,
+     "gram_chickpea": 0.036,
+     "groundnut": 0.035
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
    "case_id": "assam__karbianglong__kharif__irrigated",
    "zone_id": "assam__karbianglong",
    "agro_zone": "Assam",
@@ -204,14 +274,14 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "bihar__banka__rabi__irrigated",
-   "zone_id": "bihar__banka",
+   "case_id": "bihar__darbhanga__rabi__irrigated",
+   "zone_id": "bihar__darbhanga",
    "agro_zone": "Bihar",
    "variant": "irrigated",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/bihar__banka.geojson",
+   "aoi": "aoi/bihar__darbhanga.geojson",
    "request": {
     "irrigation_available": true
    },
@@ -220,31 +290,31 @@
     "k": 3,
     "gt_crops": [
      "wheat",
-     "gram_chickpea"
+     "maize"
     ],
     "baseline_crops": [
      "wheat",
+     "maize",
      "mustard",
      "gram_chickpea",
-     "barley",
-     "potato"
+     "barley"
     ],
     "mean_area_share": {
-     "wheat": 0.902,
-     "gram_chickpea": 0.098
+     "wheat": 0.855,
+     "maize": 0.145
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "bihar__banka__rabi__rainfed",
-   "zone_id": "bihar__banka",
+   "case_id": "bihar__darbhanga__rabi__rainfed",
+   "zone_id": "bihar__darbhanga",
    "agro_zone": "Bihar",
    "variant": "rainfed",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/bihar__banka.geojson",
+   "aoi": "aoi/bihar__darbhanga.geojson",
    "request": {
     "irrigation_available": false
    },
@@ -253,18 +323,18 @@
     "k": 3,
     "gt_crops": [
      "wheat",
-     "gram_chickpea"
+     "maize"
     ],
     "baseline_crops": [
      "wheat",
+     "maize",
      "mustard",
      "gram_chickpea",
-     "barley",
-     "potato"
+     "barley"
     ],
     "mean_area_share": {
-     "wheat": 0.902,
-     "gram_chickpea": 0.098
+     "wheat": 0.855,
+     "maize": 0.145
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -500,7 +570,8 @@
      "wheat",
      "mustard",
      "gram_chickpea",
-     "onion"
+     "jowar_sorghum",
+     "maize"
     ],
     "mean_area_share": {
      "wheat": 0.62,
@@ -532,7 +603,8 @@
      "wheat",
      "mustard",
      "gram_chickpea",
-     "onion"
+     "jowar_sorghum",
+     "maize"
     ],
     "mean_area_share": {
      "wheat": 0.62,
@@ -631,9 +703,9 @@
     "baseline_crops": [
      "maize",
      "rice_paddy",
+     "potato",
      "soybean",
-     "bajra_pearl_millet",
-     "groundnut"
+     "bajra_pearl_millet"
     ],
     "mean_area_share": {
      "maize": 0.939,
@@ -664,9 +736,9 @@
     "baseline_crops": [
      "maize",
      "rice_paddy",
+     "potato",
      "soybean",
-     "bajra_pearl_millet",
-     "groundnut"
+     "bajra_pearl_millet"
     ],
     "mean_area_share": {
      "maize": 0.939,
@@ -777,19 +849,23 @@
     "season": "rabi",
     "k": 3,
     "gt_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
+     "groundnut",
      "wheat"
     ],
     "baseline_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat",
-     "onion",
-     "potato",
-     "mustard"
+     "groundnut",
+     "maize"
     ],
     "mean_area_share": {
-     "gram_chickpea": 0.894,
-     "wheat": 0.106
+     "jowar_sorghum": 0.576,
+     "gram_chickpea": 0.34,
+     "groundnut": 0.044,
+     "wheat": 0.04
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -810,19 +886,23 @@
     "season": "rabi",
     "k": 3,
     "gt_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
+     "groundnut",
      "wheat"
     ],
     "baseline_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat",
-     "onion",
-     "potato",
-     "mustard"
+     "groundnut",
+     "maize"
     ],
     "mean_area_share": {
-     "gram_chickpea": 0.894,
-     "wheat": 0.106
+     "jowar_sorghum": 0.576,
+     "gram_chickpea": 0.34,
+     "groundnut": 0.044,
+     "wheat": 0.04
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -986,7 +1066,8 @@
      "wheat",
      "gram_chickpea",
      "mustard",
-     "barley"
+     "barley",
+     "jowar_sorghum"
     ],
     "mean_area_share": {
      "gram_chickpea": 0.556,
@@ -1018,7 +1099,8 @@
      "wheat",
      "gram_chickpea",
      "mustard",
-     "barley"
+     "barley",
+     "jowar_sorghum"
     ],
     "mean_area_share": {
      "gram_chickpea": 0.556,
@@ -1113,8 +1195,10 @@
      "gram_chickpea"
     ],
     "baseline_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat",
+     "maize",
      "mustard"
     ],
     "mean_area_share": {
@@ -1144,8 +1228,10 @@
      "gram_chickpea"
     ],
     "baseline_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat",
+     "maize",
      "mustard"
     ],
     "mean_area_share": {
@@ -1307,9 +1393,9 @@
     "baseline_crops": [
      "rice_paddy",
      "maize",
+     "potato",
      "soybean",
-     "cotton",
-     "groundnut"
+     "cotton"
     ],
     "mean_area_share": {
      "rice_paddy": 0.817,
@@ -1340,9 +1426,9 @@
     "baseline_crops": [
      "rice_paddy",
      "maize",
+     "potato",
      "soybean",
-     "cotton",
-     "groundnut"
+     "cotton"
     ],
     "mean_area_share": {
      "rice_paddy": 0.817,
@@ -1375,8 +1461,8 @@
      "rice_paddy",
      "maize",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "potato",
+     "groundnut"
     ],
     "mean_area_share": {
      "rice_paddy": 0.653,
@@ -1410,8 +1496,8 @@
      "rice_paddy",
      "maize",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "potato",
+     "groundnut"
     ],
     "mean_area_share": {
      "rice_paddy": 0.653,
@@ -1789,8 +1875,8 @@
      "rice_paddy",
      "maize",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "potato",
+     "groundnut"
     ],
     "mean_area_share": {
      "rice_paddy": 0.881,
@@ -1824,8 +1910,8 @@
      "rice_paddy",
      "maize",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "potato",
+     "groundnut"
     ],
     "mean_area_share": {
      "rice_paddy": 0.881,
@@ -2074,7 +2160,7 @@
      "wheat",
      "potato",
      "gram_chickpea",
-     "barley"
+     "maize"
     ],
     "mean_area_share": {
      "potato": 0.556,
@@ -2109,7 +2195,7 @@
      "wheat",
      "potato",
      "gram_chickpea",
-     "barley"
+     "maize"
     ],
     "mean_area_share": {
      "potato": 0.556,
@@ -2194,6 +2280,72 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
+   "case_id": "andhrapradesh__vizianagaram__rabi__irrigated",
+   "zone_id": "andhrapradesh__vizianagaram",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__vizianagaram.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "season": "rabi",
+    "k": 3,
+    "gt_crops": [
+     "maize",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "gram_chickpea",
+     "maize",
+     "groundnut",
+     "jowar_sorghum",
+     "onion"
+    ],
+    "mean_area_share": {
+     "maize": 0.771,
+     "groundnut": 0.229
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__vizianagaram__rabi__rainfed",
+   "zone_id": "andhrapradesh__vizianagaram",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__vizianagaram.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "season": "rabi",
+    "k": 3,
+    "gt_crops": [
+     "maize",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "gram_chickpea",
+     "maize",
+     "groundnut",
+     "jowar_sorghum",
+     "onion"
+    ],
+    "mean_area_share": {
+     "maize": 0.771,
+     "groundnut": 0.229
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
    "case_id": "assam__barpeta__rabi__irrigated",
    "zone_id": "assam__barpeta",
    "agro_zone": "Assam",
@@ -2256,14 +2408,14 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "bihar__jehanabad__rabi__irrigated",
-   "zone_id": "bihar__jehanabad",
+   "case_id": "bihar__banka__rabi__irrigated",
+   "zone_id": "bihar__banka",
    "agro_zone": "Bihar",
    "variant": "irrigated",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/bihar__jehanabad.geojson",
+   "aoi": "aoi/bihar__banka.geojson",
    "request": {
     "irrigation_available": true
    },
@@ -2272,31 +2424,33 @@
     "k": 3,
     "gt_crops": [
      "wheat",
-     "gram_chickpea"
+     "gram_chickpea",
+     "maize"
     ],
     "baseline_crops": [
      "wheat",
+     "maize",
      "mustard",
      "gram_chickpea",
-     "barley",
-     "potato"
+     "barley"
     ],
     "mean_area_share": {
-     "wheat": 0.936,
-     "gram_chickpea": 0.064
+     "wheat": 0.863,
+     "gram_chickpea": 0.094,
+     "maize": 0.043
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "bihar__jehanabad__rabi__rainfed",
-   "zone_id": "bihar__jehanabad",
+   "case_id": "bihar__banka__rabi__rainfed",
+   "zone_id": "bihar__banka",
    "agro_zone": "Bihar",
    "variant": "rainfed",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/bihar__jehanabad.geojson",
+   "aoi": "aoi/bihar__banka.geojson",
    "request": {
     "irrigation_available": false
    },
@@ -2305,18 +2459,20 @@
     "k": 3,
     "gt_crops": [
      "wheat",
-     "gram_chickpea"
+     "gram_chickpea",
+     "maize"
     ],
     "baseline_crops": [
      "wheat",
+     "maize",
      "mustard",
      "gram_chickpea",
-     "barley",
-     "potato"
+     "barley"
     ],
     "mean_area_share": {
-     "wheat": 0.936,
-     "gram_chickpea": 0.064
+     "wheat": 0.863,
+     "gram_chickpea": 0.094,
+     "maize": 0.043
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -2544,17 +2700,20 @@
     "k": 3,
     "gt_crops": [
      "wheat",
+     "jowar_sorghum",
      "gram_chickpea"
     ],
     "baseline_crops": [
      "wheat",
      "mustard",
      "gram_chickpea",
-     "onion"
+     "jowar_sorghum",
+     "maize"
     ],
     "mean_area_share": {
-     "wheat": 0.835,
-     "gram_chickpea": 0.165
+     "wheat": 0.557,
+     "jowar_sorghum": 0.332,
+     "gram_chickpea": 0.11
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 8 yrs; boundary: datameet Census 2011"
@@ -2576,17 +2735,20 @@
     "k": 3,
     "gt_crops": [
      "wheat",
+     "jowar_sorghum",
      "gram_chickpea"
     ],
     "baseline_crops": [
      "wheat",
      "mustard",
      "gram_chickpea",
-     "onion"
+     "jowar_sorghum",
+     "maize"
     ],
     "mean_area_share": {
-     "wheat": 0.835,
-     "gram_chickpea": 0.165
+     "wheat": 0.557,
+     "jowar_sorghum": 0.332,
+     "gram_chickpea": 0.11
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 8 yrs; boundary: datameet Census 2011"
@@ -2751,9 +2913,9 @@
     "baseline_crops": [
      "maize",
      "rice_paddy",
+     "potato",
      "soybean",
-     "bajra_pearl_millet",
-     "groundnut"
+     "bajra_pearl_millet"
     ],
     "mean_area_share": {
      "maize": 0.608,
@@ -2784,9 +2946,9 @@
     "baseline_crops": [
      "maize",
      "rice_paddy",
+     "potato",
      "soybean",
-     "bajra_pearl_millet",
-     "groundnut"
+     "bajra_pearl_millet"
     ],
     "mean_area_share": {
      "maize": 0.608,
@@ -2886,18 +3048,20 @@
     "k": 3,
     "gt_crops": [
      "gram_chickpea",
+     "jowar_sorghum",
      "wheat"
     ],
     "baseline_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat",
-     "onion",
-     "potato",
-     "mustard"
+     "groundnut",
+     "maize"
     ],
     "mean_area_share": {
-     "gram_chickpea": 0.84,
-     "wheat": 0.16
+     "gram_chickpea": 0.542,
+     "jowar_sorghum": 0.355,
+     "wheat": 0.103
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -2919,18 +3083,20 @@
     "k": 3,
     "gt_crops": [
      "gram_chickpea",
+     "jowar_sorghum",
      "wheat"
     ],
     "baseline_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat",
-     "onion",
-     "potato",
-     "mustard"
+     "groundnut",
+     "maize"
     ],
     "mean_area_share": {
-     "gram_chickpea": 0.84,
-     "wheat": 0.16
+     "gram_chickpea": 0.542,
+     "jowar_sorghum": 0.355,
+     "wheat": 0.103
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -2958,14 +3124,15 @@
      "wheat",
      "gram_chickpea",
      "mustard",
-     "barley"
+     "barley",
+     "jowar_sorghum"
     ],
     "mean_area_share": {
      "wheat": 0.86,
      "gram_chickpea": 0.14
     }
    },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 8 yrs; boundary: datameet Census 2011"
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 9 yrs; boundary: datameet Census 2011"
   },
   {
    "case_id": "madhyapradesh__harda__rabi__rainfed",
@@ -2990,14 +3157,15 @@
      "wheat",
      "gram_chickpea",
      "mustard",
-     "barley"
+     "barley",
+     "jowar_sorghum"
     ],
     "mean_area_share": {
      "wheat": 0.86,
      "gram_chickpea": 0.14
     }
    },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 8 yrs; boundary: datameet Census 2011"
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 9 yrs; boundary: datameet Census 2011"
   },
   {
    "case_id": "maharashtra__aurangabad__kharif__irrigated",
@@ -3085,17 +3253,21 @@
     "season": "rabi",
     "k": 3,
     "gt_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat"
     ],
     "baseline_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat",
+     "maize",
      "mustard"
     ],
     "mean_area_share": {
-     "gram_chickpea": 0.509,
-     "wheat": 0.491
+     "jowar_sorghum": 0.542,
+     "gram_chickpea": 0.233,
+     "wheat": 0.225
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -3116,17 +3288,21 @@
     "season": "rabi",
     "k": 3,
     "gt_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat"
     ],
     "baseline_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat",
+     "maize",
      "mustard"
     ],
     "mean_area_share": {
-     "gram_chickpea": 0.509,
-     "wheat": 0.491
+     "jowar_sorghum": 0.542,
+     "gram_chickpea": 0.233,
+     "wheat": 0.225
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -3153,9 +3329,9 @@
     "baseline_crops": [
      "rice_paddy",
      "maize",
+     "potato",
      "soybean",
-     "cotton",
-     "groundnut"
+     "cotton"
     ],
     "mean_area_share": {
      "rice_paddy": 0.828,
@@ -3186,9 +3362,9 @@
     "baseline_crops": [
      "rice_paddy",
      "maize",
+     "potato",
      "soybean",
-     "cotton",
-     "groundnut"
+     "cotton"
     ],
     "mean_area_share": {
      "rice_paddy": 0.828,
@@ -3221,8 +3397,8 @@
      "rice_paddy",
      "maize",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "potato",
+     "groundnut"
     ],
     "mean_area_share": {
      "rice_paddy": 0.625,
@@ -3256,8 +3432,8 @@
      "rice_paddy",
      "maize",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "potato",
+     "groundnut"
     ],
     "mean_area_share": {
      "rice_paddy": 0.625,
@@ -3636,18 +3812,20 @@
     "k": 3,
     "gt_crops": [
      "rice_paddy",
+     "potato",
      "maize"
     ],
     "baseline_crops": [
      "rice_paddy",
      "maize",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "potato",
+     "groundnut"
     ],
     "mean_area_share": {
-     "rice_paddy": 0.95,
-     "maize": 0.05
+     "rice_paddy": 0.791,
+     "potato": 0.167,
+     "maize": 0.042
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -3669,18 +3847,20 @@
     "k": 3,
     "gt_crops": [
      "rice_paddy",
+     "potato",
      "maize"
     ],
     "baseline_crops": [
      "rice_paddy",
      "maize",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "potato",
+     "groundnut"
     ],
     "mean_area_share": {
-     "rice_paddy": 0.95,
-     "maize": 0.05
+     "rice_paddy": 0.791,
+     "potato": 0.167,
+     "maize": 0.042
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -3923,8 +4103,8 @@
      "mustard",
      "wheat",
      "potato",
-     "gram_chickpea",
-     "barley"
+     "maize",
+     "gram_chickpea"
     ],
     "mean_area_share": {
      "mustard": 0.607,
@@ -3958,8 +4138,8 @@
      "mustard",
      "wheat",
      "potato",
-     "gram_chickpea",
-     "barley"
+     "maize",
+     "gram_chickpea"
     ],
     "mean_area_share": {
      "mustard": 0.607,
@@ -3970,75 +4150,67 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "andhrapradesh__kurnool__kharif__irrigated",
-   "zone_id": "andhrapradesh__kurnool",
+   "case_id": "andhrapradesh__westgodavari__rabi__irrigated",
+   "zone_id": "andhrapradesh__westgodavari",
    "agro_zone": "Andhra Pradesh",
    "variant": "irrigated",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/andhrapradesh__kurnool.geojson",
+   "aoi": "aoi/andhrapradesh__westgodavari.geojson",
    "request": {
     "irrigation_available": true
    },
    "truth": {
-    "season": "kharif",
+    "season": "rabi",
     "k": 3,
     "gt_crops": [
-     "groundnut",
-     "cotton",
-     "rice_paddy",
-     "maize"
+     "maize",
+     "groundnut"
     ],
     "baseline_crops": [
-     "rice_paddy",
-     "groundnut",
-     "cotton",
+     "gram_chickpea",
      "maize",
-     "bajra_pearl_millet"
+     "groundnut",
+     "jowar_sorghum",
+     "onion"
     ],
     "mean_area_share": {
-     "groundnut": 0.441,
-     "cotton": 0.259,
-     "rice_paddy": 0.241,
-     "maize": 0.059
+     "maize": 0.908,
+     "groundnut": 0.092
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "andhrapradesh__kurnool__kharif__rainfed",
-   "zone_id": "andhrapradesh__kurnool",
+   "case_id": "andhrapradesh__westgodavari__rabi__rainfed",
+   "zone_id": "andhrapradesh__westgodavari",
    "agro_zone": "Andhra Pradesh",
    "variant": "rainfed",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/andhrapradesh__kurnool.geojson",
+   "aoi": "aoi/andhrapradesh__westgodavari.geojson",
    "request": {
     "irrigation_available": false
    },
    "truth": {
-    "season": "kharif",
+    "season": "rabi",
     "k": 3,
     "gt_crops": [
-     "groundnut",
-     "cotton",
-     "rice_paddy",
-     "maize"
+     "maize",
+     "groundnut"
     ],
     "baseline_crops": [
-     "rice_paddy",
-     "groundnut",
-     "cotton",
+     "gram_chickpea",
      "maize",
-     "bajra_pearl_millet"
+     "groundnut",
+     "jowar_sorghum",
+     "onion"
     ],
     "mean_area_share": {
-     "groundnut": 0.441,
-     "cotton": 0.259,
-     "rice_paddy": 0.241,
-     "maize": 0.059
+     "maize": 0.908,
+     "groundnut": 0.092
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -4106,14 +4278,14 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "bihar__nalanda__rabi__irrigated",
-   "zone_id": "bihar__nalanda",
+   "case_id": "bihar__gopalganj__rabi__irrigated",
+   "zone_id": "bihar__gopalganj",
    "agro_zone": "Bihar",
    "variant": "irrigated",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/bihar__nalanda.geojson",
+   "aoi": "aoi/bihar__gopalganj.geojson",
    "request": {
     "irrigation_available": true
    },
@@ -4122,31 +4294,31 @@
     "k": 3,
     "gt_crops": [
      "wheat",
-     "gram_chickpea"
+     "maize"
     ],
     "baseline_crops": [
      "wheat",
+     "maize",
      "mustard",
      "gram_chickpea",
-     "barley",
-     "potato"
+     "barley"
     ],
     "mean_area_share": {
-     "wheat": 0.948,
-     "gram_chickpea": 0.052
+     "wheat": 0.932,
+     "maize": 0.068
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "bihar__nalanda__rabi__rainfed",
-   "zone_id": "bihar__nalanda",
+   "case_id": "bihar__gopalganj__rabi__rainfed",
+   "zone_id": "bihar__gopalganj",
    "agro_zone": "Bihar",
    "variant": "rainfed",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/bihar__nalanda.geojson",
+   "aoi": "aoi/bihar__gopalganj.geojson",
    "request": {
     "irrigation_available": false
    },
@@ -4155,18 +4327,18 @@
     "k": 3,
     "gt_crops": [
      "wheat",
-     "gram_chickpea"
+     "maize"
     ],
     "baseline_crops": [
      "wheat",
+     "maize",
      "mustard",
      "gram_chickpea",
-     "barley",
-     "potato"
+     "barley"
     ],
     "mean_area_share": {
-     "wheat": 0.948,
-     "gram_chickpea": 0.052
+     "wheat": 0.932,
+     "maize": 0.068
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -4320,17 +4492,20 @@
     "k": 3,
     "gt_crops": [
      "wheat",
-     "gram_chickpea"
+     "gram_chickpea",
+     "jowar_sorghum"
     ],
     "baseline_crops": [
      "wheat",
      "mustard",
      "gram_chickpea",
-     "onion"
+     "jowar_sorghum",
+     "maize"
     ],
     "mean_area_share": {
-     "wheat": 0.517,
-     "gram_chickpea": 0.483
+     "wheat": 0.392,
+     "gram_chickpea": 0.367,
+     "jowar_sorghum": 0.241
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 8 yrs; boundary: datameet Census 2011"
@@ -4352,17 +4527,20 @@
     "k": 3,
     "gt_crops": [
      "wheat",
-     "gram_chickpea"
+     "gram_chickpea",
+     "jowar_sorghum"
     ],
     "baseline_crops": [
      "wheat",
      "mustard",
      "gram_chickpea",
-     "onion"
+     "jowar_sorghum",
+     "maize"
     ],
     "mean_area_share": {
-     "wheat": 0.517,
-     "gram_chickpea": 0.483
+     "wheat": 0.392,
+     "gram_chickpea": 0.367,
+     "jowar_sorghum": 0.241
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 8 yrs; boundary: datameet Census 2011"
@@ -4455,9 +4633,9 @@
     "baseline_crops": [
      "maize",
      "rice_paddy",
+     "potato",
      "soybean",
-     "bajra_pearl_millet",
-     "groundnut"
+     "bajra_pearl_millet"
     ],
     "mean_area_share": {
      "maize": 0.797,
@@ -4488,9 +4666,9 @@
     "baseline_crops": [
      "maize",
      "rice_paddy",
+     "potato",
      "soybean",
-     "bajra_pearl_millet",
-     "groundnut"
+     "bajra_pearl_millet"
     ],
     "mean_area_share": {
      "maize": 0.797,
@@ -4728,7 +4906,8 @@
      "wheat",
      "gram_chickpea",
      "mustard",
-     "barley"
+     "barley",
+     "jowar_sorghum"
     ],
     "mean_area_share": {
      "wheat": 0.618,
@@ -4760,7 +4939,8 @@
      "wheat",
      "gram_chickpea",
      "mustard",
-     "barley"
+     "barley",
+     "jowar_sorghum"
     ],
     "mean_area_share": {
      "wheat": 0.618,
@@ -4871,17 +5051,21 @@
     "season": "rabi",
     "k": 3,
     "gt_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat"
     ],
     "baseline_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat",
+     "maize",
      "mustard"
     ],
     "mean_area_share": {
-     "gram_chickpea": 0.697,
-     "wheat": 0.303
+     "jowar_sorghum": 0.665,
+     "gram_chickpea": 0.233,
+     "wheat": 0.102
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -4902,17 +5086,21 @@
     "season": "rabi",
     "k": 3,
     "gt_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat"
     ],
     "baseline_crops": [
+     "jowar_sorghum",
      "gram_chickpea",
      "wheat",
+     "maize",
      "mustard"
     ],
     "mean_area_share": {
-     "gram_chickpea": 0.697,
-     "wheat": 0.303
+     "jowar_sorghum": 0.665,
+     "gram_chickpea": 0.233,
+     "wheat": 0.102
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -4939,9 +5127,9 @@
     "baseline_crops": [
      "rice_paddy",
      "maize",
+     "potato",
      "soybean",
-     "cotton",
-     "groundnut"
+     "cotton"
     ],
     "mean_area_share": {
      "rice_paddy": 0.731,
@@ -4972,9 +5160,9 @@
     "baseline_crops": [
      "rice_paddy",
      "maize",
+     "potato",
      "soybean",
-     "cotton",
-     "groundnut"
+     "cotton"
     ],
     "mean_area_share": {
      "rice_paddy": 0.731,
@@ -5007,8 +5195,8 @@
      "rice_paddy",
      "maize",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "potato",
+     "groundnut"
     ],
     "mean_area_share": {
      "rice_paddy": 0.758,
@@ -5042,8 +5230,8 @@
      "rice_paddy",
      "maize",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "potato",
+     "groundnut"
     ],
     "mean_area_share": {
      "rice_paddy": 0.758,
@@ -5423,19 +5611,21 @@
     "gt_crops": [
      "rice_paddy",
      "soybean",
-     "maize"
+     "maize",
+     "potato"
     ],
     "baseline_crops": [
      "rice_paddy",
      "maize",
+     "potato",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "groundnut"
     ],
     "mean_area_share": {
-     "rice_paddy": 0.543,
-     "soybean": 0.253,
-     "maize": 0.204
+     "rice_paddy": 0.517,
+     "soybean": 0.241,
+     "maize": 0.194,
+     "potato": 0.048
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -5458,19 +5648,21 @@
     "gt_crops": [
      "rice_paddy",
      "soybean",
-     "maize"
+     "maize",
+     "potato"
     ],
     "baseline_crops": [
      "rice_paddy",
      "maize",
+     "potato",
      "soybean",
-     "groundnut",
-     "bajra_pearl_millet"
+     "groundnut"
     ],
     "mean_area_share": {
-     "rice_paddy": 0.543,
-     "soybean": 0.253,
-     "maize": 0.204
+     "rice_paddy": 0.517,
+     "soybean": 0.241,
+     "maize": 0.194,
+     "potato": 0.048
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -5710,7 +5902,7 @@
      "wheat",
      "potato",
      "gram_chickpea",
-     "barley"
+     "maize"
     ],
     "mean_area_share": {
      "potato": 0.539,
@@ -5745,7 +5937,7 @@
      "wheat",
      "potato",
      "gram_chickpea",
-     "barley"
+     "maize"
     ],
     "mean_area_share": {
      "potato": 0.539,
