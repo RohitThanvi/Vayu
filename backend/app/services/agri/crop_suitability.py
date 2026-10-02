@@ -37,6 +37,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from .crop_requirements import CROPS, SEASON_MONTHS, TEXTURE_NAMES
+from .evidence import _season_mean_temp, _season_rain, build_evidence, trapezoid  # noqa: F401  (re-exported)
+from . import suitability_engine as _engine
 
 logger = logging.getLogger(__name__)
 
@@ -160,29 +162,6 @@ def _r(v, nd):
 # 2. Scoring (pure Python)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def trapezoid(x: Optional[float], a: float, b: float, c: float, d: float) -> Optional[float]:
-    """1.0 on [b, c], linear ramps a->b and c->d, 0 outside (a, d)."""
-    if x is None:
-        return None
-    if x <= a or x >= d:
-        return 0.0
-    if x < b:
-        return (x - a) / (b - a)
-    if x <= c:
-        return 1.0
-    return (d - x) / (d - c)
-
-
-def _season_mean_temp(monthly: List[Optional[float]], months: List[int]) -> Optional[float]:
-    vals = [monthly[m - 1] for m in months]
-    return None if any(v is None for v in vals) else sum(vals) / len(vals)
-
-
-def _season_rain(monthly: List[Optional[float]], months: List[int]) -> Optional[float]:
-    vals = [monthly[m - 1] for m in months]
-    return None if any(v is None for v in vals) else sum(vals)
-
-
 def _rating(score: float) -> str:
     if score >= 0.75:
         return "high"
@@ -228,147 +207,24 @@ def apply_overrides(profile: Dict[str, Any], overrides: Optional[Dict[str, Any]]
 
 
 def score_crop(crop: Dict[str, Any], profile: Dict[str, Any], irrigation_available: bool) -> Dict[str, Any]:
-    months = SEASON_MONTHS[crop["season"]]
-    t = _season_mean_temp(profile["monthly_temp_c"], months)
-    # Water basis differs by season. Kharif crops are genuinely rainfed in-season,
-    # so in-season rainfall is the right figure. Rabi (and perennial) crops in India
-    # are grown mainly on soil moisture carried over from the monsoon plus irrigation
-    # from wells/canals recharged by the whole year's rain -- NOT on rainfall actually
-    # falling in the Nov-Mar dry season. Scoring rabi crops against Nov-Mar rainfall
-    # alone (the original approach) forces a false 0 for almost every rabi crop in a
-    # monsoon-climate region, since that window is dry by definition even in a good year.
-    # Annual rainfall is a much closer proxy for the water that's actually available to
-    # a rabi crop here.
-    rain = profile.get("annual_rain_mm") if crop["season"] in ("rabi", "perennial") else _season_rain(profile["monthly_rain_mm"], months)
-    water_basis = "annual rainfall (proxy for residual soil moisture + irrigation)" if crop["season"] in ("rabi", "perennial") else "in-season rainfall"
-
-    factors: Dict[str, Dict[str, Any]] = {}
-
-    # Temperature
-    ts = trapezoid(t, *crop["temp_c"])
-    factors["temperature"] = {"score": ts, "value": _r(t, 1), "unit": "°C",
-                              "need": f"{crop['temp_c'][1]}-{crop['temp_c'][2]} °C"}
-
-    # Water: the LOW side is fixable with irrigation, the HIGH side is not.
-    wa, wb, wc, wd = crop["water_mm"]
-    # Excess-rain (waterlogging/disease) side: judged on rain the crop is actually exposed to.
-    # For rabi crops, annual rainfall is a proxy for stored soil moisture + irrigation supply
-    # (the DEFICIT side, above), but the monsoon itself never falls on a Nov-Mar crop, so it must
-    # not trigger the excess penalty. Validation against district sown-area statistics showed
-    # wheat (observed dominant rabi crop in every tested district) being scored ~0 in humid
-    # districts purely because annual rain > its 900 mm optimum ceiling. Perennials live through
-    # the monsoon, so they keep the annual figure.
-    rain_hi = rain
-    if crop["season"] == "rabi":
-        in_season = _season_rain(profile.get("monthly_rain_mm") or [None] * 12, months)
-        if in_season is not None:
-            rain_hi = in_season
-    lo = None if rain is None else (1.0 if rain >= wb else (0.0 if rain <= wa else (rain - wa) / (wb - wa)))
-    hi = None if rain_hi is None else (1.0 if rain_hi <= wc else (0.0 if rain_hi >= wd else (wd - rain_hi) / (wd - wc)))
-    if rain is None:
-        ws, water_status = None, "unknown"
-    else:
-        # With irrigation the rainfall deficit is coverable but costly/unsustainable, so it is
-        # penalised in proportion to the deficit (down to 0.5) instead of being ignored.
-        # Without irrigation the deficit counts in full.
-        ws = min(hi, 1.0 - 0.5 * (1.0 - lo)) if irrigation_available else min(lo, hi)
-        if rain_hi is not None and rain_hi > wc:
-            water_status = "excess_rain"
-        elif rain >= wb:
-            water_status = "rainfed_ok"
-        elif rain >= wa:
-            water_status = "supplemental_irrigation"
-        else:
-            water_status = "irrigation_required"
-    factors["water"] = {"score": ws, "value": _r(rain, 0), "unit": "mm",
-                        "need": f"{wb}-{wc} mm", "status": water_status, "basis": water_basis}
-
-    # pH
-    ps = trapezoid(profile.get("ph"), *crop["ph"])
-    factors["ph"] = {"score": ps, "value": profile.get("ph"), "unit": "",
-                     "need": f"{crop['ph'][1]}-{crop['ph'][2]}"}
-
-    # Texture
-    tc = profile.get("texture_class")
-    if tc is None:
-        txs = None
-    elif tc in crop["texture_good"]:
-        txs = 1.0
-    elif tc in crop["texture_marginal"]:
-        txs = 0.6
-    else:
-        txs = 0.25
-    factors["texture"] = {"score": txs, "value": profile.get("texture_name"), "unit": "",
-                          "need": ", ".join(TEXTURE_NAMES[c] for c in crop["texture_good"][:3]) + ", ..."}
-
-    # Organic carbon — soft (amendable), floor 0.5
-    oc = profile.get("organic_carbon_gkg")
-    ocs = None if oc is None else 0.5 + 0.5 * min(1.0, oc / crop["oc_min_gkg"])
-    factors["organic_carbon"] = {"score": ocs, "value": oc, "unit": "g/kg", "need": f">= {crop['oc_min_gkg']} g/kg"}
-
-    # Slope
-    sp = profile.get("slope_pct")
-    sm = crop["slope_max_pct"]
-    sls = None if sp is None else (1.0 if sp <= sm else max(0.0, 1.0 - (sp - sm) / sm))
-    factors["slope"] = {"score": sls, "value": sp, "unit": "%", "need": f"<= {sm}%"}
-
-    scored = {k: f["score"] for k, f in factors.items() if f["score"] is not None}
-    if not scored:
-        return {"crop_id": crop["id"], "score": None, "rating": "no_data", "factors": factors}
-    limiting = min(scored, key=lambda k: (scored[k], k == "organic_carbon"))
-    score = scored[limiting]
-    return {
-        "crop_id": crop["id"], "name": crop["name"], "name_hi": crop["name_hi"],
-        "season": crop["season"], "tags": crop["tags"], "notes": crop["notes"],
-        "score": round(score, 2), "rating": _rating(score),
-        "limiting_factor": limiting, "limiting_label": FACTOR_LABELS[limiting],
-        "factors": {k: {**f, "score": None if f["score"] is None else round(f["score"], 2)} for k, f in factors.items()},
-        "water_status": water_status,
-        "amendments": _amendments(crop, profile, factors, irrigation_available),
-        
-    }
-
-
-def _amendments(crop, profile, factors, irrigation_available) -> List[str]:
-    tips: List[str] = []
-    w = factors["water"]
-    if w["status"] in ("supplemental_irrigation", "irrigation_required") and w["value"] is not None:
-        short = crop["water_mm"][1] - w["value"]
-        if irrigation_available:
-            tips.append(f"Plan about {round(short)} mm of irrigation over the season (rain supplies ~{round(w['value'])} mm).")
-        else:
-            tips.append(f"Rain (~{round(w['value'])} mm) is short of what this crop needs (~{crop['water_mm'][1]}+ mm); rainfed yields will be poor without irrigation.")
-    if w["status"] == "excess_rain":
-        tips.append("Heavy rain for this crop: ensure field drainage; waterlogging and disease risk.")
-    ph = profile.get("ph")
-    if ph is not None and ph > crop["ph"][2]:
-        tips.append("Soil is more alkaline than this crop prefers; gypsum and organic matter can help. Confirm with a soil test first.")
-    if ph is not None and ph < crop["ph"][1]:
-        tips.append("Soil is more acidic than this crop prefers; liming can help. Confirm with a soil test first.")
-    oc = profile.get("organic_carbon_gkg")
-    if oc is not None and oc < crop["oc_min_gkg"]:
-        tips.append("Low organic carbon: add compost / farmyard manure or green manure to build fertility and water holding.")
-    if factors["texture"]["score"] is not None and factors["texture"]["score"] < 1.0:
-        tips.append("Soil texture is not ideal for this crop; mulching, organic matter and drip/frequent light irrigation (sandy) or drainage (clayey) can offset it.")
-    return tips
+    """Score ONE crop. Thin wrapper: the logic lives in suitability_engine (see docs/AGRI_SUITABILITY_ENGINE.md)."""
+    return _engine.score_crop_v2(crop, profile, irrigation_available)
 
 
 def score_crops(profile: Dict[str, Any], irrigation_available: bool = False,
                 overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     p = apply_overrides(profile, overrides)
-    results = [score_crop(c, p, irrigation_available) for c in CROPS]
-    # Ties are common (Liebig minimum saturates at the same limiting factor for several crops).
-    # Break them by the mean of all factor scores (a crop with more headroom elsewhere ranks higher),
-    # and only then by name, so ordering never depends on the alphabet alone.
-    def _mean_factor(r):
-        v = [f["score"] for f in r["factors"].values() if f["score"] is not None]
-        return sum(v) / len(v) if v else 0.0
-    ranked = sorted([r for r in results if r["score"] is not None],
-                    key=lambda r: (-r["score"], -round(_mean_factor(r), 4), r["name"]))
+    ev = build_evidence(p)                                   # evidence is computed ONCE per location
+    cal = _engine.get_calibrator()
+    results = [_engine.score_crop_v2(c, p, irrigation_available, ev=ev, calibrator=cal) for c in CROPS]
+    ranked = _engine.rank_crops(results)                     # deterministic, tie-aware, on calibrated scores
     return {
-        "profile": {k: p[k] for k in ("mode", "ph", "organic_carbon_gkg", "texture_class", "texture_name", "slope_pct",
-                                      "annual_rain_mm", "annual_mean_temp_c", "climate_years", "value_source", "sources")},
+        "profile": {**{k: p[k] for k in ("mode", "ph", "organic_carbon_gkg", "texture_class", "texture_name", "slope_pct",
+                                         "annual_rain_mm", "annual_mean_temp_c", "climate_years", "value_source", "sources")},
+                    "monthly_rain_mm": p.get("monthly_rain_mm"), "monthly_temp_c": p.get("monthly_temp_c")},
+        "evidence": {k: ev[k] for k in ("dry_months", "longest_dry_run_months", "wet_season_share", "drainage", "missing")},
         "irrigation_available": irrigation_available,
+        "calibration_status": cal.status,
         "crops": ranked,
         "unscored": [r["crop_id"] for r in results if r["score"] is None],
         "requirements_source": "FAO EcoCrop (temperature, rainfall, pH, texture); other thresholds estimated",
@@ -379,7 +235,9 @@ def score_crops(profile: Dict[str, Any], irrigation_available: bool = False,
             "local adoption also depends on irrigation infrastructure, market access, and tradition, which this does not model. "
             "Temperature, rainfall, pH and texture ranges come from the FAO EcoCrop database (generic species ranges, not tuned to local varieties, "
             "with any regional override noted per-crop where local agronomy data contradicts it); "
-            "organic-carbon and slope thresholds and yields are rough estimates."
+            "organic-carbon and slope thresholds and yields are rough estimates. "
+            "Only an absolute temperature limit makes a crop 'unsuitable'; every other limitation lowers the score. "
+            "Confidence reflects completeness of evidence, not a statistical interval."
         ),
     }
 

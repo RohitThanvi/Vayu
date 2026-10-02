@@ -87,6 +87,7 @@ CROPS: List[Dict[str, Any]] = [{'id': 'wheat',
   'yield_q_per_ha': 26,
   'mandi_commodity': 'Paddy(Dhan)(Common)',
   'notes': 'EcoCrop indica-subspecies row. Needs standing water; drains-too-fast soils are poor.',
+  'excess_sensitivity': 'low',  # paddy is cultivated under standing water, so high rainfall is not an excess-water hazard in the way it is for upland crops
   'ecocrop': {'code': 8143, 'scientific_name': 'Oryza sativa ssp. indica'},
   'source': 'FAO EcoCrop',
   'verified': True},
@@ -376,6 +377,12 @@ CROPS: List[Dict[str, Any]] = [{'id': 'wheat',
   'mandi_commodity': 'Mango',
   'notes': '',
   'ecocrop': {'code': 1416, 'scientific_name': 'Mangifera indica'},
+  'rainfall_seasonality': {
+    'months': [11, 12, 1, 2, 3],
+    'source': 'Mango needs DRY weather around flowering / fruit set (Nov-Mar in India). Sources (secondary summaries - verify against primary NHB / ICAR-CISH documents): '
+              'India National Horticulture Board guidance as summarised at agriculture.institute (timing and distribution of rainfall matter far more than annual total; '
+              'a distinct 3-4 month dry season after the monsoon triggers flowering; rain/fog during flowering Nov-Feb causes poor fruit set and mildew); '
+              'IJSDR 2506124 review (mango thrives at 75-375 cm/yr WITH a dry season; rain during flowering reduces fruit set).'},
   'source': 'FAO EcoCrop',
   'verified': True},
  {'id': 'avocado',

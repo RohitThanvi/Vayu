@@ -11,6 +11,8 @@ from pathlib import Path
 import numpy as np
 from metrics import (regression_metrics, classification_from_matrix, classification_metrics,
                      binary_metrics, ranking_row, cluster_bootstrap)
+import ranking_metrics as RM
+from ablation import STAGES, stage_scores
 
 CROP_IDS = ["wheat", "rice_paddy", "bajra_pearl_millet", "jowar_sorghum", "maize", "barley", "gram_chickpea",
             "mustard", "groundnut", "soybean", "cotton", "sugarcane", "potato", "onion", "lemon", "guava",
@@ -78,6 +80,10 @@ def ci_str(ci):
     return None if ci is None else [round(ci[0], 4), round(ci[1], 4)]
 
 
+def req_irr(case):
+    return case.get("request", {}).get("irrigation_available", False)
+
+
 # ------------------------------------------------------------ 1. crop ranking
 class CropRanking:
     """Vayu ranks 19 crops by suitability; truth = observed crops by sown-area share (largest first)."""
@@ -100,10 +106,13 @@ class CropRanking:
         shares = t.get("mean_area_share", {})
         pairs = [[c["crop_id"], c["score"], float(shares.get(c["crop_id"], 0.0))]
                  for c in crops if c.get("season") == season]
+        abl = {c["crop_id"]: c["ablation_inputs"] for c in crops if c.get("season") == season and c.get("ablation_inputs")}
+        cal = str(resp.get("calibration_status", "unknown"))
         return {"pred": "|".join(pred[:k]), "truth": "|".join(truth[:k]), "k": k, **m,
                 "baseline_overlap_frac": None if b is None else b["overlap_frac"], "tie_at_cutoff": int(tied),
                 "season": season, "top1_pred": pred[0] if pred else "", "top1_truth": truth[0] if truth else "",
-                "pairs": json.dumps(pairs)}
+                "pairs": json.dumps(pairs), "baseline_list": "|".join(base), "irrigated": int(bool(req_irr(case))),
+                "calibrated": int(cal.startswith("fitted")), "abl": json.dumps(abl) if abl else ""}
 
     def summarize(self, rows, ctx):
         """Separate metric blocks per `variant` (e.g. irrigated vs rainfed) so conditions are never pooled."""
@@ -150,6 +159,7 @@ class CropRanking:
             b["recall_by_crop"] = {c: f"{int((S[(C == c) & (Y == 1)] >= self.SUITABLE_SCORE).sum())}/{int(((C == c) & (Y == 1)).sum())}"
                                    for c in sorted(set(C[Y == 1]))}
             out["suitability_binary"] = b
+        out.update(self._ranking_blocks(r))
         for season in sorted({x["season"] for x in r}):
             g = [x for x in r if x["season"] == season and x["top1_truth"] and x["top1_pred"]]
             if len(g) >= 3:
@@ -158,6 +168,137 @@ class CropRanking:
                 m["_matrix"] = {"labels": labels, "rows_true_cols_pred": M.tolist()}
                 out[f"top1_confusion_{season}"] = m
         return out
+
+
+    # ------------------------------------------------------------------------------------------
+    BASELINES = {
+        "state_prior": "crops ranked by their share of sown area in the REST of the same state (district itself left out). "
+                       "Uses observed statistics that Vayu does NOT see, so it is a deliberately strong informed prior.",
+        "random": "no information: every crop tied; metrics are the expectation under uniformly random tie-breaking "
+                  "(analytic, not simulated).",
+        "climate_only": "Vayu with only temperature + rainfall amount (ablation stage 1): the same inputs, minus soil/water/irrigation logic.",
+    }
+
+    def _case_scores(self, x):
+        pairs = json.loads(x["pairs"]); ids = [p[0] for p in pairs]
+        return ids, [float(p[1]) for p in pairs], [float(p[2]) for p in pairs]
+
+    def _ranking_blocks(self, r):
+        out, k = {}, int(r[0]["k"])
+        keys = ("top1_acc", "top3_recall", "overlap_frac", "ndcg_k", "mrr", "kendall_tau_b", "spearman")
+        per = {"vayu": [], "state_prior": [], "random": [], "climate_only": []}
+        used = []
+        for x in r:
+            ids, sc, rel = self._case_scores(x)
+            m = RM.case_ranking_metrics(ids, sc, rel, k)
+            if m is None: continue
+            base = x["baseline_list"].split("|") if x["baseline_list"] else []
+            bs = [float(len(base) - base.index(i)) if i in base else 0.0 for i in ids]
+            per["vayu"].append(m); per["state_prior"].append(RM.case_ranking_metrics(ids, bs, rel, k))
+            per["random"].append(RM.case_ranking_metrics(ids, [0.0] * len(ids), rel, k))
+            abl = json.loads(x["abl"]) if x.get("abl") else None
+            if abl:
+                cs = [stage_scores(abl[i], bool(x["irrigated"]))["1_climate_only"] if i in abl else 0.0 for i in ids]
+                per["climate_only"].append(RM.case_ranking_metrics(ids, [c if c is not None else 0.0 for c in cs], rel, k))
+            else:
+                per["climate_only"].append(None)
+            used.append(x)
+        if not used: return out
+        zones = [x["zone_id"] for x in used]
+
+        def agg(name, rows, keys=keys):
+            idx = [i for i, m in enumerate(rows) if m is not None]
+            res = {}
+            for key in keys:
+                vals = [(i, rows[i][key]) for i in idx if rows[i].get(key) is not None]
+                if not vals: continue
+                v = np.array([b for _, b in vals], float); zz = [zones[i] for i, _ in vals]
+                res[key] = {"mean": round(float(v.mean()), 4), "ci95_zone_bootstrap": ci_str(
+                    cluster_bootstrap(lambda i, v=v: v[i].mean(), zz)), "n": len(v)}
+            return res
+        out["ranking_metrics_tie_aware"] = {"k": k, **{n: agg(n, per[n]) for n in per if any(m is not None for m in per[n])}}
+        out["ranking_metrics_tie_aware"]["baseline_definitions"] = self.BASELINES
+        out["ranking_metrics_tie_aware"]["evaluated_on"] = f"exactly the same {len(used)} cases for every method"
+        out["tie_policy"] = {"rule": "equal scores share positions; metrics are expectations under random tie-breaking",
+                             "share_cases_tie_at_top": round(float(np.mean([m["tie_at_top"] for m in per["vayu"]])), 3),
+                             "share_cases_tie_at_cutoff": round(float(np.mean([m["tie_at_cutoff"] for m in per["vayu"]])), 3),
+                             "production_tiebreak": "calibrated score, then headroom (mean factor score), then name; tied crops share a rank"}
+        # paired comparison Vayu - baseline (same cases)
+        for b in ("state_prior", "random"):
+            pairs = [(per["vayu"][i]["overlap_frac"] - per[b][i]["overlap_frac"], zones[i]) for i in range(len(used)) if per[b][i]]
+            d = np.array([p[0] for p in pairs]); zz = [p[1] for p in pairs]
+            out["ranking_metrics_tie_aware"][f"paired_overlap_gain_vs_{b}"] = {
+                "mean": round(float(d.mean()), 4), "ci95_zone_bootstrap": ci_str(cluster_bootstrap(lambda i: d[i].mean(), zz))}
+        # support
+        crop_sup, zone_sup, season_sup, var_sup = {}, {}, {}, {}
+        for x in used:
+            ids, sc, rel = self._case_scores(x)
+            for cid, rl in zip(ids, rel):
+                if rl >= self.MAJOR_SHARE: crop_sup[cid] = crop_sup.get(cid, 0) + 1
+            zone_sup[x["agro_zone"] or "unspecified"] = zone_sup.get(x["agro_zone"] or "unspecified", 0) + 1
+            season_sup[x["season"]] = season_sup.get(x["season"], 0) + 1
+            var_sup[x.get("variant", "") or "default"] = var_sup.get(x.get("variant", "") or "default", 0) + 1
+        out["support"] = {"n_cases": len(used), "n_zones": len(set(zones)), "n_crops_observed_major": len(crop_sup),
+                          "observed_major_by_crop": dict(sorted(crop_sup.items(), key=lambda kv: -kv[1])),
+                          "cases_by_agro_zone": zone_sup, "cases_by_season": season_sup, "cases_by_variant": var_sup,
+                          "note": "per-crop / per-zone figures with small support are indicative only"}
+        # robustness: by season and by zone (overlap with CI where possible)
+        def sub(keyfn, label):
+            res = {}
+            for g in sorted({keyfn(x) for x in used}):
+                ii = [i for i, x in enumerate(used) if keyfn(x) == g]
+                v = np.array([per["vayu"][i]["overlap_frac"] for i in ii]); zz = [zones[i] for i in ii]
+                res[g or "default"] = {"n": len(ii), "overlap_mean": round(float(v.mean()), 3),
+                                       "ci95_zone_bootstrap": ci_str(cluster_bootstrap(lambda j, v=v: v[j].mean(), zz))}
+            return res
+        out["robustness_overlap"] = {"by_season": sub(lambda x: x["season"], "season"),
+                                     "by_agro_zone": sub(lambda x: x["agro_zone"] or "unspecified", "zone")}
+        # calibration (only meaningful if scores are fitted/calibrated)
+        flat = [(1 if rl >= self.MAJOR_SHARE else 0, float(sc_), x["zone_id"]) for x in used
+                for (_, sc_, rl) in json.loads(x["pairs"])]
+        Yb = np.array([f[0] for f in flat]); Pb = np.array([f[1] for f in flat])
+        pa = RM.pr_auc(Yb, Pb)
+        out["suitability_pr_auc"] = None if pa is None else {"value": round(pa, 4), "prevalence_baseline": round(float(Yb.mean()), 4)}
+        if all(x.get("calibrated") for x in used):
+            rows, ece = RM.reliability(Yb, Pb)
+            out["calibration"] = {"brier": round(RM.brier(Yb, Pb), 4), "brier_of_constant_prevalence": round(RM.brier(Yb, np.full(len(Yb), Yb.mean())), 4),
+                                  "ece": round(ece, 4), "reliability_curve": rows}
+        else:
+            out["calibration"] = {"status": "NOT EVALUATED: scores are uncalibrated limiting-factor indices, not probabilities, so Brier / "
+                                            "reliability would be misleading. Fit a calibrator on the development split (fit_calibration.py)."}
+        # ablation
+        have = [x for x in used if x.get("abl")]
+        if have:
+            out["ablation"] = self._ablation(have, k)
+        else:
+            out["ablation"] = {"status": "NOT AVAILABLE: responses lack ablation_inputs (produced by the pre-refactor engine)."}
+        return out
+
+    def _ablation(self, rows, k):
+        res = {}
+        for variant in sorted({x.get("variant", "") for x in rows}):
+            g = [x for x in rows if x.get("variant", "") == variant]
+            res_v = {}
+            for stage in STAGES:
+                if stage == "5_plus_remote_sensing":
+                    res_v[stage] = "NOT AVAILABLE: the suitability pipeline samples no remote-sensing evidence yet"; continue
+                ov, t1, ys, ss, zz = [], [], [], [], []
+                for x in g:
+                    ids, sc, rel = self._case_scores(x); abl = json.loads(x["abl"])
+                    st = []
+                    for i, s_ in zip(ids, sc):
+                        st.append(float(s_) if stage == "6_full_vayu" else (stage_scores(abl[i], bool(x["irrigated"])).get(stage) or 0.0) if i in abl else 0.0)
+                    m = RM.case_ranking_metrics(ids, st, rel, k)
+                    if m: ov.append(m["overlap_frac"]); t1.append(m["top1_acc"]); zz.append(x["zone_id"])
+                    ys += [1 if rl >= self.MAJOR_SHARE else 0 for rl in rel]; ss += st
+                auc = binary_metrics(np.array(ys), np.array(ss), 0.5)
+                res_v[stage] = {"overlap_frac": round(float(np.mean(ov)), 4), "top1_acc": round(float(np.mean(t1)), 4),
+                                "roc_auc": None if auc["roc_auc"] is None else round(auc["roc_auc"], 4),
+                                "recall_at_0.5": None if auc["recall_POD"] is None else round(auc["recall_POD"], 4),
+                                "fpr_at_0.5": None if auc["false_alarm_rate_FPR"] is None else round(auc["false_alarm_rate_FPR"], 4),
+                                "n_cases": len(ov)}
+            res[variant or "default"] = res_v
+        return res
 
 
 # -------------------------------------------------- 2. scalar vs reference value
@@ -354,6 +495,45 @@ class Categorical:
         return m
 
 
-VALIDATORS = {"crop_ranking": CropRanking(), "scalar": Scalar(), "class_areas": ClassAreas(),
+# ------------------------------------------- 8. perennial / established-crop presence
+class Presence:
+    """Where a crop is an established MAJOR crop (observed area above a threshold), the engine must not reject it.
+    This is the Ratnagiri->mango class of failure: a sanity RECALL test, deliberately not a ranking test."""
+    NOT_REJECTED = 0.25
+
+    @safe
+    def run_case(self, case, client, base_dir, use_cache):
+        cid = case["truth"]["crop_id"]
+        resp = client.call("crop_suitability", {"include_revenue": False, **build_request(case, base_dir)}, use_cache)
+        c = next((x for x in resp["crops"] if x["crop_id"] == cid), None)
+        if c is None or c.get("score") is None: raise ValueError(f"{cid} not scored")
+        cat = c.get("category") or c.get("rating")
+        lf = c.get("limiting_factors")
+        primary = (lf or {}).get("primary") if isinstance(lf, dict) else None
+        return {"crop_id": cid, "score": float(c["score"]), "category": cat,
+                "not_rejected": int(cat != "unsuitable" and float(c["score"]) >= self.NOT_REJECTED),
+                "suitable_ge_0.5": int(float(c["score"]) >= 0.5),
+                "primary_limitation": (primary or {}).get("label") or c.get("limiting_label", ""),
+                "water_status": c.get("water_status", "")}
+
+    def summarize(self, rows, ctx):
+        r = ok_rows(rows)
+        if not r: return {"n_ok": 0}
+        z = [x["zone_id"] for x in r]; out = {"n_ok": len(r), "n_zones": len(set(z))}
+        for key in ("not_rejected", "suitable_ge_0.5"):
+            v = np.array([x[key] for x in r], float)
+            out[key] = {"mean": round(float(v.mean()), 4), "ci95_zone_bootstrap": ci_str(cluster_bootstrap(lambda i, v=v: v[i].mean(), z))}
+        by = {}
+        for x in r: by.setdefault(x["crop_id"], []).append(x)
+        out["by_crop"] = {c: {"n": len(g), "not_rejected": f"{sum(x['not_rejected'] for x in g)}/{len(g)}",
+                              "suitable_ge_0.5": f"{sum(x['suitable_ge_0.5'] for x in g)}/{len(g)}"} for c, g in by.items()}
+        rej = [x for x in r if not x["not_rejected"]]
+        out["rejected_cases"] = [{"case": x["case_id"], "score": x["score"], "category": x["category"],
+                                  "primary_limitation": x["primary_limitation"], "water_status": x["water_status"]} for x in rej][:25]
+        out["rejected_primary_limitations"] = {k: sum(1 for x in rej if x["primary_limitation"] == k) for k in sorted({x["primary_limitation"] for x in rej})}
+        return out
+
+
+VALIDATORS = {"presence": Presence(), "crop_ranking": CropRanking(), "scalar": Scalar(), "class_areas": ClassAreas(),
               "confusion": Confusion(), "event": Event(), "phenology_dates": PhenologyDates(),
               "categorical": Categorical()}

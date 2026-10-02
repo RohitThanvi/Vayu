@@ -1,0 +1,316 @@
+"""
+suitability_engine.py - layered crop-suitability engine (pure Python, no GEE).
+
+  LOCATION/CONTEXT -> ENVIRONMENTAL EVIDENCE (evidence.py) -> CROP PROFILE (crop_profile.py)
+      -> FACTOR SCORERS (here) -> CONSTRAINT ENGINE (hard / soft / unknown)
+      -> raw score -> CALIBRATION (calibration.py) -> RANKING -> EXPLANATION
+
+Key design rules (see docs/AGRI_SUITABILITY_ENGINE.md):
+  * HARD constraint = absolute survival limit (temperature). Only a hard constraint can make a crop "unsuitable".
+  * SOFT limitation = reduces the score, floored at SOFT_FLOOR; never zeroes a crop on its own.
+  * UNKNOWN evidence = factor omitted + confidence reduced; never counted as unsuitable.
+  * Water is three separate questions: deficit (irrigation-aware), excess (drainage-aware) and rainfall
+    seasonality (dry-season length a crop needs). Rainfall AMOUNT above a ceiling is only a proxy for
+    waterlogging risk, so it is softened by drainage evidence instead of being a cliff to zero.
+  * The explanation is generated from the factors that actually reduced the score.
+"""
+from typing import Any, Dict, List, Optional
+
+from . import engine_config as cfg
+from .calibration import Calibrator
+from .crop_profile import normalize_crop
+from .crop_requirements import SEASON_MONTHS, TEXTURE_NAMES
+from .evidence import _season_mean_temp, _season_rain, build_evidence, trapezoid
+
+LABELS = {"temperature": "Temperature", "water": "Rainfall / water supply", "ph": "Soil pH",
+          "texture": "Soil texture", "organic_carbon": "Organic carbon", "slope": "Slope"}
+COMPONENT_LABELS = {"deficit": "Rainfall deficit", "excess": "Excess rainfall", "seasonality": "Dry-season length"}
+_calibrator: Optional[Calibrator] = None
+
+
+def get_calibrator() -> Calibrator:
+    global _calibrator
+    if _calibrator is None:
+        _calibrator = Calibrator.load()
+    return _calibrator
+
+
+def _r(v, nd=2):
+    return None if v is None else round(float(v), nd)
+
+
+def _ramp_lo(x, a, b):
+    return None if x is None else (1.0 if x >= b else (0.0 if x <= a else (x - a) / (b - a)))
+
+
+def _ramp_hi(x, c, d):
+    return None if x is None else (1.0 if x <= c else (0.0 if x >= d else (d - x) / (d - c)))
+
+
+# ═══════════════════════════ water model (deficit / excess / seasonality) ═══════════════════════════
+def water_model(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool) -> Dict[str, Any]:
+    season = crop["season"]
+    in_season = _season_rain(ev["monthly_rain_mm"], SEASON_MONTHS[season])
+    annual = ev.get("annual_rain_mm")
+    # DEFICIT side: supply basis. Kharif is rainfed in-season; rabi/perennial draw on stored soil moisture and
+    # irrigation recharged by the whole year's rain, so annual rainfall is the closer proxy.
+    supply, basis = (in_season, "in-season rainfall") if season == "kharif" else \
+                    (annual, "annual rainfall (proxy for stored soil moisture + irrigation)")
+    # EXCESS side: the rain the crop is actually exposed to. A Nov-Mar crop never sees the monsoon;
+    # perennials live through it.
+    exposure = annual if season == "perennial" else (in_season if in_season is not None else supply)
+    wa, wb, wc, wd = crop["water_mm"]
+
+    lo = _ramp_lo(supply, wa, wb)
+    hi_raw = _ramp_hi(exposure, wc, wd)
+    deficit = None if lo is None else (1.0 - 0.5 * (1.0 - lo) if irrigation else lo)
+
+    # RAIN-SENSITIVE WINDOW (e.g. mango flowering): how dry is the window the crop needs dry?
+    seas, window_rain = None, None
+    rs = crop.get("rainfall_seasonality")
+    if rs:
+        window_rain = _season_rain(ev["monthly_rain_mm"], rs["months"])
+        if window_rain is not None:
+            full = len(rs["months"]) * cfg.DRY_MONTH_MM
+            seas = _ramp_hi(window_rain, full, full * cfg.DRY_WINDOW_ZERO_FACTOR)
+
+    # EXCESS: amount above the ceiling is a PROXY for waterlogging/disease risk, so its strength depends on drainage
+    # evidence and crop sensitivity - and, where the crop declares a sensitive window, on how wet that window is
+    # (annual rain only matters to the extent it falls when the crop is vulnerable).
+    drain = ev["drainage"]["class"]
+    k = cfg.EXCESS_STRENGTH_BY_DRAINAGE[drain] + cfg.EXCESS_SENSITIVITY_ADJUST[crop["excess_sensitivity"]]
+    k = min(1.0, max(0.25, k))
+    if seas is not None:
+        k *= (1.0 - seas)
+    excess = None if hi_raw is None else 1.0 - k * (1.0 - hi_raw)
+
+    comps = {n: v for n, v in (("deficit", deficit), ("excess", excess), ("seasonality", seas)) if v is not None}
+    score = min(comps.values()) if comps else None
+    driver = min(comps, key=lambda n: comps[n]) if comps else None          # dict order breaks ties: deficit first
+    if supply is None and exposure is None:
+        status = "unknown"
+    elif exposure is not None and exposure > wc:
+        status = "excess_rain"
+    elif supply is not None and supply >= wb:
+        status = "rainfed_ok"
+    elif supply is not None and supply >= wa:
+        status = "supplemental_irrigation"
+    else:
+        status = "irrigation_required"
+    return {"score": score, "components": comps, "driver": driver, "status": status, "supply_mm": supply,
+            "exposure_mm": exposure, "window_rain_mm": window_rain, "basis": basis, "lo": lo, "hi_raw": hi_raw, "strength": k,
+            "drainage": ev["drainage"], "need": f"{wb}-{wc} mm", "ceiling": (wc, wd)}
+
+
+# ═════════════════════════════════════ factor scorers ═════════════════════════════════════
+def _score_factors(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool):
+    f: Dict[str, Dict[str, Any]] = {}
+    ta, tb, tc, td = crop["temp_c"]
+    t = _season_mean_temp(ev["monthly_temp_c"], SEASON_MONTHS[crop["season"]])
+    ts = trapezoid(t, ta, tb, tc, td)
+    f["temperature"] = {"raw": ts, "value": _r(t, 1), "unit": "°C", "need": f"{tb}-{tc} °C",
+                        "hard": t is not None and (t <= ta or t >= td), "limits": (ta, td)}
+
+    w = water_model(crop, ev, irrigation)
+    f["water"] = {"raw": w["score"], "value": _r(w["supply_mm"], 0), "unit": "mm", "need": w["need"], "model": w}
+
+    ps = trapezoid(ev.get("ph"), *crop["ph"])
+    f["ph"] = {"raw": ps, "value": ev.get("ph"), "unit": "", "need": f"{crop['ph'][1]}-{crop['ph'][2]}"}
+
+    tcx = ev.get("texture_class")
+    txs = None if tcx is None else (1.0 if tcx in crop["texture_good"] else (0.6 if tcx in crop["texture_marginal"] else 0.25))
+    f["texture"] = {"raw": txs, "value": ev.get("texture_name"), "unit": "",
+                    "need": ", ".join(TEXTURE_NAMES[c] for c in crop["texture_good"][:3]) + ", ..."}
+
+    oc = ev.get("organic_carbon_gkg")
+    f["organic_carbon"] = {"raw": None if oc is None else 0.5 + 0.5 * min(1.0, oc / crop["oc_min_gkg"]),
+                           "value": oc, "unit": "g/kg", "need": f">= {crop['oc_min_gkg']} g/kg"}
+    sp, sm = ev.get("slope_pct"), crop["slope_max_pct"]
+    f["slope"] = {"raw": None if sp is None else (1.0 if sp <= sm else max(0.0, 1.0 - (sp - sm) / sm)),
+                  "value": sp, "unit": "%", "need": f"<= {sm}%"}
+
+    for key, x in f.items():                       # constraint engine: hard / soft / unknown
+        if x["raw"] is None:
+            x["severity"], x["effective"] = "unknown", None
+        elif key in cfg.HARD_FACTORS and x.get("hard"):
+            x["severity"], x["effective"] = "hard", 0.0
+        else:
+            x["severity"], x["effective"] = "soft", max(x["raw"], cfg.SOFT_FLOOR)
+    return f
+
+
+# ═════════════════════════════════════ explanation engine ═════════════════════════════════════
+def _message(key: str, x: Dict[str, Any], crop: Dict[str, Any], irrigation: bool, comp: Optional[str]) -> str:
+    v, u, need = x["value"], x["unit"], x["need"]
+    if key == "temperature":
+        ta, td = x["limits"]
+        if x["severity"] == "hard":
+            return f"Temperature {v} °C is outside the range this crop can survive ({ta}-{td} °C)."
+        return f"Temperature {v} °C is outside the optimum {need}."
+    if key == "water":
+        m = x["model"]
+        if comp == "deficit":
+            return (f"Rainfall deficit: {_r(m['supply_mm'], 0)} mm ({m['basis']}) vs ~{crop['water_mm'][1]} mm needed; "
+                    + ("irrigation is available and partly offsets this." if irrigation else "no irrigation, so the shortfall counts in full."))
+        if comp == "excess":
+            wc, wd = m["ceiling"]
+            return (f"Excess rainfall: {_r(m['exposure_mm'], 0)} mm vs ceiling {wc}-{wd} mm. Drainage looks {m['drainage']['class']} "
+                    f"({m['drainage']['basis']}), so this is a soft limit (strength {m['strength']:.2f}), not a hard cut-off.")
+        if comp == "seasonality":
+            rs = crop["rainfall_seasonality"]
+            return (f"Rain falls in the months this crop needs dry: {_r(m['window_rain_mm'], 0)} mm across months {rs['months']} "
+                    f"(dry means < {cfg.DRY_MONTH_MM:.0f} mm/month).")
+    label = LABELS[key]
+    return f"{label} {v}{(' ' + u) if u else ''} vs needed {need}."
+
+
+def _ok_message(key: str, x: Dict[str, Any], crop: Dict[str, Any]) -> str:
+    if key == "water":
+        m = x["model"]
+        parts = [f"water supply {_r(m['supply_mm'], 0)} mm vs ~{crop['water_mm'][1]} mm needed"]
+        if m["status"] == "excess_rain":
+            if m["window_rain_mm"] is not None:
+                parts.append(f"rain above the generic {m['ceiling'][0]} mm ceiling is tolerated because the crop's rain-sensitive months are dry ({_r(m['window_rain_mm'], 0)} mm)")
+            else:
+                parts.append("rainfall above the generic ceiling is tolerated here")
+        return "Water conditions compatible (" + "; ".join(parts) + ")"
+    return f"{LABELS[key]} compatible ({x['value']}{(' ' + x['unit']) if x['unit'] else ''}; needs {x['need']})"
+
+
+def _explain(factors, crop, irrigation):
+    limits, ok, unknown = [], [], []
+    for key, x in factors.items():
+        if x["severity"] == "unknown":
+            unknown.append(key); continue
+        comp = x["model"]["driver"] if key == "water" else None
+        red = 1.0 - x["effective"]
+        if red >= 0.05:
+            limits.append({"factor": key, "component": comp, "kind": x["severity"], "reduction": round(red, 2),
+                           "score": round(x["effective"], 2), "label": COMPONENT_LABELS.get(comp, LABELS[key]),
+                           "message": _message(key, x, crop, irrigation, comp)})
+        else:
+            ok.append({"factor": key, "message": _ok_message(key, x, crop)})
+    limits.sort(key=lambda d: (-d["reduction"], d["factor"]))
+    lines = [("✗ " if l["kind"] == "hard" else "⚠ ") + l["message"] for l in limits] + \
+            ["✓ " + o["message"] for o in ok] + [f"? {LABELS[k]}: no data (not counted against the crop)" for k in unknown]
+    return limits, lines, unknown
+
+
+def _amendments(crop, ev, factors, irrigation) -> List[str]:
+    tips: List[str] = []
+    m = factors["water"]["model"]
+    if m["status"] in ("supplemental_irrigation", "irrigation_required") and m["supply_mm"] is not None:
+        short = crop["water_mm"][1] - m["supply_mm"]
+        if irrigation:
+            tips.append(f"Plan about {round(short)} mm of irrigation over the season (rain supplies ~{round(m['supply_mm'])} mm).")
+        else:
+            tips.append(f"Rain (~{round(m['supply_mm'])} mm) is short of what this crop needs (~{crop['water_mm'][1]}+ mm); rainfed yields will be poor without irrigation.")
+    if m["status"] == "excess_rain":
+        tips.append(f"Heavy rain for this crop; drainage looks {m['drainage']['class']}. Ensure field drainage to limit waterlogging and disease.")
+    ph = ev.get("ph")
+    if ph is not None and ph > crop["ph"][2]:
+        tips.append("Soil is more alkaline than this crop prefers; gypsum and organic matter can help. Confirm with a soil test first.")
+    if ph is not None and ph < crop["ph"][1]:
+        tips.append("Soil is more acidic than this crop prefers; liming can help. Confirm with a soil test first.")
+    oc = ev.get("organic_carbon_gkg")
+    if oc is not None and oc < crop["oc_min_gkg"]:
+        tips.append("Low organic carbon: add compost / farmyard manure or green manure to build fertility and water holding.")
+    tx = factors["texture"]["raw"]
+    if tx is not None and tx < 1.0:
+        tips.append("Soil texture is not ideal for this crop; mulching, organic matter and drip/frequent light irrigation (sandy) or drainage (clayey) can offset it.")
+    return tips
+
+
+# ═════════════════════════════════════ public API ═════════════════════════════════════
+def category_of(score: float, hard: bool) -> str:
+    if hard:
+        return "unsuitable"
+    return "high" if score >= cfg.CATEGORY_HIGH else "moderate" if score >= cfg.CATEGORY_MODERATE else \
+           "low" if score >= cfg.CATEGORY_LOW else "very_low"
+
+
+def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: bool,
+                  ev: Optional[Dict[str, Any]] = None, calibrator: Optional[Calibrator] = None) -> Dict[str, Any]:
+    crop = normalize_crop(crop_in)
+    ev = ev or build_evidence(profile)
+    cal = calibrator or get_calibrator()
+    f = _score_factors(crop, ev, irrigation)
+    scored = {k: x["effective"] for k, x in f.items() if x["effective"] is not None}
+    if not scored:
+        return {"crop_id": crop["id"], "score": None, "rating": "no_data", "category": "no_data",
+                "factors": {k: {"score": None, "value": x["value"], "unit": x["unit"], "need": x["need"]} for k, x in f.items()}}
+    hard = [k for k, x in f.items() if x["severity"] == "hard"]
+    raw = 0.0 if hard else min(scored.values())
+    calibrated = 0.0 if hard else max(0.0, min(1.0, cal.apply(raw, crop["season"])))
+    cat = category_of(calibrated, bool(hard))
+    limits, lines, unknown = _explain(f, crop, irrigation)
+    primary = limits[0] if limits else None
+    # confidence: completeness / quality of the evidence behind this number (heuristic index, not a statistical interval)
+    conf = 1.0 - cfg.CONF_PENALTY_UNKNOWN_FACTOR * len(unknown)
+    if ev["drainage"]["inferred"] and f["water"]["model"]["hi_raw"] is not None and f["water"]["model"]["hi_raw"] < 1.0:
+        conf -= cfg.CONF_PENALTY_INFERRED_DRAINAGE
+    if not crop.get("verified", True):
+        conf -= cfg.CONF_PENALTY_UNVERIFIED_CROP
+    conf = round(max(cfg.CONF_MIN, conf), 2)
+
+    wm_r = water_model(crop, ev, False)["score"]
+    wm_i = water_model(crop, ev, True)["score"]
+    m = f["water"]["model"]
+    rainfall_amount = None if (m["lo"] is None and m["hi_raw"] is None) else min(v for v in (m["lo"], m["hi_raw"]) if v is not None)
+    soil = [f[k]["effective"] for k in ("ph", "texture", "organic_carbon") if f[k]["effective"] is not None]
+    clim = [v for v in (f["temperature"]["effective"], rainfall_amount) if v is not None]
+    headroom = sum(scored.values()) / len(scored)
+    components = {
+        "temperature_score": _r(f["temperature"]["effective"]), "rainfall_score": _r(rainfall_amount),
+        "water_score": _r(f["water"]["effective"]), "irrigation_score": _r(m["components"].get("deficit")),
+        "season_score": _r(m["components"].get("seasonality")), "soil_score": _r(min(soil) if soil else None),
+        "terrain_score": _r(f["slope"]["effective"]), "climate_score": _r(min(clim) if clim else None),
+        "remote_sensing_score": None, "risk_penalty": _r(1.0 - raw), "raw_score": _r(raw), "calibrated_score": _r(calibrated),
+    }
+    legacy_factors = {}
+    for k, x in f.items():
+        d = {"score": _r(x["raw"]), "effective_score": _r(x["effective"]), "severity": x["severity"],
+             "value": x["value"], "unit": x["unit"], "need": x["need"]}
+        if k == "water":
+            d.update({"status": m["status"], "basis": m["basis"],
+                      "components": {n: _r(v) for n, v in m["components"].items()}, "driver": m["driver"],
+                      "drainage": m["drainage"], "excess_strength": round(m["strength"], 2), "window_rain_mm": _r(m["window_rain_mm"], 0)})
+        legacy_factors[k] = d
+    lim_key = primary["factor"] if primary else "none"
+    return {
+        "crop_id": crop["id"], "name": crop["name"], "name_hi": crop["name_hi"], "season": crop["season"],
+        "tags": crop["tags"], "notes": crop["notes"],
+        "score": round(calibrated, 2), "rating": "unsuitable" if cat == "unsuitable" else ("low" if cat == "very_low" else cat),
+        "category": cat, "confidence": conf, "raw_score": round(raw, 2), "calibrated_score": round(calibrated, 2),
+        "limiting_factor": lim_key,
+        "limiting_label": primary["label"] if primary else "No significant limitation",
+        "limiting_factors": {"primary": primary, "secondary": limits[1:3]},
+        "constraints": {"hard": [{"factor": k, "message": next(l["message"] for l in limits if l["factor"] == k)} for k in hard],
+                        "soft": [{"factor": l["factor"], "component": l["component"], "reduction": l["reduction"]} for l in limits if l["kind"] == "soft"],
+                        "unknown": unknown},
+        "evidence_summary": lines, "components": components,
+        "factors": legacy_factors, "water_status": m["status"], "amendments": _amendments(crop, ev, f, irrigation),
+        "ablation_inputs": {"temperature": _r(f["temperature"]["raw"], 3), "temperature_hard": bool(hard),
+                            "rainfall_amount": _r(rainfall_amount, 3), "water_rainfed": _r(wm_r, 3), "water_irrigated": _r(wm_i, 3),
+                            "ph": _r(f["ph"]["raw"], 3), "texture": _r(f["texture"]["raw"], 3),
+                            "organic_carbon": _r(f["organic_carbon"]["raw"], 3), "slope": _r(f["slope"]["raw"], 3)},
+        "_headroom": round(headroom, 4),
+    }
+
+
+def rank_crops(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Deterministic, tie-aware ranking on CALIBRATED scores. Order: calibrated score, then headroom (mean of the
+    other factor scores), then name. Crops with equal (score, headroom) share a rank and are flagged tied."""
+    valid = [r for r in results if r["score"] is not None]
+    ranked = sorted(valid, key=lambda r: (-r["calibrated_score"], -r["_headroom"], r["name"]))
+    prev, rank = None, 0
+    for i, r in enumerate(ranked, 1):
+        key = (r["calibrated_score"], r["_headroom"])
+        if key != prev:
+            rank, prev = i, key
+        r["rank"] = rank
+        r["components"]["final_rank"] = rank
+    for r in ranked:
+        r["tied_with"] = sum(1 for o in ranked if o is not r and o["rank"] == r["rank"])
+        del r["_headroom"]
+    return ranked
