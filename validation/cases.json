@@ -11,7 +11,8 @@
    "rajasthan",
    "uttarpradesh",
    "westbengal"
-  ]
+  ],
+  "excluded_states": []
  },
  "cases": [
   {
@@ -5753,6 +5754,870 @@
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__chittoor__presence_mango__irrigated",
+   "zone_id": "andhrapradesh__chittoor",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__chittoor.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 62669.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__chittoor__presence_mango__rainfed",
+   "zone_id": "andhrapradesh__chittoor",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__chittoor.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 62669.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "goa__southgoa__presence_mango__irrigated",
+   "zone_id": "goa__southgoa",
+   "agro_zone": "Goa",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/goa__southgoa.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 3394.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "goa__southgoa__presence_mango__rainfed",
+   "zone_id": "goa__southgoa",
+   "agro_zone": "Goa",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/goa__southgoa.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 3394.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "kerala__palakkad__presence_mango__irrigated",
+   "zone_id": "kerala__palakkad",
+   "agro_zone": "Kerala",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/kerala__palakkad.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 9384.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "kerala__palakkad__presence_mango__rainfed",
+   "zone_id": "kerala__palakkad",
+   "agro_zone": "Kerala",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/kerala__palakkad.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 9384.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__krishna__presence_mango__irrigated",
+   "zone_id": "andhrapradesh__krishna",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__krishna.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 56813.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__krishna__presence_mango__rainfed",
+   "zone_id": "andhrapradesh__krishna",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__krishna.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 56813.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "kerala__wayanad__presence_mango__irrigated",
+   "zone_id": "kerala__wayanad",
+   "agro_zone": "Kerala",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/kerala__wayanad.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 4968.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "kerala__wayanad__presence_mango__rainfed",
+   "zone_id": "kerala__wayanad",
+   "agro_zone": "Kerala",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/kerala__wayanad.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 4968.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__vizianagaram__presence_mango__irrigated",
+   "zone_id": "andhrapradesh__vizianagaram",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__vizianagaram.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 37824.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__vizianagaram__presence_mango__rainfed",
+   "zone_id": "andhrapradesh__vizianagaram",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__vizianagaram.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 37824.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__eastgodavari__presence_mango__irrigated",
+   "zone_id": "andhrapradesh__eastgodavari",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__eastgodavari.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 15563.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__eastgodavari__presence_mango__rainfed",
+   "zone_id": "andhrapradesh__eastgodavari",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__eastgodavari.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 15563.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__visakhapatnam__presence_mango__irrigated",
+   "zone_id": "andhrapradesh__visakhapatnam",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__visakhapatnam.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 13223.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__visakhapatnam__presence_mango__rainfed",
+   "zone_id": "andhrapradesh__visakhapatnam",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__visakhapatnam.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 13223.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__anantapur__presence_mango__irrigated",
+   "zone_id": "andhrapradesh__anantapur",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__anantapur.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 8755.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__anantapur__presence_mango__rainfed",
+   "zone_id": "andhrapradesh__anantapur",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__anantapur.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 8755.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__srikakulam__presence_mango__irrigated",
+   "zone_id": "andhrapradesh__srikakulam",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__srikakulam.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 8374.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__srikakulam__presence_mango__rainfed",
+   "zone_id": "andhrapradesh__srikakulam",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__srikakulam.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 8374.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__westgodavari__presence_mango__irrigated",
+   "zone_id": "andhrapradesh__westgodavari",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__westgodavari.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 7496.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__westgodavari__presence_mango__rainfed",
+   "zone_id": "andhrapradesh__westgodavari",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__westgodavari.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 7496.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__prakasam__presence_mango__irrigated",
+   "zone_id": "andhrapradesh__prakasam",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__prakasam.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 6350.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__prakasam__presence_mango__rainfed",
+   "zone_id": "andhrapradesh__prakasam",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__prakasam.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 6350.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__visakhapatnam__presence_sugarcane__irrigated",
+   "zone_id": "andhrapradesh__visakhapatnam",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__visakhapatnam.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 39330.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (10 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__visakhapatnam__presence_sugarcane__rainfed",
+   "zone_id": "andhrapradesh__visakhapatnam",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__visakhapatnam.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 39330.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (10 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "bihar__pashchimchamparan__presence_sugarcane__irrigated",
+   "zone_id": "bihar__pashchimchamparan",
+   "agro_zone": "Bihar",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/bihar__pashchimchamparan.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 95698.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (8 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "bihar__pashchimchamparan__presence_sugarcane__rainfed",
+   "zone_id": "bihar__pashchimchamparan",
+   "agro_zone": "Bihar",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/bihar__pashchimchamparan.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 95698.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (8 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "gujarat__surat__presence_sugarcane__irrigated",
+   "zone_id": "gujarat__surat",
+   "agro_zone": "Gujarat",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/gujarat__surat.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 109888.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (8 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "gujarat__surat__presence_sugarcane__rainfed",
+   "zone_id": "gujarat__surat",
+   "agro_zone": "Gujarat",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/gujarat__surat.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 109888.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (8 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "haryana__yamunanagar__presence_sugarcane__irrigated",
+   "zone_id": "haryana__yamunanagar",
+   "agro_zone": "Haryana",
+   "variant": "irrigated",
+   "split": "test",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/haryana__yamunanagar.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 32084.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (8 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "haryana__yamunanagar__presence_sugarcane__rainfed",
+   "zone_id": "haryana__yamunanagar",
+   "agro_zone": "Haryana",
+   "variant": "rainfed",
+   "split": "test",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/haryana__yamunanagar.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 32084.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (8 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "karnataka__belgaum__presence_sugarcane__irrigated",
+   "zone_id": "karnataka__belgaum",
+   "agro_zone": "Karnataka",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/karnataka__belgaum.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 142229.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (10 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "karnataka__belgaum__presence_sugarcane__rainfed",
+   "zone_id": "karnataka__belgaum",
+   "agro_zone": "Karnataka",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/karnataka__belgaum.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 142229.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (10 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "maharashtra__solapur__presence_sugarcane__irrigated",
+   "zone_id": "maharashtra__solapur",
+   "agro_zone": "Maharashtra",
+   "variant": "irrigated",
+   "split": "test",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/maharashtra__solapur.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 135661.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (9 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "maharashtra__solapur__presence_sugarcane__rainfed",
+   "zone_id": "maharashtra__solapur",
+   "agro_zone": "Maharashtra",
+   "variant": "rainfed",
+   "split": "test",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/maharashtra__solapur.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 135661.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (9 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "punjab__gurdaspur__presence_sugarcane__irrigated",
+   "zone_id": "punjab__gurdaspur",
+   "agro_zone": "Punjab",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/punjab__gurdaspur.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 14987.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (6 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "punjab__gurdaspur__presence_sugarcane__rainfed",
+   "zone_id": "punjab__gurdaspur",
+   "agro_zone": "Punjab",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/punjab__gurdaspur.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 14987.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (6 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "tamilnadu__viluppuram__presence_sugarcane__irrigated",
+   "zone_id": "tamilnadu__viluppuram",
+   "agro_zone": "Tamil Nadu",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/tamilnadu__viluppuram.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 65371.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (9 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "tamilnadu__viluppuram__presence_sugarcane__rainfed",
+   "zone_id": "tamilnadu__viluppuram",
+   "agro_zone": "Tamil Nadu",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/tamilnadu__viluppuram.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 65371.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (9 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "uttarakhand__hardwar__presence_sugarcane__irrigated",
+   "zone_id": "uttarakhand__hardwar",
+   "agro_zone": "Uttarakhand",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/uttarakhand__hardwar.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 71420.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (10 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "uttarakhand__hardwar__presence_sugarcane__rainfed",
+   "zone_id": "uttarakhand__hardwar",
+   "agro_zone": "Uttarakhand",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/uttarakhand__hardwar.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 71420.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (10 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "uttarpradesh__kheri__presence_sugarcane__irrigated",
+   "zone_id": "uttarpradesh__kheri",
+   "agro_zone": "Uttar Pradesh",
+   "variant": "irrigated",
+   "split": "test",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/uttarpradesh__kheri.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 232200.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (10 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "uttarpradesh__kheri__presence_sugarcane__rainfed",
+   "zone_id": "uttarpradesh__kheri",
+   "agro_zone": "Uttar Pradesh",
+   "variant": "rainfed",
+   "split": "test",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/uttarpradesh__kheri.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 232200.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (10 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__chittoor__presence_sugarcane__irrigated",
+   "zone_id": "andhrapradesh__chittoor",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__chittoor.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 28306.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (10 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "andhrapradesh__chittoor__presence_sugarcane__rainfed",
+   "zone_id": "andhrapradesh__chittoor",
+   "agro_zone": "Andhra Pradesh",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/andhrapradesh__chittoor.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 28306.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (10 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "bihar__gopalganj__presence_sugarcane__irrigated",
+   "zone_id": "bihar__gopalganj",
+   "agro_zone": "Bihar",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/bihar__gopalganj.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 25074.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (8 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "bihar__gopalganj__presence_sugarcane__rainfed",
+   "zone_id": "bihar__gopalganj",
+   "agro_zone": "Bihar",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/bihar__gopalganj.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "sugarcane",
+    "mean_area_ha": 25074.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (8 yrs); boundary: datameet Census 2011"
   }
  ]
 }

@@ -12,6 +12,25 @@ import numpy as np
 HERE = Path(__file__).parent
 
 
+def check_ranking_metrics():
+    try:
+        from sklearn import metrics as sk
+        from scipy import stats
+    except ImportError:
+        print("[skip] ranking-metric cross-check needs scikit-learn/scipy"); return
+    import ranking_metrics as R
+    rng = np.random.default_rng(1)
+    y = (rng.random(200) < .3).astype(int); s = np.round(rng.random(200) + y * .3, 1)
+    assert abs(R.pr_auc(y, s) - sk.average_precision_score(y, s)) < 1e-9
+    assert abs(R.brier(y, s.clip(0, 1)) - sk.brier_score_loss(y, s.clip(0, 1))) < 1e-12
+    a = rng.normal(size=12); b = a + rng.normal(size=12)
+    assert abs(R.kendall_tau_b(a, b) - stats.kendalltau(a, b)[0]) < 1e-9
+    rel = rng.integers(0, 4, 10).astype(float); sc = rng.normal(size=10)
+    assert abs(R.ndcg_at_k(list(sc), rel, 3) - sk.ndcg_score([rel], [sc], k=3)) < 1e-9
+    assert abs(R.expected_top1_hit([1, 1, 1, .2], 0) - 1 / 3) < 1e-12 and R.prob_in_topk([1, 1, 1, .2], 2) == [2 / 3, 2 / 3, 2 / 3, 0.0]
+    print("[ok] ranking_metrics.py agrees with scikit-learn / scipy (tie-aware metrics checked analytically)")
+
+
 def check_metrics():
     from metrics import regression_metrics, classification_metrics, binary_metrics, kappa_from_matrix, roc_auc
     try:
@@ -128,4 +147,4 @@ def integration():
 
 
 if __name__ == "__main__":
-    check_metrics(); integration()
+    check_metrics(); check_ranking_metrics(); integration()

@@ -48,3 +48,14 @@ groundwater-trend (needs well-level CGWB data in a form I haven't seen), crop-ex
    `python build_ground_truth.py --exclude-states "haryana,madhyapradesh,maharashtra,mizoram,nagaland,rajasthan,uttarpradesh,westbengal" --max-districts 120`
 4. `crop_ranking` now also reports suitability as classification (binary confusion matrix, recall/precision/AUC at score>=0.5
    vs observed major crops >=10% of area) and a top-1 confusion matrix per season (`confusion_*.csv`).
+
+## What `crop_ranking` reports now
+- **Tie-aware ranking**: top-1, top-3 recall, top-k overlap, NDCG@k, MRR, Kendall tau-b, Spearman (equal scores share positions; metrics are
+  expectations under random tie-breaking) for Vayu AND three explicitly defined baselines on exactly the same cases
+  (`state_prior`, `random`, `climate_only`), plus paired overlap gain vs each, with zone-bootstrap CIs.
+- **Suitability as classification**: binary confusion matrix, precision / recall / specificity / FPR / F1, ROC-AUC, **PR-AUC**, recall by crop.
+- **Calibration**: Brier + reliability curve + ECE, evaluated ONLY when scores are calibrated (otherwise it says why not).
+- **Support**: cases, zones, crops, and cases per season / variant / zone; robustness by season and zone with CIs.
+- **Ablation** (offline from the same responses): climate only -> + soil/terrain -> + water model -> + irrigation -> (remote sensing: not available) -> full.
+- **`presence` cases** (`mango`, `sugarcane`): where an established major perennial crop exists, the engine must not reject it.
+- `fit_calibration.py <tune run dir>` fits the calibrator (tune split only; refuses anything else).

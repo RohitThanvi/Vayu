@@ -1,0 +1,200 @@
+"""
+Permanent agricultural sanity suite + engine invariants. Pure Python (no GEE, no network).
+  cd backend && python tests/test_agri_engine.py        (or: python -m pytest tests/test_agri_engine.py)
+Assertions are QUALITATIVE (categories, directions of change, invariants) - never exact scores.
+"""
+import copy, random, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1])); sys.path.insert(0, str(Path(__file__).parent))
+from agri_fixtures import LOCATIONS
+from app.services.agri.crop_requirements import CROPS
+from app.services.agri.crop_profile import normalize_crop, validate_crop
+from app.services.agri.calibration import Calibrator, fit_isotonic
+from app.services.agri.suitability_engine import score_crop_v2, rank_crops
+from app.services.agri.crop_suitability import score_crops
+from app.services.agri.evidence import build_evidence
+
+BY = {c["id"]: c for c in CROPS}
+
+
+def crop_result(loc, crop_id, irrigated):
+    out = score_crops(copy.deepcopy(LOCATIONS[loc]), irrigated)
+    return next(r for r in out["crops"] if r["crop_id"] == crop_id)
+
+
+# ───────────────────────── A. agricultural sanity: compatible combinations are never rejected on water logic
+# (location, crop, irrigated?) - each is an established crop-location pairing
+COMPATIBLE = [
+    ("ratnagiri", "mango", False), ("ratnagiri", "rice_paddy", False), ("ratnagiri", "guava", False),
+    ("ratnagiri", "amla_gooseberry", False), ("ratnagiri", "groundnut", False),
+    ("rajasthan_semiarid", "bajra_pearl_millet", False), ("rajasthan_semiarid", "mustard", True),
+    ("punjab", "wheat", True), ("punjab", "rice_paddy", True),
+    ("madhya_pradesh", "soybean", False), ("uttar_pradesh", "wheat", True),
+]
+
+
+def test_compatible_pairs_not_rejected_by_water_logic():
+    for loc, cid, irr in COMPATIBLE:
+        r = crop_result(loc, cid, irr)
+        assert r["category"] != "unsuitable", (loc, cid, r["category"], r["limiting_factors"]["primary"])
+        assert not r["constraints"]["hard"], (loc, cid)
+        assert r["components"]["water_score"] >= 0.5, (loc, cid, "water logic rejected an established pairing", r["factors"]["water"])
+
+
+def test_ratnagiri_mango_not_unsuitable_and_not_water_limited():
+    r = crop_result("ratnagiri", "mango", False)
+    assert r["category"] in ("moderate", "high") and r["score"] > 0
+    p = r["limiting_factors"]["primary"]
+    assert p is None or p["factor"] != "water", p
+    assert r["factors"]["water"]["status"] == "excess_rain"       # rain IS above the generic ceiling ...
+    assert r["factors"]["water"]["effective_score"] >= 0.9         # ... but it is not what limits the crop here
+
+
+def test_generic_mechanism_mango_not_zeroed_even_without_dry_window_attribute():
+    """The softening must work from drainage evidence alone, with no crop-specific declaration."""
+    c = copy.deepcopy(BY["mango"]); c["rainfall_seasonality"] = None
+    r = score_crop_v2(c, LOCATIONS["ratnagiri"], False)
+    assert r["category"] != "unsuitable" and r["score"] >= 0.4, r["score"]
+    assert r["limiting_factors"]["primary"]["component"] == "excess"
+
+
+def test_dry_window_penalises_year_round_wet_sites_by_the_same_rule():
+    wet = dict(LOCATIONS["ratnagiri"]); wet["monthly_rain_mm"] = [300] * 12; wet["annual_rain_mm"] = 3600.0
+    r = score_crop_v2(BY["mango"], wet, False)
+    assert r["score"] < crop_result("ratnagiri", "mango", False)["score"]
+    assert r["limiting_factors"]["primary"]["component"] == "seasonality"
+
+
+# ───────────────────────── B. paired irrigation tests (same site + season + candidates, irrigated vs rainfed)
+def _water_pair(loc, cid):
+    a, b = crop_result(loc, cid, False), crop_result(loc, cid, True)
+    return a["components"]["water_score"], b["components"]["water_score"], a["score"], b["score"]
+
+
+def test_irrigation_helps_water_sensitive_crops_in_dry_site():
+    for cid in ("rice_paddy", "wheat", "sugarcane", "cotton", "groundnut"):
+        wr, wi, sr, si = _water_pair("rajasthan_semiarid", cid)
+        assert wi >= wr + 0.10, (cid, wr, wi)
+        assert si >= sr, (cid, sr, si)
+
+
+def test_irrigation_barely_matters_for_drought_adapted_crops_and_for_humid_sites():
+    for loc, cid in (("rajasthan_semiarid", "bajra_pearl_millet"), ("rajasthan_semiarid", "jowar_sorghum"),
+                     ("ratnagiri", "mango"), ("ratnagiri", "guava")):
+        wr, wi, *_ = _water_pair(loc, cid)
+        assert abs(wi - wr) <= 0.05, (loc, cid, wr, wi)
+
+
+def test_irrigation_never_lowers_a_score():
+    rng = random.Random(3)
+    for _ in range(300):
+        prof = _random_profile(rng)
+        a = {r["crop_id"]: r["score"] for r in score_crops(copy.deepcopy(prof), False)["crops"]}
+        b = {r["crop_id"]: r["score"] for r in score_crops(copy.deepcopy(prof), True)["crops"]}
+        assert all(b[k] >= a[k] - 1e-9 for k in a)
+
+
+# ───────────────────────── C. constraint system and explanation invariants
+def _random_profile(rng):
+    mr = [rng.uniform(0, 600) * rng.choice([0.05, 1]) for _ in range(12)]
+    return {"monthly_temp_c": [rng.uniform(2, 40) for _ in range(12)], "monthly_rain_mm": mr, "annual_rain_mm": sum(mr),
+            "annual_mean_temp_c": 25.0, "ph": rng.uniform(3.5, 9.5), "texture_class": rng.randint(1, 12), "texture_name": "x",
+            "organic_carbon_gkg": rng.uniform(0, 30), "slope_pct": rng.uniform(0, 40), "mode": "aoi", "climate_years": "t",
+            "value_source": {}, "sources": {}}
+
+
+def test_only_a_hard_constraint_can_make_a_crop_unsuitable():
+    rng = random.Random(11)
+    for _ in range(400):
+        for r in score_crops(_random_profile(rng), rng.random() < 0.5)["crops"]:
+            if r["category"] == "unsuitable":
+                assert r["constraints"]["hard"] and all(h["factor"] == "temperature" for h in r["constraints"]["hard"])
+            else:
+                assert r["score"] >= 0.1 - 1e-9, r["score"]          # soft floor: nothing is zeroed by a soft limitation
+
+
+def test_unknown_evidence_is_not_unsuitable_and_lowers_confidence():
+    full = copy.deepcopy(LOCATIONS["punjab"])
+    gap = {**full, "ph": None, "texture_class": None, "texture_name": None, "organic_carbon_gkg": None, "slope_pct": None}
+    a = {r["crop_id"]: r for r in score_crops(full, True)["crops"]}
+    b = {r["crop_id"]: r for r in score_crops(gap, True)["crops"]}
+    for cid, r in b.items():
+        assert r["category"] != "unsuitable" or r["constraints"]["hard"]
+        assert set(r["constraints"]["unknown"]) >= {"ph", "texture", "organic_carbon", "slope"}
+        assert r["confidence"] < a[cid]["confidence"]
+        assert r["score"] >= a[cid]["score"] - 1e-9                      # fewer known factors can't lower a Liebig minimum
+
+
+def test_explanation_is_generated_from_factors_that_reduced_the_score():
+    rng = random.Random(5)
+    for _ in range(300):
+        for r in score_crops(_random_profile(rng), rng.random() < 0.5)["crops"]:
+            p = r["limiting_factors"]["primary"]
+            if r["limiting_factor"] == "water":
+                assert p["reduction"] >= 0.05 and p["component"] in ("deficit", "excess", "seasonality")
+                assert r["limiting_label"] != "Rainfall / water supply"      # never the ambiguous generic label
+            if p is None:
+                assert r["limiting_factor"] == "none" and r["limiting_label"] == "No significant limitation"
+                assert r["raw_score"] >= 0.94
+            else:
+                assert abs((1 - p["score"]) - p["reduction"]) < 0.011
+                assert p["reduction"] == max(l["reduction"] for l in [p] + r["limiting_factors"]["secondary"])
+
+
+def test_water_message_distinguishes_excess_from_deficit():
+    assert "Excess rainfall" in crop_result("ratnagiri", "bajra_pearl_millet", False)["limiting_factors"]["primary"]["message"]
+    assert "Rainfall deficit" in crop_result("rajasthan_semiarid", "rice_paddy", False)["limiting_factors"]["primary"]["message"]
+
+
+# ───────────────────────── D. ranking, calibration, schema
+def test_ranking_is_deterministic_and_tie_aware():
+    a = score_crops(copy.deepcopy(LOCATIONS["ratnagiri"]), False)["crops"]
+    b = score_crops(copy.deepcopy(LOCATIONS["ratnagiri"]), False)["crops"]
+    assert [r["crop_id"] for r in a] == [r["crop_id"] for r in b]
+    for r in a:
+        same = [o for o in a if o["rank"] == r["rank"]]
+        assert r["tied_with"] == len(same) - 1
+        assert all(o["calibrated_score"] == r["calibrated_score"] for o in same)
+    assert [r["calibrated_score"] for r in a] == sorted([r["calibrated_score"] for r in a], reverse=True)
+
+
+def test_calibration_is_identity_until_fitted_and_monotone_when_fitted():
+    assert Calibrator().apply(0.37) == 0.37
+    knots = fit_isotonic([0.1, 0.2, 0.3, 0.4, 0.5, 0.6], [0, 1, 0, 0, 1, 1])
+    ys = [k[1] for k in knots]
+    assert ys == sorted(ys)
+    cal = Calibrator({"global": knots}, "test")
+    xs = [i / 20 for i in range(21)]
+    assert [cal.apply(x) for x in xs] == sorted(cal.apply(x) for x in xs)
+
+
+def test_ranking_uses_calibrated_scores():
+    ev = build_evidence(LOCATIONS["punjab"]); cal = Calibrator({"global": [[0.0, 0.0], [1.0, 0.5]]}, "halve")
+    rs = rank_crops([score_crop_v2(c, LOCATIONS["punjab"], True, ev=ev, calibrator=cal) for c in CROPS])
+    assert all(abs(r["calibrated_score"] - r["raw_score"] / 2) < 0.011 for r in rs)
+
+
+def test_every_crop_profile_is_schema_valid():
+    assert {c["id"]: validate_crop(c) for c in CROPS if validate_crop(c)} == {}
+    assert normalize_crop(BY["bajra_pearl_millet"])["excess_sensitivity"] == "high"
+    assert normalize_crop(BY["rice_paddy"])["excess_sensitivity"] == "low"
+    assert normalize_crop(BY["mango"])["kind"] == "perennial"
+
+
+def test_response_exposes_the_requested_components():
+    r = crop_result("punjab", "wheat", True)
+    for k in ("temperature_score", "rainfall_score", "water_score", "soil_score", "season_score", "irrigation_score",
+              "remote_sensing_score", "climate_score", "risk_penalty", "raw_score", "calibrated_score", "final_rank"):
+        assert k in r["components"], k
+    assert r["components"]["remote_sensing_score"] is None            # not sampled by the suitability pipeline (yet)
+    for k in ("category", "confidence", "constraints", "limiting_factors", "evidence_summary", "rank"):
+        assert k in r
+
+
+if __name__ == "__main__":
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failed = 0
+    for f in fns:
+        try: f(); print("ok  ", f.__name__)
+        except AssertionError as e: failed += 1; print("FAIL", f.__name__, "->", str(e)[:300])
+    print(f"{len(fns) - failed}/{len(fns)} passed"); sys.exit(1 if failed else 0)
