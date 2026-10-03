@@ -132,8 +132,18 @@ def _score_factors(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool):
     f["organic_carbon"] = {"raw": None if oc is None else 0.5 + 0.5 * min(1.0, oc / crop["oc_min_gkg"]),
                            "value": oc, "unit": "g/kg", "need": f">= {crop['oc_min_gkg']} g/kg"}
     sp, sm = ev.get("slope_pct"), crop["slope_max_pct"]
-    f["slope"] = {"raw": None if sp is None else (1.0 if sp <= sm else max(0.0, 1.0 - (sp - sm) / sm)),
-                  "value": sp, "unit": "%", "need": f"<= {sm}%"}
+    st = crop.get("slope_terraceable_pct")
+    if sp is None:
+        slope_raw = None
+    elif sp <= sm:
+        slope_raw = 1.0
+    elif st:                                   # slopes above the natural limit are a SOFT terracing requirement (sourced per crop)
+        edge = cfg.TERRACE_SCORE_AT_LIMIT
+        slope_raw = (1.0 - (1.0 - edge) * (sp - sm) / (st - sm)) if sp <= st else max(0.0, edge * (1.0 - (sp - st) / (st - sm)))
+    else:
+        slope_raw = max(0.0, 1.0 - (sp - sm) / sm)
+    f["slope"] = {"raw": slope_raw, "value": sp, "unit": "%", "need": f"<= {sm}%" + (f" (terraceable to {st}%)" if st else ""),
+                  "terracing": bool(st and sp is not None and sm < sp <= st)}
 
     for key, x in f.items():                       # constraint engine: hard / soft / unknown
         if x["raw"] is None:
@@ -167,6 +177,8 @@ def _message(key: str, x: Dict[str, Any], crop: Dict[str, Any], irrigation: bool
             rs = crop["rainfall_seasonality"]
             return (f"Rain falls in the months this crop needs dry: {_r(m['window_rain_mm'], 0)} mm across months {rs['months']} "
                     f"(dry means < {cfg.DRY_MONTH_MM:.0f} mm/month).")
+    if key == "slope" and x.get("terracing"):
+        return f"Slope {v}% is above the natural limit for this crop; it needs bench terracing (workable up to ~{crop['slope_terraceable_pct']}%), which adds cost."
     label = LABELS[key]
     return f"{label} {v}{(' ' + u) if u else ''} vs needed {need}."
 
@@ -255,9 +267,16 @@ def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: 
     calibrated = 0.0 if hard else max(0.0, min(1.0, cal.apply(raw, crop["season"])))
     cat = category_of(calibrated, bool(hard))
     limits, lines, unknown = _explain(f, crop, irrigation)
+    caveats = []
+    hs = crop.get("humidity_sensitive")
+    if hs and ev.get("annual_rain_mm") is not None and ev["annual_rain_mm"] >= cfg.HUMID_SITE_RAIN_MM:
+        caveats.append({"factor": "humidity_disease", "scored": False,
+                        "message": f"High-rainfall site ({ev['annual_rain_mm']:.0f} mm/yr): humidity / disease pressure is NOT modelled and may reduce real-world suitability.",
+                        "source": hs["source"]})
+        lines = lines + ["? " + caveats[0]["message"]]
     primary = limits[0] if limits else None
     # confidence: completeness / quality of the evidence behind this number (heuristic index, not a statistical interval)
-    conf = 1.0 - cfg.CONF_PENALTY_UNKNOWN_FACTOR * len(unknown)
+    conf = 1.0 - cfg.CONF_PENALTY_UNKNOWN_FACTOR * len(unknown) - cfg.CONF_PENALTY_UNMODELLED_RISK * len(caveats)
     if ev["drainage"]["inferred"] and f["water"]["model"]["hi_raw"] is not None and f["water"]["model"]["hi_raw"] < 1.0:
         conf -= cfg.CONF_PENALTY_INFERRED_DRAINAGE
     if not crop.get("verified", True):
@@ -299,7 +318,7 @@ def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: 
         "constraints": {"hard": [{"factor": k, "message": next(l["message"] for l in limits if l["factor"] == k)} for k in hard],
                         "soft": [{"factor": l["factor"], "component": l["component"], "reduction": l["reduction"]} for l in limits if l["kind"] == "soft"],
                         "unknown": unknown},
-        "evidence_summary": lines, "components": components,
+        "evidence_summary": lines, "caveats": caveats, "components": components,
         "factors": legacy_factors, "water_status": m["status"], "amendments": _amendments(crop, ev, f, irrigation),
         "ablation_inputs": {"temperature": _r(f["temperature"]["raw"], 3), "temperature_hard": bool(hard),
                             "rainfall_amount": _r(rainfall_amount, 3), "water_rainfed": _r(wm_r, 3), "water_irrigated": _r(wm_i, 3),
