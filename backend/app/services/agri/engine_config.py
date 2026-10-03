@@ -53,3 +53,9 @@ TERRACE_SCORE_AT_LIMIT = 0.5      # ESTIMATE: score at a crop's terraceable-slop
 # ---- unscored risk caveats
 HUMID_SITE_RAIN_MM = 1500.0       # ESTIMATE: annual rain at/above which disease-pressure caveats are shown
 CONF_PENALTY_UNMODELLED_RISK = 0.15
+
+# ---- dry-window water balance (see water_balance.py)
+CONF_PENALTY_ASSUMED_SOIL_DEPTH = 0.10     # rainfed rabi/zaid estimates lean on stored soil water, and soil depth is not measured
+STORED_SHARE_FOR_DEPTH_CAVEAT = 0.25       # show the soil-depth caveat when stored water is at least this share of supply
+RAINFED_OK_MAI = 0.80
+SUPPLEMENTAL_MAI = 0.55                    # ESTIMATE: below this a rainfed dry-window crop needs irrigation

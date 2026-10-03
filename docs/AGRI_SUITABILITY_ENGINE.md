@@ -62,3 +62,23 @@ A crop is scored **in each season it is actually grown**, and the best season is
 for them); the rabi/zaid water supply uses annual / in-window rainfall as a proxy for stored moisture and irrigation, which over-credits sites with shallow
 or fast-draining soils (a soil water balance - available water capacity + reference ET - is the proper replacement and needs new Earth Engine sampling);
 no humidity / disease-pressure evidence; crop pH ranges are generic EcoCrop values that under-rate alkaline-tolerant crops on Indo-Gangetic soils.
+
+## Dry-window water balance (rabi and zaid)  - replaces the annual-rainfall proxy
+A Nov-Mar or Mar-May crop does not live on annual rainfall; a rainfed one lives on the moisture the soil **stored after the monsoon** plus the little rain
+that falls in its window. `water_balance.py` estimates that and compares it with demand:
+
+    supply = in-window rain + soil water stored at window start        demand = Kc x PET over the window        MAI = supply / demand
+
+* **PET**: Thornthwaite (1948) from monthly mean temperature, Willmott et al. (1985) extension above 26.5 C, day-length correction from latitude
+  (taken from the AOI / point). It under-estimates in hot-dry climates, so MAI is a *relative* index, not an irrigation-scheduling figure.
+* **Storage**: plant-available water capacity by USDA texture (UC Cooperative Extension ANR 80243 ranges, midpoints; loamy sand from Alberta Agriculture)
+  x a 1.0 m root zone. A monthly bucket (two passes of the climatology) gives the soil water at the end of every month; surplus is lost.
+* **Demand**: one cycle-mean crop coefficient, 0.75, from the FAO-56 Table 12 wheat shape (Kc 0.3 -> 1.15 -> 0.25 over 30/30/40/30 days). A crop-specific
+  Kc table is the obvious next refinement.
+* **Score**: rainfed score = (MAI - 0.30) / (0.80 - 0.30) clipped to 0-1 (ESTIMATE thresholds). With irrigation the shortfall is only partly penalised
+  (as before). For rabi the EcoCrop annual-rainfall envelope still applies and the **lower** of the two counts, so a crop's own water-intensity is kept
+  (rice needs more than bajra) while *timing* now matters. Zaid is the Mar-May window (a ~100-day crop sown in March is harvested by early June; June rain belongs to kharif).
+* **Honest limits** (reported in every affected result as a `soil_depth` caveat and a 0.10 confidence penalty): soil **depth** is not measured (OpenLandMap is 0-30 cm),
+  so on shallow soils such as laterite the stored water is over-estimated and rainfed dry-season scores are optimistic; one Kc for all crops; Thornthwaite PET.
+  The result: a high-rainfall coast (Ratnagiri) no longer rates rainfed jowar / maize / gram HIGH in rabi; the Indo-Gangetic plain, where post-monsoon storage
+  plus winter rain cover demand, keeps its rabi ratings. These are behaviours on fixtures and on one live reading, not validated accuracy.

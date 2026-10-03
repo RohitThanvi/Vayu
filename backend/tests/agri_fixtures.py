@@ -15,6 +15,10 @@ def _p(rain, temp, ph, tex, tex_name, oc, slope):
 LOCATIONS = {
     # Konkan coast: ~3100 mm, 6 dry months, laterite
     "ratnagiri": _p([0, 1, 1, 12, 55, 880, 1010, 640, 360, 150, 30, 4], [25, 26, 28, 30, 30, 28, 27, 27, 27, 28, 28, 26], 5.8, 6, "Sandy clay loam", 12, 6),
+    # Ratnagiri district AS SHOWN IN THE LIVE UI (pH 5.9, 13.8 g/kg OC, clay loam, 2930 mm/yr, 25.8 C mean). Annual / soil values are the app's sampled
+    # numbers; the monthly SHAPE is the approximate Konkan pattern above scaled to 2930 mm, and latitude / slope are approximate.
+    "ratnagiri_live": {**_p([round(v * 2930 / 3143, 1) for v in [0, 1, 1, 12, 55, 880, 1010, 640, 360, 150, 30, 4]],
+                            [25, 26, 28, 30, 30, 28, 27, 27, 27, 28, 28, 26], 5.9, 4, "Clay loam", 13.8, 2), "lat": 17.0},
     # Eastern Rajasthan semi-arid: ~570 mm
     "rajasthan_semiarid": _p([8, 9, 6, 4, 12, 60, 190, 185, 75, 12, 3, 4], [15, 18, 24, 30, 34, 34, 30, 28, 29, 26, 20, 16], 8.0, 9, "Sandy loam", 4, 1),
     # Punjab plains: ~750 mm, canal irrigated

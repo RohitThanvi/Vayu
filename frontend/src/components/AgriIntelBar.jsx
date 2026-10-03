@@ -319,7 +319,7 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
           <div style={{ fontSize: 10.5, color: S.text3, marginBottom: 4 }}>Season</div>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {[['best', 'Best'], ['kharif', 'Kharif'], ['rabi', 'Rabi'], ['zaid', 'Summer']].map(([id, label]) => (
-              <button key={id} onClick={() => setSeason(id)} title={id === 'best' ? 'Each crop shown in its best season' : id === 'kharif' ? 'Jun-Oct (monsoon)' : id === 'rabi' ? 'Nov-Mar (winter)' : 'Mar-Jun (summer, irrigated)'}
+              <button key={id} onClick={() => setSeason(id)} title={id === 'best' ? 'Each crop shown in its best season' : id === 'kharif' ? 'Jun-Oct (monsoon)' : id === 'rabi' ? 'Nov-Mar (winter)' : 'Mar-May (summer, irrigated)'}
                 style={{ padding: '3px 8px', fontSize: 10.5, cursor: 'pointer', borderRadius: 3, border: `1px solid ${season === id ? S.accent : S.border}`, background: season === id ? 'rgba(201,168,106,0.15)' : 'transparent', color: season === id ? S.accent : S.text2 }}>{label}</button>
             ))}
           </div>

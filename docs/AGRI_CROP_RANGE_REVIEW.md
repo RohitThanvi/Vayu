@@ -17,10 +17,9 @@ summaries (university packages, review papers) and should be checked against the
 | Chickpea, humidity | **unscored caveat** at >= 1500 mm/yr | ECHO + ICRISAT guidance (poor in warm humid conditions; sow in cool post-rainy season). van der Maessen found little RH effect on fruit-set, so the issue is disease, which is not measured here | medium |
 
 ## Not solvable with the evidence and tools available (so deliberately NOT changed)
-1. **Rabi / zaid water supply.** Annual rainfall stands in for stored soil moisture. The proper replacement is a soil water balance (available water
-   capacity + reference evapotranspiration + crop coefficients and cycle length). It needs new Earth Engine sampling that cannot be tested here and
-   per-crop ET parameters that this review did not find sources for; substituting numbers would be invention. The EcoCrop rainfall ranges are not
-   comparable with a "rain + stored water" figure, so a swap would also undo the Bharatpur fix that was validated against ground truth.
+1. **Rabi / zaid water supply - now modelled, but only roughly.** A monthly soil-water balance (see `AGRI_SUITABILITY_ENGINE.md`) replaces the
+   annual-rainfall proxy. Still missing and flagged: measured soil depth (so shallow laterite soils are over-credited), crop-specific Kc / cycle length
+   (one cycle-mean Kc of 0.75 is used), and a PET method better than Thornthwaite for hot-dry climates (ERA5-Land PET would need new, untested Earth Engine sampling).
 2. **Humidity / disease pressure as a scored factor.** There is no sampled humidity layer in the pipeline and no crop-specific numeric limits were found.
    It is surfaced as a caveat with lower confidence instead of a made-up penalty.
 3. **Summer (zaid) ground truth.** The statistics dataset's summer rows are too sparse for a validated ranking.

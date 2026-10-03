@@ -22,10 +22,11 @@ from .crop_profile import normalize_crop
 from .crop_requirements import SEASON_MONTHS, TEXTURE_NAMES
 from .crop_seasons import GROWING_SEASONS, SOURCE as SEASON_SOURCE
 from .evidence import _season_mean_temp, _season_rain, build_evidence, trapezoid
+from .water_balance import MAI_FULL, MAI_ZERO, window_balance
 
 LABELS = {"temperature": "Temperature", "water": "Rainfall / water supply", "ph": "Soil pH",
           "texture": "Soil texture", "organic_carbon": "Organic carbon", "slope": "Slope"}
-SEASON_LABELS = {"kharif": "Kharif (Jun-Oct)", "rabi": "Rabi (Nov-Mar)", "zaid": "Zaid / summer (Mar-Jun)", "perennial": "Year-round"}
+SEASON_LABELS = {"kharif": "Kharif (Jun-Oct)", "rabi": "Rabi (Nov-Mar)", "zaid": "Zaid / summer (Mar-May)", "perennial": "Year-round"}
 SEASON_SHORT = {"kharif": "Kharif", "rabi": "Rabi", "zaid": "Summer (zaid)", "perennial": "Year-round"}
 COMPONENT_LABELS = {"deficit": "Rainfall deficit", "excess": "Excess rainfall", "seasonality": "Dry-season length"}
 _calibrator: Optional[Calibrator] = None
@@ -59,8 +60,7 @@ def water_model(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool, seas
     # irrigation recharged by the whole year's rain, so annual rainfall is the closer proxy.
     # Zaid (Mar-Jun) is the dry pre-monsoon window: crops live on irrigation, so only in-window rain counts as free supply.
     supply, basis = (in_season, "in-season rainfall") if season == "kharif" else \
-                    (in_season, "in-window rainfall (summer crops depend on irrigation)") if season == "zaid" else \
-                    (annual, "annual rainfall (proxy for stored soil moisture + irrigation)")
+                    (annual, "annual rainfall (EcoCrop envelope; dry-window crops are also checked against the soil-water balance)")
     # EXCESS side: the rain the crop is actually exposed to. A Nov-Mar crop never sees the monsoon;
     # perennials live through it.
     exposure = annual if season == "perennial" else (in_season if in_season is not None else supply)
@@ -68,7 +68,20 @@ def water_model(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool, seas
 
     lo = _ramp_lo(supply, wa, wb)
     hi_raw = _ramp_hi(exposure, wc, wd)
-    deficit = None if lo is None else (1.0 - 0.5 * (1.0 - lo) if irrigation else lo)
+    irr = (lambda x: None if x is None else (1.0 - 0.5 * (1.0 - x) if irrigation else x))
+    deficit = irr(lo)
+    # DRY-WINDOW crops (rabi, zaid): judge the deficit on a soil-water balance (in-window rain + soil water stored after the monsoon vs
+    # Kc * PET), not on annual rainfall. For rabi the EcoCrop annual-rainfall envelope still applies as well (the lower of the two).
+    balance = None
+    wbal = ev.get("water_balance")
+    if season in ("rabi", "zaid") and wbal and not any(v is None for v in ev["monthly_rain_mm"]):
+        balance = window_balance(wbal, ev["monthly_rain_mm"], SEASON_MONTHS[season])
+        balance["awc_mm"] = wbal["awc_mm"]
+        bal_score = balance["rainfed_score"]
+        # The crop's own water-intensity still comes from its EcoCrop range (annual envelope); the balance adds WHEN the water is available.
+        deficit = irr(bal_score) if lo is None else min(irr(lo), irr(bal_score))
+        supply, basis = balance["supply_mm"], "in-window rain + stored soil water (water balance)"
+        # keep `lo` (the envelope) for the rainfall-amount component; the balance is reported separately
 
     # RAIN-SENSITIVE WINDOW (e.g. mango flowering): how dry is the window the crop needs dry?
     seas, window_rain = None, None
@@ -96,6 +109,8 @@ def water_model(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool, seas
         status = "unknown"
     elif exposure is not None and exposure > wc:
         status = "excess_rain"
+    elif balance is not None and balance["mai"] is not None:
+        status = "rainfed_ok" if balance["mai"] >= cfg.RAINFED_OK_MAI else ("supplemental_irrigation" if balance["mai"] >= cfg.SUPPLEMENTAL_MAI else "irrigation_required")
     elif supply is not None and supply >= wb:
         status = "rainfed_ok"
     elif supply is not None and supply >= wa:
@@ -103,7 +118,7 @@ def water_model(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool, seas
     else:
         status = "irrigation_required"
     return {"score": score, "components": comps, "driver": driver, "status": status, "supply_mm": supply,
-            "exposure_mm": exposure, "window_rain_mm": window_rain, "basis": basis, "lo": lo, "hi_raw": hi_raw, "strength": k,
+            "exposure_mm": exposure, "window_rain_mm": window_rain, "balance": balance, "basis": basis, "lo": lo, "hi_raw": hi_raw, "strength": k,
             "drainage": ev["drainage"], "need": f"{wb}-{wc} mm", "ceiling": (wc, wd)}
 
 
@@ -166,6 +181,11 @@ def _message(key: str, x: Dict[str, Any], crop: Dict[str, Any], irrigation: bool
         return f"Temperature {v} °C{win} is {'above' if v is not None and v > x['limits'][0] + (td - ta) / 2 else 'below'} the optimum {need}."
     if key == "water":
         m = x["model"]
+        if comp == "deficit" and m.get("balance"):
+            b = m["balance"]
+            return (f"Water balance: {b['window_rain_mm']:.0f} mm rain + ~{b['stored_mm']:.0f} mm stored soil water = ~{b['supply_mm']:.0f} mm vs ~{b['demand_mm']:.0f} mm crop demand "
+                    f"(PET x Kc), moisture index {b['mai']:.2f}; "
+                    + ("irrigation is available and partly offsets the shortfall." if irrigation else "no irrigation, so a rainfed crop would be water-stressed."))
         if comp == "deficit":
             return (f"Rainfall deficit: {_r(m['supply_mm'], 0)} mm ({m['basis']}) vs ~{crop['water_mm'][1]} mm needed; "
                     + ("irrigation is available and partly offsets this." if irrigation else "no irrigation, so the shortfall counts in full."))
@@ -186,7 +206,11 @@ def _message(key: str, x: Dict[str, Any], crop: Dict[str, Any], irrigation: bool
 def _ok_message(key: str, x: Dict[str, Any], crop: Dict[str, Any]) -> str:
     if key == "water":
         m = x["model"]
-        parts = [f"water supply {_r(m['supply_mm'], 0)} mm vs ~{crop['water_mm'][1]} mm needed"]
+        if m.get("balance"):
+            b = m["balance"]
+            parts = [f"~{b['supply_mm']:.0f} mm available (rain + stored soil water) vs ~{b['demand_mm']:.0f} mm demand, moisture index {b['mai']:.2f}"]
+        else:
+            parts = [f"water supply {_r(m['supply_mm'], 0)} mm vs ~{crop['water_mm'][1]} mm needed"]
         if m["status"] == "excess_rain":
             if m["window_rain_mm"] is not None:
                 parts.append(f"rain above the generic {m['ceiling'][0]} mm ceiling is tolerated because the crop's rain-sensitive months are dry ({_r(m['window_rain_mm'], 0)} mm)")
@@ -218,7 +242,11 @@ def _explain(factors, crop, irrigation):
 def _amendments(crop, ev, factors, irrigation) -> List[str]:
     tips: List[str] = []
     m = factors["water"]["model"]
-    if m["status"] in ("supplemental_irrigation", "irrigation_required") and m["supply_mm"] is not None:
+    if m.get("balance") and m["status"] in ("supplemental_irrigation", "irrigation_required"):
+        b = m["balance"]; short = max(0.0, b["demand_mm"] - b["supply_mm"])
+        tips.append(f"Plan about {round(short)} mm of irrigation over the season (demand ~{round(b['demand_mm'])} mm vs ~{round(b['supply_mm'])} mm from rain and stored soil water)."
+                    if irrigation else f"A rainfed crop would be ~{round(short)} mm short (demand ~{round(b['demand_mm'])} mm vs ~{round(b['supply_mm'])} mm available); it needs irrigation.")
+    elif m["status"] in ("supplemental_irrigation", "irrigation_required") and m["supply_mm"] is not None:
         short = crop["water_mm"][1] - m["supply_mm"]
         if irrigation:
             tips.append(f"Plan about {round(short)} mm of irrigation over the season (rain supplies ~{round(m['supply_mm'])} mm).")
@@ -276,7 +304,13 @@ def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: 
         lines = lines + ["? " + caveats[0]["message"]]
     primary = limits[0] if limits else None
     # confidence: completeness / quality of the evidence behind this number (heuristic index, not a statistical interval)
-    conf = 1.0 - cfg.CONF_PENALTY_UNKNOWN_FACTOR * len(unknown) - cfg.CONF_PENALTY_UNMODELLED_RISK * len(caveats)
+    bal = f["water"]["model"].get("balance")
+    if bal and bal["supply_mm"] > 0 and bal["stored_mm"] / bal["supply_mm"] >= cfg.STORED_SHARE_FOR_DEPTH_CAVEAT:
+        caveats.append({"factor": "soil_depth", "scored": False, "source": "assumption (water_balance.ROOT_ZONE_M)",
+                        "message": "Stored soil water assumes a 1.0 m root zone; soil depth is not measured, so on shallow soils (e.g. laterite) rainfed dry-season estimates are optimistic."})
+        lines = lines + ["? " + caveats[-1]["message"]]
+    conf = 1.0 - cfg.CONF_PENALTY_UNKNOWN_FACTOR * len(unknown) - cfg.CONF_PENALTY_UNMODELLED_RISK * sum(1 for c in caveats if c["factor"] == "humidity_disease") \
+           - (cfg.CONF_PENALTY_ASSUMED_SOIL_DEPTH if any(c["factor"] == "soil_depth" for c in caveats) else 0.0)
     if ev["drainage"]["inferred"] and f["water"]["model"]["hi_raw"] is not None and f["water"]["model"]["hi_raw"] < 1.0:
         conf -= cfg.CONF_PENALTY_INFERRED_DRAINAGE
     if not crop.get("verified", True):
@@ -304,7 +338,8 @@ def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: 
         if k == "water":
             d.update({"status": m["status"], "basis": m["basis"],
                       "components": {n: _r(v) for n, v in m["components"].items()}, "driver": m["driver"],
-                      "drainage": m["drainage"], "excess_strength": round(m["strength"], 2), "window_rain_mm": _r(m["window_rain_mm"], 0)})
+                      "drainage": m["drainage"], "excess_strength": round(m["strength"], 2), "window_rain_mm": _r(m["window_rain_mm"], 0),
+                      "balance": None if not m["balance"] else {k: _r(v, 2) for k, v in m["balance"].items()}})
         legacy_factors[k] = d
     lim_key = primary["factor"] if primary else "none"
     return {

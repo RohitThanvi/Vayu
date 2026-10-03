@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import engine_config as cfg
 from .crop_requirements import SEASON_MONTHS, TEXTURE_NAMES
+from .water_balance import build_water_balance
 
 
 def trapezoid(x: Optional[float], a: float, b: float, c: float, d: float) -> Optional[float]:
@@ -94,6 +95,9 @@ def build_evidence(profile: Dict[str, Any]) -> Dict[str, Any]:
         "slope_pct": profile.get("slope_pct"),
         "drainage": classify_drainage(profile.get("slope_pct"), profile.get("texture_class")),
         "soil_moisture": None, "remote_sensing": None,        # not sampled by this pipeline (yet)
+        "lat": profile.get("lat"),
+        # modelled soil-water balance (rain + stored soil water vs PET) for dry-window crops; None if temperature / rain / texture is missing
+        "water_balance": build_water_balance(mr, mt, profile.get("texture_class"), profile.get("lat")),
     }
     ev["missing"] = [k for k in ("annual_rain_mm", "ph", "texture_class", "organic_carbon_gkg", "slope_pct")
                      if ev[k] is None] + (["monthly_rain_mm"] if dry is None else []) + \
