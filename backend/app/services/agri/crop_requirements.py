@@ -49,7 +49,7 @@ TEXTURE_NAMES: Dict[int, str] = {
 SEASON_MONTHS: Dict[str, List[int]] = {
     "kharif": [6, 7, 8, 9, 10],
     "rabi": [11, 12, 1, 2, 3],
-    "zaid": [3, 4, 5, 6],      # summer / zaid: irrigated Mar-Jun crops (DES season convention)
+    "zaid": [3, 4, 5],         # summer / zaid: ~100-day irrigated crops sown in March (DES: Mar-Jun season); June rain belongs to the kharif sowing season
     "perennial": list(range(1, 13)),
 }
 

@@ -65,6 +65,30 @@ FACTOR_LABELS = {
 # 1. Sampling (the only GEE-touching part)
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _aoi_latitude(aoi: Dict[str, Any]) -> Optional[float]:
+    """Mid-latitude of an AOI's bounding box, from the GeoJSON itself (used only for the PET day-length correction)."""
+    lats: List[float] = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k in ("geometry", "geometries", "features"):
+                if k in o:
+                    walk(o[k])
+            if "coordinates" in o:
+                walk(o["coordinates"])
+        elif isinstance(o, (list, tuple)):
+            if len(o) >= 2 and all(isinstance(v, (int, float)) for v in o[:2]):
+                lats.append(float(o[1]))
+            else:
+                for v in o:
+                    walk(v)
+    try:
+        walk(aoi)
+    except Exception:
+        return None
+    return (min(lats) + max(lats)) / 2.0 if lats else None
+
+
 def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = None,
                             aoi: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     import ee
@@ -134,6 +158,7 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
 
     return {
         "mode": mode,
+        "lat": lat if mode == "point" else _aoi_latitude(aoi),
         "ph": _r(soil.get("ph"), 2),
         "organic_carbon_gkg": _r(soil.get("oc_gkg"), 1),
         "texture_class": tex_code,

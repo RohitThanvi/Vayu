@@ -171,10 +171,11 @@ def test_rice_slope_is_a_soft_terracing_requirement_not_a_cliff():
 def test_humid_site_adds_unscored_disease_caveat_and_lowers_confidence_for_chickpea_only():
     wet, _ = _factor("ratnagiri", "gram_chickpea", "ph")
     dry, _ = _factor("rajasthan_semiarid", "gram_chickpea", "ph")
-    assert wet["caveats"] and not dry["caveats"] and wet["caveats"][0]["scored"] is False
+    has = lambda r: [c for c in r["caveats"] if c["factor"] == "humidity_disease"]
+    assert has(wet) and not has(dry) and has(wet)[0]["scored"] is False
     assert wet["confidence"] < dry["confidence"]
     assert any("NOT modelled" in l for l in wet["evidence_summary"])
-    assert not _factor("ratnagiri", "mustard", "ph")[0]["caveats"]            # no sourced humidity trait -> no claim
+    assert not has(_factor("ratnagiri", "mustard", "ph")[0])                 # no sourced humidity trait -> no claim
 
 
 def test_caveat_does_not_change_the_score():
