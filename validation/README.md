@@ -59,3 +59,9 @@ groundwater-trend (needs well-level CGWB data in a form I haven't seen), crop-ex
 - **Ablation** (offline from the same responses): climate only -> + soil/terrain -> + water model -> + irrigation -> (remote sensing: not available) -> full.
 - **`presence` cases** (`mango`, `sugarcane`): where an established major perennial crop exists, the engine must not reject it.
 - `fit_calibration.py <tune run dir>` fits the calibrator (tune split only; refuses anything else).
+
+## Always pull before a run, and check the backend version
+The harness and the backend must be the same generation. A run made with an OLD harness against a NEW backend (no `season` sent) silently drops
+every crop whose best season differs from the case's season (3-10 crops per case instead of 7-13) and its metrics are not valid. The manifest and
+report now record `backend_engine_version` (from the response; Render supplies `RENDER_GIT_COMMIT`), a season-aware backend that does not echo the
+requested season aborts the case, and a mid-run deploy prints a warning. Check `n_crops_ranked` in `results.csv` if numbers look odd.

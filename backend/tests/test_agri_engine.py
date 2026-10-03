@@ -311,6 +311,41 @@ def test_response_exposes_the_requested_components():
         assert k in r
 
 
+# ───────────────────────── E. robustness: the endpoint must never fail on odd evidence
+def test_cold_himalayan_profile_does_not_crash_and_is_sensible():
+    """Regression: winter PET = 0 gave demand 0 -> moisture index None -> '{:.2f}' on None -> HTTP 422 for Uttarkashi."""
+    for irr in (False, True):
+        for season in (None, "kharif", "rabi", "zaid"):
+            out = score_crops(copy.deepcopy(LOCATIONS["himalayan_cold"]), irr, season=season)
+            assert out["crops"], season
+    wheat = next(c for c in score_crops(copy.deepcopy(LOCATIONS["himalayan_cold"]), True, season="rabi")["crops"] if c["crop_id"] == "wheat")
+    assert wheat["seasonal"]["rabi"]["hard_limit"] or wheat["seasonal"]["rabi"]["score"] < 0.5       # sub-zero winter means: not a good wheat window
+
+
+def _fuzz_profile(rng):
+    def maybe(v, p=0.12):
+        return None if rng.random() < p else v
+    mt = [maybe(rng.uniform(-25, 48), 0.04) for _ in range(12)]
+    mr = [maybe(rng.choice([0.0, rng.uniform(0, 1500)]), 0.04) for _ in range(12)]
+    ann = None if any(v is None for v in mr) and rng.random() < 0.5 else (sum(v for v in mr if v is not None) if rng.random() < 0.9 else rng.uniform(0, 6000))
+    return {"monthly_temp_c": mt, "monthly_rain_mm": mr, "annual_rain_mm": ann, "annual_mean_temp_c": maybe(rng.uniform(-10, 40)),
+            "ph": maybe(rng.uniform(2.5, 11.0)), "texture_class": maybe(rng.randint(1, 12)), "texture_name": "x",
+            "organic_carbon_gkg": maybe(rng.uniform(0, 80)), "slope_pct": maybe(rng.uniform(0, 90)), "lat": maybe(rng.uniform(-60, 70)),
+            "mode": rng.choice(["aoi", "point"]), "climate_years": "t", "value_source": {}, "sources": {}}
+
+
+def test_fuzz_endpoint_never_raises_and_outputs_stay_valid():
+    rng = random.Random(20261003)
+    cats = {"high", "moderate", "low", "very_low", "unsuitable", "no_data"}
+    for i in range(1500):
+        prof = _fuzz_profile(rng)
+        out = score_crops(prof, rng.random() < 0.5, season=rng.choice([None, "best", "kharif", "rabi", "zaid"]))
+        for r in out["crops"]:
+            assert r["category"] in cats and 0.0 <= r["score"] <= 1.0 and 0.2 <= r["confidence"] <= 1.0, (i, r["crop_id"])
+            assert all(isinstance(m, str) for m in r["evidence_summary"])
+            assert isinstance(r["season_highlight"], str)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

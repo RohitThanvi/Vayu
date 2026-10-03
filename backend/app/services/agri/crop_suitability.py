@@ -29,6 +29,7 @@ unit-tested offline; only sample_location_profile() touches Earth Engine.
 """
 
 import asyncio
+import os
 import logging
 import math
 import statistics
@@ -64,6 +65,11 @@ FACTOR_LABELS = {
 # ═════════════════════════════════════════════════════════════════════════════
 # 1. Sampling (the only GEE-touching part)
 # ═════════════════════════════════════════════════════════════════════════════
+
+# Identifies the code that produced a response, so validation runs can record what they actually tested (Render sets RENDER_GIT_COMMIT).
+ENGINE_VERSION = (os.environ.get("RENDER_GIT_COMMIT") or os.environ.get("VAYU_GIT_COMMIT") or "unknown")[:7]
+ENGINE_FEATURES = ("seasonal_v1", "water_balance_v1")
+
 
 def _aoi_latitude(aoi: Dict[str, Any]) -> Optional[float]:
     """Mid-latitude of an AOI's bounding box, from the GeoJSON itself (used only for the PET day-length correction)."""
@@ -255,6 +261,7 @@ def score_crops(profile: Dict[str, Any], irrigation_available: bool = False,
                     "monthly_rain_mm": p.get("monthly_rain_mm"), "monthly_temp_c": p.get("monthly_temp_c")},
         "evidence": {k: ev[k] for k in ("dry_months", "longest_dry_run_months", "wet_season_share", "drainage", "missing")},
         "irrigation_available": irrigation_available,
+        "engine_version": ENGINE_VERSION, "engine_features": list(ENGINE_FEATURES),
         "season_requested": season or "best",
         "season_windows": {k: v for k, v in SEASON_MONTHS.items() if k != "perennial"},
         "not_grown_in_season": not_grown,

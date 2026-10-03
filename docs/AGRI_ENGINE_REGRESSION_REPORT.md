@@ -8,11 +8,13 @@ _generated 2026-10-03 by backend/tests/make_regression_report.py - offline, on A
 | test_agri_engine | test_best_season_is_the_highest_scoring_eligible_season_and_seasonal_block_is_consistent | PASS  |
 | test_agri_engine | test_calibration_is_identity_until_fitted_and_monotone_when_fitted | PASS  |
 | test_agri_engine | test_caveat_does_not_change_the_score | PASS  |
+| test_agri_engine | test_cold_himalayan_profile_does_not_crash_and_is_sensible | PASS  |
 | test_agri_engine | test_compatible_pairs_not_rejected_by_water_logic | PASS  |
 | test_agri_engine | test_dry_window_penalises_year_round_wet_sites_by_the_same_rule | PASS  |
 | test_agri_engine | test_every_crop_profile_is_schema_valid | PASS  |
 | test_agri_engine | test_every_seasonal_crop_has_observed_seasons_and_a_primary | PASS  |
 | test_agri_engine | test_explanation_is_generated_from_factors_that_reduced_the_score | PASS  |
+| test_agri_engine | test_fuzz_endpoint_never_raises_and_outputs_stay_valid | PASS  |
 | test_agri_engine | test_generic_mechanism_mango_not_zeroed_even_without_dry_window_attribute | PASS  |
 | test_agri_engine | test_groundnut_ph_optimum_extends_to_7_5_only | PASS  |
 | test_agri_engine | test_humid_site_adds_unscored_disease_caveat_and_lowers_confidence_for_chickpea_only | PASS  |
@@ -53,7 +55,7 @@ _generated 2026-10-03 by backend/tests/make_regression_report.py - offline, on A
 | test_water_balance | test_thornthwaite_is_in_a_sane_range_and_monotone_in_temperature | PASS  |
 | test_water_balance | test_window_wraps_the_year_end_and_uses_the_month_before_the_window | PASS  |
 
-47/47 passed
+49/49 passed
 
 ## Ratnagiri (live UI values, rainfed): all crops, ranked
 
