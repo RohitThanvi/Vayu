@@ -39,6 +39,19 @@ def get_calibrator() -> Calibrator:
     return _calibrator
 
 
+def _fmt(v, nd=0, missing="n/a"):
+    """Number -> text; never raises on None (messages must not be able to break the endpoint)."""
+    return missing if v is None else f"{float(v):.{nd}f}"
+
+
+def _balance_text(b: Dict[str, Any]) -> str:
+    if not b.get("demand_mm"):
+        return (f"{_fmt(b['window_rain_mm'])} mm rain + ~{_fmt(b['stored_mm'])} mm stored soil water, but essentially no evaporative demand in this window "
+                f"(too cold for active growth)")
+    return (f"{_fmt(b['window_rain_mm'])} mm rain + ~{_fmt(b['stored_mm'])} mm stored soil water = ~{_fmt(b['supply_mm'])} mm vs "
+            f"~{_fmt(b['demand_mm'])} mm crop demand (PET x Kc), moisture index {_fmt(b['mai'], 2)}")
+
+
 def _r(v, nd=2):
     return None if v is None else round(float(v), nd)
 
@@ -183,8 +196,7 @@ def _message(key: str, x: Dict[str, Any], crop: Dict[str, Any], irrigation: bool
         m = x["model"]
         if comp == "deficit" and m.get("balance"):
             b = m["balance"]
-            return (f"Water balance: {b['window_rain_mm']:.0f} mm rain + ~{b['stored_mm']:.0f} mm stored soil water = ~{b['supply_mm']:.0f} mm vs ~{b['demand_mm']:.0f} mm crop demand "
-                    f"(PET x Kc), moisture index {b['mai']:.2f}; "
+            return ("Water balance: " + _balance_text(b) + "; "
                     + ("irrigation is available and partly offsets the shortfall." if irrigation else "no irrigation, so a rainfed crop would be water-stressed."))
         if comp == "deficit":
             return (f"Rainfall deficit: {_r(m['supply_mm'], 0)} mm ({m['basis']}) vs ~{crop['water_mm'][1]} mm needed; "
@@ -192,7 +204,7 @@ def _message(key: str, x: Dict[str, Any], crop: Dict[str, Any], irrigation: bool
         if comp == "excess":
             wc, wd = m["ceiling"]
             return (f"Excess rainfall: {_r(m['exposure_mm'], 0)} mm vs ceiling {wc}-{wd} mm. Drainage looks {m['drainage']['class']} "
-                    f"({m['drainage']['basis']}), so this is a soft limit (strength {m['strength']:.2f}), not a hard cut-off.")
+                    f"({m['drainage']['basis']}), so this is a soft limit (strength {_fmt(m['strength'], 2)}), not a hard cut-off.")
         if comp == "seasonality":
             rs = crop["rainfall_seasonality"]
             return (f"Rain falls in the months this crop needs dry: {_r(m['window_rain_mm'], 0)} mm across months {rs['months']} "
@@ -208,7 +220,7 @@ def _ok_message(key: str, x: Dict[str, Any], crop: Dict[str, Any]) -> str:
         m = x["model"]
         if m.get("balance"):
             b = m["balance"]
-            parts = [f"~{b['supply_mm']:.0f} mm available (rain + stored soil water) vs ~{b['demand_mm']:.0f} mm demand, moisture index {b['mai']:.2f}"]
+            parts = [_balance_text(b)]
         else:
             parts = [f"water supply {_r(m['supply_mm'], 0)} mm vs ~{crop['water_mm'][1]} mm needed"]
         if m["status"] == "excess_rain":
@@ -299,7 +311,7 @@ def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: 
     hs = crop.get("humidity_sensitive")
     if hs and ev.get("annual_rain_mm") is not None and ev["annual_rain_mm"] >= cfg.HUMID_SITE_RAIN_MM:
         caveats.append({"factor": "humidity_disease", "scored": False,
-                        "message": f"High-rainfall site ({ev['annual_rain_mm']:.0f} mm/yr): humidity / disease pressure is NOT modelled and may reduce real-world suitability.",
+                        "message": f"High-rainfall site ({_fmt(ev['annual_rain_mm'])} mm/yr): humidity / disease pressure is NOT modelled and may reduce real-world suitability.",
                         "source": hs["source"]})
         lines = lines + ["? " + caveats[0]["message"]]
     primary = limits[0] if limits else None

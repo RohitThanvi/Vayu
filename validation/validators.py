@@ -93,7 +93,10 @@ class CropRanking:
         resp = client.call("crop_suitability", {"include_revenue": False, "season": season, **build_request(case, base_dir)}, use_cache)
         crops = [c for c in resp["crops"] if c.get("score") is not None
                  and (c.get("season") == season or (t.get("include_perennials") and c.get("season") == "perennial"))]
-        # `season` is sent so the engine ranks every crop GROWN in that season by that season's score (older backends ignore it)
+        # `season` is sent so the engine ranks every crop GROWN in that season by that season's score (older backends ignore it).
+        # A backend that advertises the seasonal engine must echo the season back; otherwise the comparison would silently be wrong.
+        if "seasonal_v1" in (resp.get("engine_features") or []) and resp.get("season_requested") != season:
+            raise ValueError(f"backend returned season_requested={resp.get('season_requested')!r} for a {season!r} case (harness/backend mismatch)")
         pred = [c["crop_id"] for c in crops]
         known = lambda L: [c for c in L if c in CROP_IDS]
         truth, base = known(t["gt_crops"]), known(t.get("baseline_crops", []))
@@ -113,7 +116,8 @@ class CropRanking:
                 "baseline_overlap_frac": None if b is None else b["overlap_frac"], "tie_at_cutoff": int(tied),
                 "season": season, "top1_pred": pred[0] if pred else "", "top1_truth": truth[0] if truth else "",
                 "pairs": json.dumps(pairs), "baseline_list": "|".join(base), "irrigated": int(bool(req_irr(case))),
-                "calibrated": int(cal.startswith("fitted")), "abl": json.dumps(abl) if abl else ""}
+                "calibrated": int(cal.startswith("fitted")), "abl": json.dumps(abl) if abl else "",
+                "engine_version": resp.get("engine_version", "pre-versioning"), "n_crops_ranked": len(crops)}
 
     def summarize(self, rows, ctx):
         """Separate metric blocks per `variant` (e.g. irrigated vs rainfed) so conditions are never pooled."""

@@ -103,7 +103,13 @@ def main():
                      columns=[f"pred:{l}" for l in m["labels"]]).to_csv(run_dir / f"confusion_{name}.csv")
     (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2, default=str), encoding="utf-8")
 
-    manifest = {"run_id": run_id, "utc": datetime.now(timezone.utc).isoformat(), "base_url": a.base_url,
+    # what code did the BACKEND actually run? (the local git hash only says which harness/checkout was used)
+    ev_counts = pd.Series([x.get("engine_version") for x in rows if x.get("engine_version")]).value_counts().to_dict()
+    if len(ev_counts) > 1:
+        print(f"WARNING: responses came from {len(ev_counts)} different backend versions {ev_counts} - a deploy happened mid-run; results are mixed.")
+    if ev_counts and set(ev_counts) <= {"pre-versioning", "unknown"}:
+        print("NOTE: backend does not report a version (older deploy, or RENDER_GIT_COMMIT unset); record it by hand.")
+    manifest = {"run_id": run_id, "backend_engine_version": ev_counts, "utc": datetime.now(timezone.utc).isoformat(), "base_url": a.base_url,
                 "split": a.split, "model_version": version, "n_cases": len(cases),
                 "cases_file_sha256": hashlib.sha256(cases_path.read_bytes()).hexdigest(),
                 "python": platform.python_version(), "numpy": np.__version__, "pandas": pd.__version__}
@@ -111,7 +117,7 @@ def main():
 
     # ---- report
     rep = [f"# Vayu validation report - {run_id}", "",
-           f"- model version: `{manifest['model_version']}`  |  split: **{a.split}**  |  cases file sha256: `{manifest['cases_file_sha256'][:12]}`",
+           f"- harness checkout: `{manifest['model_version']}`  |  backend engine: `{manifest['backend_engine_version']}`  |  split: **{a.split}**  |  cases file sha256: `{manifest['cases_file_sha256'][:12]}`",
            "- Confidence intervals are 95% percentile bootstraps resampling ZONES (not rows).",
            "- Metrics are only valid for the conditions covered by the cases listed in results.csv; nothing here "
            "generalises beyond those agro-climatic zones / seasons.", ""]
