@@ -46,3 +46,10 @@ CONF_PENALTY_UNKNOWN_FACTOR = 0.15
 CONF_PENALTY_INFERRED_DRAINAGE = 0.10
 CONF_PENALTY_UNVERIFIED_CROP = 0.10
 CONF_MIN = 0.20
+
+# ---- slope / terracing
+TERRACE_SCORE_AT_LIMIT = 0.5      # ESTIMATE: score at a crop's terraceable-slope limit (terracing cost and yield penalty)
+
+# ---- unscored risk caveats
+HUMID_SITE_RAIN_MM = 1500.0       # ESTIMATE: annual rain at/above which disease-pressure caveats are shown
+CONF_PENALTY_UNMODELLED_RISK = 0.15

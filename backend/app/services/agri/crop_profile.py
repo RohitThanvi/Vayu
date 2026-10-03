@@ -19,7 +19,10 @@ Optional (new, all defaulted):
   rainfall_seasonality  {'months': [1-12, ...], 'source': str}   months in which the crop needs DRY weather
                         (e.g. flowering / fruit set). Annual excess rain then matters only in proportion to how
                         wet that window is. default: None (annual excess judged on the amount alone)
-  water_override_note / ph_override_note ...   citation for any deviation from EcoCrop
+  slope_terraceable_pct   int > slope_max_pct: slopes above the natural limit up to this value are a SOFT terracing requirement
+                          (score falls from 1.0 to 0.5 across the band, then to 0 over the next equal band). Needs a source.
+  humidity_sensitive      {'source': str}: warm-humid sites carry an UNSCORED "disease pressure not modelled" caveat and lower confidence
+  water_override_note / ph_override_note / slope_override_note ...   citation for any deviation from EcoCrop
 """
 from typing import Any, Dict, List
 
@@ -52,4 +55,13 @@ def validate_crop(crop: Dict[str, Any]) -> List[str]:
     rs = crop.get("rainfall_seasonality")
     if rs is not None and not (rs.get("source") and rs.get("months") and all(isinstance(m, int) and 1 <= m <= 12 for m in rs["months"])):
         problems.append("rainfall_seasonality needs 'months' (list of 1-12) and a 'source'")
+    st = crop.get("slope_terraceable_pct")
+    if st is not None and not (isinstance(st, int) and st > crop["slope_max_pct"] and crop.get("slope_override_note")):
+        problems.append("slope_terraceable_pct must be an int > slope_max_pct and needs a slope_override_note citing a source")
+    hs = crop.get("humidity_sensitive")
+    if hs is not None and not hs.get("source"):
+        problems.append("humidity_sensitive needs a source")
+    for k in ("ph", "water_mm", "slope"):
+        if crop.get(f"{k}_override_note") is not None and not str(crop[f"{k}_override_note"]).strip():
+            problems.append(f"{k}_override_note is empty")
     return problems

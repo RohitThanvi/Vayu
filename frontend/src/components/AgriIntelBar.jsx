@@ -358,7 +358,7 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
                   <div onClick={() => setOpen(isOpen ? null : c.crop_id)} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
                     <span style={{ width: 8, height: 8, borderRadius: 4, background: rc, flexShrink: 0 }} />
                     <span style={{ fontSize: 12.5, color: S.text, minWidth: 150 }}>{c.name} <span style={{ color: S.text3 }}>{c.name_hi}</span></span>
-                    <span style={{ fontFamily: S.mono, fontSize: 11.5, color: rc, minWidth: 90, textTransform: 'uppercase' }}>{cropCategory(c).replace('_', ' ')} {c.score}{c.confidence != null && <span style={{ color: S.text3 }}> · conf {c.confidence}</span>}</span>
+                    <span style={{ fontFamily: S.mono, fontSize: 11.5, color: rc, minWidth: 90, textTransform: 'uppercase' }}>{cropCategory(c).replace('_', ' ')} {c.score}{c.confidence != null && <span style={{ color: S.text3 }}> · conf {c.confidence}</span>}{c.caveats && c.caveats.length > 0 && <span title={c.caveats.map(v => v.message).join(' ')} style={{ color: '#ff9a45' }}> · ⚠ risk not modelled</span>}</span>
                     <span style={{ fontSize: 11, color: S.text3, flex: 1 }}>{c.best_season && <b style={{ color: S.accent, marginRight: 8, letterSpacing: 0.5 }}>{SEASON_NAME[c.best_season] || c.best_season}</b>}{cropLimitText(c)}</span>
                     {c.revenue?.status === 'ok' && <span style={{ fontSize: 11, fontFamily: S.mono, color: S.gold }}>~{fmtRs(c.revenue.revenue_rs_per_ha.modal)}/ha</span>}
                     <span style={{ color: S.text3, fontSize: 11 }}>{isOpen ? '▾' : '▸'}</span>

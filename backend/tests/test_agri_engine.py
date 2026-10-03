@@ -129,6 +129,61 @@ def test_paddy_is_not_penalised_for_monsoon_rain_at_a_high_rainfall_coast():
     assert r["seasonal"]["kharif"]["limiting_label"] != "Excess rainfall"
 
 
+# ───────────────────────── A3. sourced range corrections and caveats
+def _factor(loc, cid, factor, irrigated=True, **over):
+    prof = copy.deepcopy(LOCATIONS[loc]); prof.update(over)
+    r = next(c for c in score_crops(prof, irrigated)["crops"] if c["crop_id"] == cid)
+    return r, r["factors"][factor]["score"]
+
+
+def test_wheat_ph_range_accepts_normal_indo_gangetic_soils_but_still_penalises_sodic():
+    _, ok = _factor("punjab", "wheat", "ph", ph=8.0)
+    assert ok == 1.0                                              # pH 8.0 is normal non-sodic wheat soil (sodic threshold 8.2)
+    _, mid = _factor("punjab", "wheat", "ph", ph=8.8)
+    _, hi = _factor("punjab", "wheat", "ph", ph=9.4)
+    assert 0 < mid < 1.0 and hi == 0.0                            # declines through the sodic range, none beyond the limit
+    _, acid = _factor("punjab", "wheat", "ph", ph=5.0)
+    assert acid == 0.0
+
+
+def test_groundnut_ph_optimum_extends_to_7_5_only():
+    assert _factor("rajasthan_semiarid", "groundnut", "ph", ph=7.4)[1] == 1.0
+    assert _factor("rajasthan_semiarid", "groundnut", "ph", ph=8.2)[1] < 1.0
+
+
+def test_unreviewed_crops_keep_their_original_ph_ranges():
+    by = {c["id"]: c for c in CROPS}
+    assert by["maize"]["ph"] == (4.5, 5.0, 7.0, 8.5) and by["soybean"]["ph"][1:3] == by["soybean"]["ph"][1:3]
+    assert "ph_override_note" not in by["maize"] and "ph_override_note" not in by["soybean"]
+
+
+def test_rice_slope_is_a_soft_terracing_requirement_not_a_cliff():
+    flat = _factor("ratnagiri", "rice_paddy", "slope", slope_pct=2.0)
+    mid = _factor("ratnagiri", "rice_paddy", "slope", slope_pct=12.0)
+    steep = _factor("ratnagiri", "rice_paddy", "slope", slope_pct=45.0)
+    assert flat[1] == 1.0 and 0.5 < mid[1] < 1.0 and steep[1] < 0.3 and steep[1] < mid[1]
+    assert "terrac" in " ".join(mid[0]["evidence_summary"]).lower()
+    # crops with no terraceable limit keep the old behaviour
+    sm = BY["wheat"]["slope_max_pct"]
+    assert abs(_factor("ratnagiri", "wheat", "slope", slope_pct=12.0)[1] - max(0.0, 1.0 - (12.0 - sm) / sm)) < 0.011
+
+
+def test_humid_site_adds_unscored_disease_caveat_and_lowers_confidence_for_chickpea_only():
+    wet, _ = _factor("ratnagiri", "gram_chickpea", "ph")
+    dry, _ = _factor("rajasthan_semiarid", "gram_chickpea", "ph")
+    assert wet["caveats"] and not dry["caveats"] and wet["caveats"][0]["scored"] is False
+    assert wet["confidence"] < dry["confidence"]
+    assert any("NOT modelled" in l for l in wet["evidence_summary"])
+    assert not _factor("ratnagiri", "mustard", "ph")[0]["caveats"]            # no sourced humidity trait -> no claim
+
+
+def test_caveat_does_not_change_the_score():
+    r, _ = _factor("ratnagiri", "gram_chickpea", "ph")
+    prof = copy.deepcopy(LOCATIONS["ratnagiri"])
+    c = copy.deepcopy(BY["gram_chickpea"]); c.pop("humidity_sensitive")
+    assert score_crop_v2(c, prof, True, season="rabi")["score"] == r["seasonal"]["rabi"]["score"] or r["score"] == score_crop_v2(c, prof, True, season=r["best_season"])["score"]
+
+
 # ───────────────────────── B. paired irrigation tests (same site + season + candidates, irrigated vs rainfed)
 def _water_pair(loc, cid):
     a, b = crop_result(loc, cid, False), crop_result(loc, cid, True)
