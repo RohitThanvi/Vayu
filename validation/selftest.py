@@ -31,6 +31,41 @@ def check_ranking_metrics():
     print("[ok] ranking_metrics.py agrees with scikit-learn / scipy (tie-aware metrics checked analytically)")
 
 
+def check_replay():
+    """Saved profiles re-scored offline must reproduce the live scoring exactly, and the runner's --replay mode must work end to end."""
+    sys.path.insert(0, str(HERE.parent / "backend")); sys.path.insert(0, str(HERE.parent / "backend" / "tests"))
+    try:
+        from agri_fixtures import LOCATIONS
+        from app.services.agri.crop_suitability import score_crops
+    except Exception as e:                                   # validation/ used without the backend checkout
+        print(f"[skip] replay check needs ../backend ({type(e).__name__})"); return
+    import copy
+    from client import aoi_key
+    tmp = Path(tempfile.mkdtemp()); (tmp / "aoi").mkdir(); prof_dir = tmp / "profiles"; prof_dir.mkdir()
+    cases = []
+    for i, loc in enumerate(("punjab", "ratnagiri_live", "himalayan_cold", "rajasthan_semiarid")):
+        aoi = {"type": "Polygon", "coordinates": [[[70 + i, 20], [71 + i, 20], [71 + i, 21], [70 + i, 20]]]}
+        (tmp / "aoi" / f"{loc}.geojson").write_text(json.dumps(aoi))
+        live = score_crops(copy.deepcopy(LOCATIONS[loc]), True)                      # what the backend would have returned
+        (prof_dir / f"{aoi_key({'aoi_geojson': aoi})}.json").write_text(json.dumps({"profile": live["profile"]}))
+        replay = score_crops(live["profile"], True)
+        assert [(r["crop_id"], r["score"], r["best_season"]) for r in live["crops"]] == [(r["crop_id"], r["score"], r["best_season"]) for r in replay["crops"]], loc
+        for season in ("rabi", "kharif"):
+            cases.append({"case_id": f"{loc}_{season}", "zone_id": loc, "agro_zone": "t", "variant": "irrigated", "split": "test", "type": "crop_ranking",
+                          "endpoint": "crop_suitability", "aoi": f"aoi/{loc}.geojson", "request": {"irrigation_available": True},
+                          "truth": {"season": season, "k": 3, "gt_crops": ["wheat", "mustard"] if season == "rabi" else ["rice_paddy", "maize"],
+                                    "baseline_crops": ["wheat", "mustard"] if season == "rabi" else ["rice_paddy", "maize"],
+                                    "mean_area_share": {"wheat": .7, "mustard": .3} if season == "rabi" else {"rice_paddy": .7, "maize": .3}}})
+    (tmp / "cases.json").write_text(json.dumps({"cases": cases}))
+    r = subprocess.run([sys.executable, str(HERE / "run_validation.py"), "--cases", str(tmp / "cases.json"), "--replay", str(prof_dir), "--out", str(tmp / "runs")],
+                       capture_output=True, text=True, cwd=HERE)
+    if r.returncode: print(r.stdout, r.stderr); raise SystemExit("replay run failed")
+    run = sorted(p for p in (tmp / "runs").iterdir() if p.name != "_cache")[-1]
+    m = json.loads((run / "metrics.json").read_text()); man = json.loads((run / "manifest.json").read_text())
+    assert m["crop_ranking"]["_coverage"]["ok"] == len(cases) and man["model_version"].startswith("replay@"), (m["crop_ranking"]["_coverage"], man["model_version"])
+    print("[ok] replay: saved profiles reproduce live scoring exactly; --replay runs offline end to end")
+
+
 def check_metrics():
     from metrics import regression_metrics, classification_metrics, binary_metrics, kappa_from_matrix, roc_auc
     try:
@@ -147,4 +182,4 @@ def integration():
 
 
 if __name__ == "__main__":
-    check_metrics(); check_ranking_metrics(); integration()
+    check_metrics(); check_ranking_metrics(); check_replay(); integration()

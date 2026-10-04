@@ -65,3 +65,12 @@ The harness and the backend must be the same generation. A run made with an OLD 
 every crop whose best season differs from the case's season (3-10 crops per case instead of 7-13) and its metrics are not valid. The manifest and
 report now record `backend_engine_version` (from the response; Render supplies `RENDER_GIT_COMMIT`), a season-aware backend that does not echo the
 requested season aborts the case, and a mid-run deploy prints a warning. Check `n_crops_ranked` in `results.csv` if numbers look odd.
+
+## Offline replay and diagnosis (iterate on the model without calling the backend)
+Every live run now saves each location's sampled evidence (monthly rain / temperature, soil, slope, latitude) to `validation_runs/_profiles/`
+(needs a backend that returns the monthly arrays - the current one does).
+* `python run_validation.py --cases cases.json --replay validation_runs/_profiles --split tune` re-scores those saved profiles with THIS checkout's
+  engine: no network, no Earth Engine, seconds. It tests scoring logic only (the sampling is whatever was saved). The manifest says `replay@<commit>`.
+* `python diagnose.py validation_runs/<run_id>` writes `diagnosis.md`: AUC of each factor against "observed major crop", per-crop over / under-rating,
+  the limiting factor behind every widely grown crop rated < 0.5, false positives by crop, and results by season and state.
+Use these on the **tune** split. Look at the test split once, at the end, on states the model has never been tuned or diagnosed on.

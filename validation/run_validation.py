@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np, pandas as pd
 
-from client import VayuClient
+from client import VayuClient, ReplayClient
 from validators import VALIDATORS
 
 
@@ -38,7 +38,9 @@ def md_table(d):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", required=True)
-    ap.add_argument("--base-url", required=True)
+    ap.add_argument("--base-url", default="", help="live backend (not needed with --replay)")
+    ap.add_argument("--replay", default="", metavar="PROFILES_DIR",
+                    help="re-score SAVED profiles with this checkout's engine instead of calling the backend (offline, instant; tests scoring logic only)")
     ap.add_argument("--out", default="validation_runs")
     ap.add_argument("--split", default="test", choices=["test", "tune", "all"])
     ap.add_argument("--only", default="", help="comma-separated validator types")
@@ -61,15 +63,23 @@ def main():
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = Path(a.out) / run_id; run_dir.mkdir(parents=True, exist_ok=True)
     version = a.model_version or git_hash()
-    # Responses are cached PER MODEL VERSION so a code change can never silently reuse old answers.
-    # A '-dirty' tree has no stable identity, so caching is switched off for it.
-    dirty = version.endswith("-dirty")
-    if dirty:
-        print(f"model version '{version}' has uncommitted changes -> response cache DISABLED for this run "
-              "(commit first, or pass --model-version, to make runs resumable)")
+    profiles_dir = Path(a.out) / "_profiles"
+    if a.replay:
+        client = ReplayClient(a.replay)
+        version = f"replay@{git_hash()}"
         a.no_cache = True
-    cache_dir = Path(a.out) / "_cache" / re.sub(r"[^A-Za-z0-9_.-]+", "_", version)
-    client = VayuClient(a.base_url, cache_dir, timeout=a.timeout, delay=a.delay)
+        print(f"REPLAY mode: re-scoring saved profiles from {a.replay} with the local engine ({version}). No network. Valid only for the scoring logic.")
+    else:
+        if not a.base_url:
+            sys.exit("--base-url is required unless --replay is used")
+        # Responses are cached PER MODEL VERSION so a code change can never silently reuse old answers.
+        # A '-dirty' tree has no stable identity, so caching is switched off for it.
+        if version.endswith("-dirty"):
+            print(f"model version '{version}' has uncommitted changes -> response cache DISABLED for this run "
+                  "(commit first, or pass --model-version, to make runs resumable)")
+            a.no_cache = True
+        cache_dir = Path(a.out) / "_cache" / re.sub(r"[^A-Za-z0-9_.-]+", "_", version)
+        client = VayuClient(a.base_url, cache_dir, timeout=a.timeout, delay=a.delay, profiles_dir=profiles_dir)
 
     rows = []
     for i, c in enumerate(cases, 1):
@@ -109,7 +119,7 @@ def main():
         print(f"WARNING: responses came from {len(ev_counts)} different backend versions {ev_counts} - a deploy happened mid-run; results are mixed.")
     if ev_counts and set(ev_counts) <= {"pre-versioning", "unknown"}:
         print("NOTE: backend does not report a version (older deploy, or RENDER_GIT_COMMIT unset); record it by hand.")
-    manifest = {"run_id": run_id, "backend_engine_version": ev_counts, "utc": datetime.now(timezone.utc).isoformat(), "base_url": a.base_url,
+    manifest = {"run_id": run_id, "backend_engine_version": ev_counts, "utc": datetime.now(timezone.utc).isoformat(), "base_url": a.base_url or "(replay)", "replay_profiles": a.replay or None,
                 "split": a.split, "model_version": version, "n_cases": len(cases),
                 "cases_file_sha256": hashlib.sha256(cases_path.read_bytes()).hexdigest(),
                 "python": platform.python_version(), "numpy": np.__version__, "pandas": pd.__version__}
