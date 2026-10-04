@@ -96,6 +96,7 @@ def build_evidence(profile: Dict[str, Any]) -> Dict[str, Any]:
         "drainage": classify_drainage(profile.get("slope_pct"), profile.get("texture_class")),
         "soil_moisture": None, "remote_sensing": None,        # not sampled by this pipeline (yet)
         "lat": profile.get("lat"),
+        "slope_basis": profile.get("slope_basis"), "slope_all_deg": profile.get("slope_all_deg"), "cropland_fraction": profile.get("cropland_fraction"),
         # modelled soil-water balance (rain + stored soil water vs PET) for dry-window crops; None if temperature / rain / texture is missing
         "water_balance": build_water_balance(mr, mt, profile.get("texture_class"), profile.get("lat")),
     }

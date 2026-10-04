@@ -81,6 +81,17 @@ def _cap_end_date(end_date: str) -> ee.Date:
     return ee.Date(ee.Algorithms.If(end.difference(today, "day").gt(0), today, end))
 
 
+def copernicus_dem() -> "ee.Image":
+    """Copernicus GLO-30 DEM mosaic WITH the tiles' native projection.
+
+    ImageCollection.mosaic() drops the projection, and ee.Terrain.slope/aspect/hillshade on that mosaic returned slopes ~25x too small
+    (Uttarkashi 1.1 deg vs ~30 deg from the same DEM with the projection restored and from SRTM; verified live with
+    validation/diagnostics/check_dem_slope.py). Always get the DEM through this helper before any neighbourhood (terrain) operation.
+    """
+    coll = ee.ImageCollection("COPERNICUS/DEM/GLO30_2024_1").select("DEM")
+    return coll.mosaic().setDefaultProjection(coll.first().projection())
+
+
 def _polygon_geometry(aoi: Dict[str, Any]) -> ee.Geometry:
     """Accept Polygon, MultiPolygon, Feature, or FeatureCollection.
 

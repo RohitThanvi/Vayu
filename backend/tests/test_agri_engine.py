@@ -346,6 +346,34 @@ def test_fuzz_endpoint_never_raises_and_outputs_stay_valid():
             assert isinstance(r["season_highlight"], str)
 
 
+# ───────────────────────── F. terrain / sampling guards
+def test_mountain_aoi_gets_an_unscored_caveat_and_lower_confidence():
+    base = copy.deepcopy(LOCATIONS["himalayan_cold"])
+    flat = copy.deepcopy(LOCATIONS["punjab"])
+    mtn = {**base, "slope_all_deg": 30.0, "slope_basis": "cropland", "cropland_fraction": 0.08}
+    a = next(c for c in score_crops(mtn, True)["crops"] if c["crop_id"] == "maize")
+    b = next(c for c in score_crops({**flat, "slope_all_deg": 0.3}, True)["crops"] if c["crop_id"] == "maize")
+    assert any(c["factor"] == "heterogeneous_terrain" and c["scored"] is False for c in a["caveats"])
+    assert not any(c["factor"] == "heterogeneous_terrain" for c in b["caveats"])
+    plain = next(c for c in score_crops(copy.deepcopy(base), True)["crops"] if c["crop_id"] == "maize")
+    assert a["score"] == plain["score"] and a["confidence"] < plain["confidence"]               # caveat changes confidence, never the score
+    assert any("Mountainous AOI" in l for l in a["evidence_summary"])
+
+
+def test_no_terrain_operation_runs_on_an_unprojected_dem_mosaic():
+    """Regression for the 25x-too-small slope: every use of the Copernicus DEM must go through gee_client.copernicus_dem()."""
+    import re
+    root = Path(__file__).resolve().parents[1] / "app"
+    offenders = []
+    for f in root.rglob("*.py"):
+        src = f.read_text(encoding="utf-8")
+        for m in re.finditer(r'GLO30[^\n]*\n?[^\n]*\.mosaic\(\)|GLO30[^\n]*\.mosaic\(\)', src):
+            if f.name != "gee_client.py":
+                offenders.append(f.name)
+    assert not offenders, f"bare GLO30 mosaic used in {offenders}; use gee_client.copernicus_dem()"
+    assert "setDefaultProjection" in (root / "services" / "gee_client.py").read_text(encoding="utf-8")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

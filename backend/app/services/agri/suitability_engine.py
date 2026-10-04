@@ -316,13 +316,20 @@ def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: 
         lines = lines + ["? " + caveats[0]["message"]]
     primary = limits[0] if limits else None
     # confidence: completeness / quality of the evidence behind this number (heuristic index, not a statistical interval)
+    sa = ev.get("slope_all_deg")
+    if sa is not None and sa >= cfg.MOUNTAIN_AOI_SLOPE_DEG:
+        caveats.append({"factor": "heterogeneous_terrain", "scored": False, "source": "assumption (engine_config.MOUNTAIN_AOI_SLOPE_DEG)",
+                        "message": (f"Mountainous AOI (mean slope {_fmt(sa, 0)} deg): temperature and rainfall come from a ~5-11 km grid averaged over a wide elevation range, "
+                                    "but crops are grown in valleys and on terraces, so warm-season crops are likely under-rated here. Draw a smaller AOI over cultivated land for a more representative result.")})
+        lines = lines + ["? " + caveats[-1]["message"]]
     bal = f["water"]["model"].get("balance")
     if bal and bal["supply_mm"] > 0 and bal["stored_mm"] / bal["supply_mm"] >= cfg.STORED_SHARE_FOR_DEPTH_CAVEAT:
         caveats.append({"factor": "soil_depth", "scored": False, "source": "assumption (water_balance.ROOT_ZONE_M)",
                         "message": "Stored soil water assumes a 1.0 m root zone; soil depth is not measured, so on shallow soils (e.g. laterite) rainfed dry-season estimates are optimistic."})
         lines = lines + ["? " + caveats[-1]["message"]]
     conf = 1.0 - cfg.CONF_PENALTY_UNKNOWN_FACTOR * len(unknown) - cfg.CONF_PENALTY_UNMODELLED_RISK * sum(1 for c in caveats if c["factor"] == "humidity_disease") \
-           - (cfg.CONF_PENALTY_ASSUMED_SOIL_DEPTH if any(c["factor"] == "soil_depth" for c in caveats) else 0.0)
+           - (cfg.CONF_PENALTY_ASSUMED_SOIL_DEPTH if any(c["factor"] == "soil_depth" for c in caveats) else 0.0) \
+           - (cfg.CONF_PENALTY_HETEROGENEOUS_TERRAIN if any(c["factor"] == "heterogeneous_terrain" for c in caveats) else 0.0)
     if ev["drainage"]["inferred"] and f["water"]["model"]["hi_raw"] is not None and f["water"]["model"]["hi_raw"] < 1.0:
         conf -= cfg.CONF_PENALTY_INFERRED_DRAINAGE
     if not crop.get("verified", True):

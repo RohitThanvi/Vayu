@@ -28,7 +28,7 @@ import ee
 
 from .gee_client import (
     _polygon_geometry, _validate_date_range, _require_start_after,
-    _cap_end_date, _mask_s2_clouds, _region_area_km2, _calc_area_km2,
+    _cap_end_date, _mask_s2_clouds, _region_area_km2, _calc_area_km2, copernicus_dem,
 )
 from .satellite_imagery import _fetch_thumb_bytes
 from . import trend_stats
@@ -272,7 +272,7 @@ def compute_terrain_analysis(aoi: Dict) -> Dict[str, Any]:
     logger.info("GEE (remote sensing): terrain_analysis")
     region = _polygon_geometry(aoi)
 
-    dem = ee.ImageCollection("COPERNICUS/DEM/GLO30_2024_1").select("DEM").mosaic()
+    dem = copernicus_dem()            # projection restored: Terrain ops on a bare mosaic gave slopes ~25x too small
     slope = ee.Terrain.slope(dem)     # degrees
     aspect = ee.Terrain.aspect(dem)   # degrees, 0=N, 90=E, 180=S, 270=W
 
@@ -1696,7 +1696,7 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
             img = _index_image(composite, index_id)
             return _fetch_thumb_bytes(img, region, INDEX_PALETTES.get(index_id, {"min": -1, "max": 1, "palette": ["#000000", "#ffffff"]}))
         if tool == "terrain":
-            dem = ee.ImageCollection("COPERNICUS/DEM/GLO30_2024_1").select("DEM").mosaic().clip(region)
+            dem = copernicus_dem().clip(region)
             return _fetch_thumb_bytes(ee.Terrain.hillshade(dem), region, {"min": 0, "max": 255})
         if tool == "lulc":
             wc = ee.ImageCollection("ESA/WorldCover/v200").first().select("Map").clip(region)
