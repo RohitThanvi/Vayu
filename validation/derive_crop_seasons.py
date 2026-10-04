@@ -14,6 +14,7 @@ photoperiod/vernalisation needs the engine does not model). Suitability within a
 import json
 from pathlib import Path
 import pandas as pd
+from season_map import SEASON_MAP
 
 HERE = Path(__file__).parent
 CSV = HERE / "ground_truth/_download_cache/crop_production.csv"
@@ -22,7 +23,6 @@ Y0, Y1, MIN_SHARE = 2005, 2014, 0.05
 CROPS = {"wheat": "Wheat", "rice_paddy": "Rice", "bajra_pearl_millet": "Bajra", "jowar_sorghum": "Jowar", "maize": "Maize",
          "barley": "Barley", "gram_chickpea": "Gram", "mustard": "Rapeseed &Mustard", "groundnut": "Groundnut",
          "soybean": "Soyabean", "cotton": "Cotton(lint)", "potato": "Potato", "onion": "Onion"}
-SEASON_MAP = {"kharif": "kharif", "autumn": "kharif", "winter": "kharif", "rabi": "rabi", "summer": "zaid"}
 
 
 def main():

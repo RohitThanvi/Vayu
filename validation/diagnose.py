@@ -64,14 +64,50 @@ def main():
          f"{len(df)} (case x crop) pairs, {df.case.nunique()} cases, {df.zone.nunique()} zones. 'Major' = crop holds >= {MAJOR:.0%} of observed modelled-crop area.",
          "Scores are suitability (can the land support it), the label is adoption (is it widely grown), so some disagreement is expected.", ""]
 
+    variants = sorted(df.variant.unique()) if "variant" in df and df.variant.notna().any() else [""]
     L += ["## 1. Which factor carries signal? (AUC vs observed-major; 0.5 = no information, < 0.5 = pushes the wrong way)", "",
-          "| factor | AUC | 95% CI (zones) | mean score when major | mean score when not major |", "|---|---|---|---|---|"]
-    for col in ["score"] + [f"f_{f}" for f in FACTORS]:
-        auc, ci = boot_auc(df, col)
-        if auc is None: continue
-        d = df.dropna(subset=[col])
-        L.append(f"| {col.replace('f_', '')} | {auc:.3f} | {('%.3f-%.3f' % tuple(ci)) if ci else 'n/a'} | {d[d.major == 1][col].mean():.2f} | {d[d.major == 0][col].mean():.2f} |")
+          "Pooled across crops (crop identity confounds this: a drought-hardy crop scores 'well' on water everywhere). Section 1b removes that confound.", "",
+          "| variant | factor | AUC | 95% CI (zones) | mean score if major | mean score if not major |", "|---|---|---|---|---|---|"]
+    for v in variants:
+        dv = df[df.variant == v] if v else df
+        for col in ["score"] + [f"f_{f}" for f in FACTORS]:
+            auc, ci = boot_auc(dv, col)
+            if auc is None: continue
+            d = dv.dropna(subset=[col])
+            L.append(f"| {v or 'all'} | {col.replace('f_', '')} | {auc:.3f} | {('%.3f-%.3f' % tuple(ci)) if ci else 'n/a'} | {d[d.major == 1][col].mean():.2f} | {d[d.major == 0][col].mean():.2f} |")
     L += ["", "A factor near or below 0.5 is not helping discriminate; a factor with a low score for MAJOR crops is the one rejecting crops farmers actually grow.", ""]
+
+    L += ["## 1b. Within-crop AUC: does the score separate WHERE a crop is major from where it is not (same crop)?", "",
+          "| variant | crop | major / n | score | " + " | ".join(FACTORS) + " |", "|---|---|---|---|" + "---|" * len(FACTORS)]
+    for v in variants:
+        dv = df[df.variant == v] if v else df
+        accum = []
+        for crop, h in dv.groupby("crop"):
+            if h.major.nunique() == 2 and (h.major == 1).sum() >= 3 and (h.major == 0).sum() >= 3:
+                row = [roc_auc(h.major.values, h.score.values)] + [roc_auc(h.major.values, h[f"f_{f}"].fillna(1.0).values) for f in FACTORS]
+                accum.append(row); L.append(f"| {v or 'all'} | {crop} | {int((h.major == 1).sum())} / {len(h)} | " + " | ".join(f"{x:.2f}" for x in row) + " |")
+        if accum:
+            m = np.nanmean(np.array(accum, float), axis=0)
+            L.append(f"| {v or 'all'} | **mean** | | " + " | ".join(f"**{x:.2f}**" for x in m) + " |")
+    L += ["", "Below 0.5 for a crop means the model rates it MORE suitable where it is not grown than where it is - look at that crop's rows in the AOI / evidence first.", ""]
+
+    sc = df.groupby("case").score
+    L += ["## 1c. Ties", "", f"- pairs scored exactly 1.0: {(df.score >= 0.999).mean():.1%}; at the 0.10 soft floor: {(abs(df.score - 0.10) < 1e-9).mean():.1%}; hard zero: {(df.score <= 1e-9).mean():.1%}",
+          f"- cases where >= 2 crops share the top score: {df.groupby('case').apply(lambda x: (x.score == x.score.max()).sum() >= 2).mean():.1%}",
+          "- limiting factor of the crops tied at the top: " + ", ".join(f"{k}: {v}" for k, v in df[df.groupby('case').score.transform('max') == df.score].limiting.value_counts().items()), ""]
+    # as-served order (the engine's own tie-break: headroom, then name) vs tie-aware expectation
+    from ranking_metrics import case_ranking_metrics
+    served, aware = [], []
+    for case, g in df.groupby("case"):
+        ids, sco, rel = g.crop.tolist(), g.score.values, g.share.values
+        m1 = case_ranking_metrics(ids, list(sco), list(rel), 3); m2 = case_ranking_metrics(ids, [float(len(ids) - i) for i in range(len(ids))], list(rel), 3)
+        if m1 and m2: aware.append(m1); served.append(m2)
+    if aware:
+        f = lambda rows, k: np.mean([r[k] for r in rows])
+        L += ["### Tie-aware (equal scores share positions) vs the order the engine actually served", "", "| metric | tie-aware | as served |", "|---|---|---|"]
+        for k in ("top1_acc", "top3_recall", "overlap_frac", "ndcg_k", "mrr"):
+            L.append(f"| {k} | {f(aware, k):.3f} | {f(served, k):.3f} |")
+        L += ["", "If 'as served' is clearly above tie-aware, the engine's headroom tie-break carries real information; if below, it is anti-informative.", ""]
 
     L += ["## 2. Per crop: over- or under-rated?", "", "| crop | n major | mean score if major | mean score if not | recall at 0.5 | in model top-3 | in observed top-3 |", "|---|---|---|---|---|---|---|"]
     top3 = df.assign(rk=df.groupby("case").score.rank(ascending=False, method="min")); top3["m3"] = top3.rk <= 3
