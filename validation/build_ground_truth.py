@@ -19,6 +19,7 @@ import argparse, difflib, hashlib, io, json, re, sys
 from pathlib import Path
 import numpy as np, pandas as pd, requests, shapefile
 from shapely.geometry import shape, mapping
+from season_map import SEASON_MAP
 
 HERE = Path(__file__).parent
 CROP_URL = "https://raw.githubusercontent.com/ritveek19/EDA_CropProduction/master/crop_production.csv"
@@ -87,7 +88,8 @@ def main():
     for c in ("State_Name", "District_Name", "Season", "Crop"): df[c] = df[c].astype(str).str.strip()
     df["Season"] = df["Season"].str.lower()
     raw_all = df.copy()                                         # unfiltered, for perennial presence cases
-    df = df[df.Season.isin(["kharif", "rabi"]) & df.Crop_Year.between(y0, y1)]
+    df["Season"] = df.Season.map(SEASON_MAP)                    # Autumn / Winter -> kharif, Summer -> zaid (same mapping as derive_crop_seasons.py)
+    df = df[df.Season.notna() & df.Crop_Year.between(y0, y1)]
     df["crop_id"] = df.Crop.str.lower().map(CROP_MAP)
     df = df[df.crop_id.notna() & (df.Area > 0)]
     df = df[df.apply(lambda r: r.Season in VAYU_SEASONS[r.crop_id], axis=1)]       # keep a crop only in seasons Vayu evaluates it in
@@ -220,9 +222,11 @@ def main():
 3. Observed area reflects irrigation, prices, policy and tradition, not only biophysical suitability.
 4. The dataset has no irrigation share, so every district is run twice (irrigated / rainfed) and reported separately;
    it is NOT chosen per district. Replace with real irrigated-area shares (e.g. ICRISAT) for a sharper test.
-5. Name matching between sources is automatic; audit `matching_report.csv` (fuzzy matches are flagged).
-6. Split: whole STATES are held out (spatial holdout): {sorted(test_states)}.
-7. `agro_zone` is the state, not an ICAR agro-climatic zone.
+5. DES season labels are mapped Kharif/Autumn/Winter -> kharif, Rabi -> rabi, Summer -> zaid (season_map.py); 'Whole Year' is excluded.
+   (An earlier version kept only Kharif/Rabi labels, which dropped 42% of national rice area and all rice in the eastern states; fixed.)
+6. Name matching between sources is automatic; audit `matching_report.csv` (fuzzy matches are flagged).
+7. Split: whole STATES are held out (spatial holdout): {sorted(test_states)}.
+8. `agro_zone` is the state, not an ICAR agro-climatic zone.
 """, encoding="utf-8")
     n_d = len(chosen)
     print(f"\n{n_d} districts, {len(cases)} cases ({sum(c['split']=='test' for c in cases)} test / {sum(c['split']=='tune' for c in cases)} tune); "

@@ -11,6 +11,8 @@
 3. Observed area reflects irrigation, prices, policy and tradition, not only biophysical suitability.
 4. The dataset has no irrigation share, so every district is run twice (irrigated / rainfed) and reported separately;
    it is NOT chosen per district. Replace with real irrigated-area shares (e.g. ICRISAT) for a sharper test.
-5. Name matching between sources is automatic; audit `matching_report.csv` (fuzzy matches are flagged).
-6. Split: whole STATES are held out (spatial holdout): ['haryana', 'madhyapradesh', 'maharashtra', 'mizoram', 'nagaland', 'rajasthan', 'uttarpradesh', 'westbengal'].
-7. `agro_zone` is the state, not an ICAR agro-climatic zone.
+5. DES season labels are mapped Kharif/Autumn/Winter -> kharif, Rabi -> rabi, Summer -> zaid (season_map.py); 'Whole Year' is excluded.
+   (An earlier version kept only Kharif/Rabi labels, which dropped 42% of national rice area and all rice in the eastern states; fixed.)
+6. Name matching between sources is automatic; audit `matching_report.csv` (fuzzy matches are flagged).
+7. Split: whole STATES are held out (spatial holdout): ['haryana', 'madhyapradesh', 'maharashtra', 'mizoram', 'nagaland', 'odisha', 'rajasthan', 'uttarpradesh', 'westbengal'].
+8. `agro_zone` is the state, not an ICAR agro-climatic zone.

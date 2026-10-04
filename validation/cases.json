@@ -8,6 +8,7 @@
    "maharashtra",
    "mizoram",
    "nagaland",
+   "odisha",
    "rajasthan",
    "uttarpradesh",
    "westbengal"
@@ -167,16 +168,17 @@
     "season": "kharif",
     "k": 3,
     "gt_crops": [
-     "maize",
-     "cotton"
+     "rice_paddy",
+     "maize"
     ],
     "baseline_crops": [
+     "rice_paddy",
      "maize",
      "cotton"
     ],
     "mean_area_share": {
-     "maize": 0.927,
-     "cotton": 0.073
+     "rice_paddy": 0.922,
+     "maize": 0.078
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -197,16 +199,17 @@
     "season": "kharif",
     "k": 3,
     "gt_crops": [
-     "maize",
-     "cotton"
+     "rice_paddy",
+     "maize"
     ],
     "baseline_crops": [
+     "rice_paddy",
      "maize",
      "cotton"
     ],
     "mean_area_share": {
-     "maize": 0.927,
-     "cotton": 0.073
+     "rice_paddy": 0.922,
+     "maize": 0.078
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -908,70 +911,66 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "kerala__palakkad__kharif__irrigated",
-   "zone_id": "kerala__palakkad",
-   "agro_zone": "Kerala",
+   "case_id": "karnataka__gulbarga__zaid__irrigated",
+   "zone_id": "karnataka__gulbarga",
+   "agro_zone": "Karnataka",
    "variant": "irrigated",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/kerala__palakkad.geojson",
+   "aoi": "aoi/karnataka__gulbarga.geojson",
    "request": {
     "irrigation_available": true
    },
    "truth": {
-    "season": "kharif",
+    "season": "zaid",
     "k": 3,
     "gt_crops": [
-     "jowar_sorghum",
-     "groundnut",
-     "cotton"
-    ],
-    "baseline_crops": [
-     "jowar_sorghum",
-     "cotton",
+     "rice_paddy",
      "groundnut"
     ],
+    "baseline_crops": [
+     "rice_paddy",
+     "groundnut",
+     "onion"
+    ],
     "mean_area_share": {
-     "jowar_sorghum": 0.383,
-     "groundnut": 0.382,
-     "cotton": 0.234
+     "rice_paddy": 0.953,
+     "groundnut": 0.047
     }
    },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 5 yrs; boundary: datameet Census 2011"
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "kerala__palakkad__kharif__rainfed",
-   "zone_id": "kerala__palakkad",
-   "agro_zone": "Kerala",
+   "case_id": "karnataka__gulbarga__zaid__rainfed",
+   "zone_id": "karnataka__gulbarga",
+   "agro_zone": "Karnataka",
    "variant": "rainfed",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/kerala__palakkad.geojson",
+   "aoi": "aoi/karnataka__gulbarga.geojson",
    "request": {
     "irrigation_available": false
    },
    "truth": {
-    "season": "kharif",
+    "season": "zaid",
     "k": 3,
     "gt_crops": [
-     "jowar_sorghum",
-     "groundnut",
-     "cotton"
-    ],
-    "baseline_crops": [
-     "jowar_sorghum",
-     "cotton",
+     "rice_paddy",
      "groundnut"
     ],
+    "baseline_crops": [
+     "rice_paddy",
+     "groundnut",
+     "onion"
+    ],
     "mean_area_share": {
-     "jowar_sorghum": 0.383,
-     "groundnut": 0.382,
-     "cotton": 0.234
+     "rice_paddy": 0.953,
+     "groundnut": 0.047
     }
    },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 5 yrs; boundary: datameet Census 2011"
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
    "case_id": "madhyapradesh__shajapur__kharif__irrigated",
@@ -1242,14 +1241,14 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "meghalaya__westgarohills__kharif__irrigated",
-   "zone_id": "meghalaya__westgarohills",
+   "case_id": "meghalaya__southgarohills__kharif__irrigated",
+   "zone_id": "meghalaya__southgarohills",
    "agro_zone": "Meghalaya",
    "variant": "irrigated",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/meghalaya__westgarohills.geojson",
+   "aoi": "aoi/meghalaya__southgarohills.geojson",
    "request": {
     "irrigation_available": true
    },
@@ -1257,30 +1256,32 @@
     "season": "kharif",
     "k": 3,
     "gt_crops": [
-     "cotton",
+     "rice_paddy",
      "maize"
     ],
     "baseline_crops": [
+     "rice_paddy",
      "maize",
      "cotton",
-     "soybean"
+     "soybean",
+     "potato"
     ],
     "mean_area_share": {
-     "cotton": 0.552,
-     "maize": 0.448
+     "rice_paddy": 0.926,
+     "maize": 0.074
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "meghalaya__westgarohills__kharif__rainfed",
-   "zone_id": "meghalaya__westgarohills",
+   "case_id": "meghalaya__southgarohills__kharif__rainfed",
+   "zone_id": "meghalaya__southgarohills",
    "agro_zone": "Meghalaya",
    "variant": "rainfed",
    "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/meghalaya__westgarohills.geojson",
+   "aoi": "aoi/meghalaya__southgarohills.geojson",
    "request": {
     "irrigation_available": false
    },
@@ -1288,85 +1289,19 @@
     "season": "kharif",
     "k": 3,
     "gt_crops": [
-     "cotton",
+     "rice_paddy",
      "maize"
     ],
     "baseline_crops": [
+     "rice_paddy",
      "maize",
      "cotton",
-     "soybean"
+     "soybean",
+     "potato"
     ],
     "mean_area_share": {
-     "cotton": 0.552,
-     "maize": 0.448
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "meghalaya__westgarohills__rabi__irrigated",
-   "zone_id": "meghalaya__westgarohills",
-   "agro_zone": "Meghalaya",
-   "variant": "irrigated",
-   "split": "tune",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/meghalaya__westgarohills.geojson",
-   "request": {
-    "irrigation_available": true
-   },
-   "truth": {
-    "season": "rabi",
-    "k": 3,
-    "gt_crops": [
-     "mustard",
-     "gram_chickpea",
-     "wheat"
-    ],
-    "baseline_crops": [
-     "potato",
-     "mustard",
-     "gram_chickpea",
-     "wheat"
-    ],
-    "mean_area_share": {
-     "mustard": 0.878,
-     "gram_chickpea": 0.066,
-     "wheat": 0.056
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "meghalaya__westgarohills__rabi__rainfed",
-   "zone_id": "meghalaya__westgarohills",
-   "agro_zone": "Meghalaya",
-   "variant": "rainfed",
-   "split": "tune",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/meghalaya__westgarohills.geojson",
-   "request": {
-    "irrigation_available": false
-   },
-   "truth": {
-    "season": "rabi",
-    "k": 3,
-    "gt_crops": [
-     "mustard",
-     "gram_chickpea",
-     "wheat"
-    ],
-    "baseline_crops": [
-     "potato",
-     "mustard",
-     "gram_chickpea",
-     "wheat"
-    ],
-    "mean_area_share": {
-     "mustard": 0.878,
-     "gram_chickpea": 0.066,
-     "wheat": 0.056
+     "rice_paddy": 0.926,
+     "maize": 0.074
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -1503,6 +1438,66 @@
      "rice_paddy": 0.653,
      "maize": 0.22,
      "soybean": 0.127
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "odisha__anugul__zaid__irrigated",
+   "zone_id": "odisha__anugul",
+   "agro_zone": "Odisha",
+   "variant": "irrigated",
+   "split": "test",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/odisha__anugul.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "season": "zaid",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.965,
+     "groundnut": 0.035
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "odisha__anugul__zaid__rainfed",
+   "zone_id": "odisha__anugul",
+   "agro_zone": "Odisha",
+   "variant": "rainfed",
+   "split": "test",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/odisha__anugul.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "season": "zaid",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.965,
+     "groundnut": 0.035
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -2408,6 +2403,72 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
+   "case_id": "bihar__banka__kharif__irrigated",
+   "zone_id": "bihar__banka",
+   "agro_zone": "Bihar",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/bihar__banka.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "season": "kharif",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "maize"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "maize",
+     "potato",
+     "bajra_pearl_millet",
+     "jowar_sorghum"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.928,
+     "maize": 0.072
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "bihar__banka__kharif__rainfed",
+   "zone_id": "bihar__banka",
+   "agro_zone": "Bihar",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/bihar__banka.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "season": "kharif",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "maize"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "maize",
+     "potato",
+     "bajra_pearl_millet",
+     "jowar_sorghum"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.928,
+     "maize": 0.072
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
    "case_id": "bihar__banka__rabi__irrigated",
    "zone_id": "bihar__banka",
    "agro_zone": "Bihar",
@@ -2749,6 +2810,68 @@
      "wheat": 0.557,
      "jowar_sorghum": 0.332,
      "gram_chickpea": 0.11
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 8 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "gujarat__surat__zaid__irrigated",
+   "zone_id": "gujarat__surat",
+   "agro_zone": "Gujarat",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/gujarat__surat.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "season": "zaid",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "groundnut",
+     "rice_paddy",
+     "onion"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.665,
+     "groundnut": 0.335
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 8 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "gujarat__surat__zaid__rainfed",
+   "zone_id": "gujarat__surat",
+   "agro_zone": "Gujarat",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/gujarat__surat.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "season": "zaid",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "groundnut",
+     "rice_paddy",
+     "onion"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.665,
+     "groundnut": 0.335
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 8 yrs; boundary: datameet Census 2011"
@@ -3308,6 +3431,72 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
+   "case_id": "meghalaya__ribhoi__kharif__irrigated",
+   "zone_id": "meghalaya__ribhoi",
+   "agro_zone": "Meghalaya",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/meghalaya__ribhoi.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "season": "kharif",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "maize"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "maize",
+     "cotton",
+     "soybean",
+     "potato"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.898,
+     "maize": 0.102
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "meghalaya__ribhoi__kharif__rainfed",
+   "zone_id": "meghalaya__ribhoi",
+   "agro_zone": "Meghalaya",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/meghalaya__ribhoi.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "season": "kharif",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "maize"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "maize",
+     "cotton",
+     "soybean",
+     "potato"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.898,
+     "maize": 0.102
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
    "case_id": "mizoram__mamit__kharif__irrigated",
    "zone_id": "mizoram__mamit",
    "agro_zone": "Mizoram",
@@ -3442,6 +3631,70 @@
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 7 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "odisha__bargarh__kharif__irrigated",
+   "zone_id": "odisha__bargarh",
+   "agro_zone": "Odisha",
+   "variant": "irrigated",
+   "split": "test",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/odisha__bargarh.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "season": "kharif",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "maize",
+     "groundnut",
+     "potato"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.941,
+     "groundnut": 0.059
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "odisha__bargarh__kharif__rainfed",
+   "zone_id": "odisha__bargarh",
+   "agro_zone": "Odisha",
+   "variant": "rainfed",
+   "split": "test",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/odisha__bargarh.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "season": "kharif",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "maize",
+     "groundnut",
+     "potato"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.941,
+     "groundnut": 0.059
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
    "case_id": "punjab__bathinda__kharif__irrigated",
@@ -4278,6 +4531,72 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
+   "case_id": "bihar__gopalganj__kharif__irrigated",
+   "zone_id": "bihar__gopalganj",
+   "agro_zone": "Bihar",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/bihar__gopalganj.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "season": "kharif",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "maize"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "maize",
+     "potato",
+     "bajra_pearl_millet",
+     "jowar_sorghum"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.922,
+     "maize": 0.078
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "bihar__gopalganj__kharif__rainfed",
+   "zone_id": "bihar__gopalganj",
+   "agro_zone": "Bihar",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/bihar__gopalganj.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "season": "kharif",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "maize"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "maize",
+     "potato",
+     "bajra_pearl_millet",
+     "jowar_sorghum"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.922,
+     "maize": 0.078
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
    "case_id": "bihar__gopalganj__rabi__irrigated",
    "zone_id": "bihar__gopalganj",
    "agro_zone": "Bihar",
@@ -4950,14 +5269,74 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 8 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "maharashtra__osmanabad__kharif__irrigated",
-   "zone_id": "maharashtra__osmanabad",
+   "case_id": "maharashtra__sindhudurg__zaid__irrigated",
+   "zone_id": "maharashtra__sindhudurg",
    "agro_zone": "Maharashtra",
    "variant": "irrigated",
    "split": "test",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/maharashtra__osmanabad.geojson",
+   "aoi": "aoi/maharashtra__sindhudurg.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "season": "zaid",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "groundnut",
+     "rice_paddy"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.554,
+     "groundnut": 0.446
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 7 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "maharashtra__sindhudurg__zaid__rainfed",
+   "zone_id": "maharashtra__sindhudurg",
+   "agro_zone": "Maharashtra",
+   "variant": "rainfed",
+   "split": "test",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/maharashtra__sindhudurg.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "season": "zaid",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "groundnut",
+     "rice_paddy"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.554,
+     "groundnut": 0.446
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 7 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "meghalaya__eastkhasihills__kharif__irrigated",
+   "zone_id": "meghalaya__eastkhasihills",
+   "agro_zone": "Meghalaya",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/meghalaya__eastkhasihills.geojson",
    "request": {
     "irrigation_available": true
    },
@@ -4965,42 +5344,34 @@
     "season": "kharif",
     "k": 3,
     "gt_crops": [
-     "soybean",
-     "jowar_sorghum",
-     "bajra_pearl_millet",
-     "cotton",
-     "maize",
      "rice_paddy",
-     "groundnut"
+     "maize",
+     "potato"
     ],
     "baseline_crops": [
+     "rice_paddy",
+     "maize",
      "cotton",
      "soybean",
-     "rice_paddy",
-     "bajra_pearl_millet",
-     "jowar_sorghum"
+     "potato"
     ],
     "mean_area_share": {
-     "soybean": 0.386,
-     "jowar_sorghum": 0.262,
-     "bajra_pearl_millet": 0.092,
-     "cotton": 0.08,
-     "maize": 0.077,
-     "rice_paddy": 0.06,
-     "groundnut": 0.042
+     "rice_paddy": 0.764,
+     "maize": 0.188,
+     "potato": 0.048
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "maharashtra__osmanabad__kharif__rainfed",
-   "zone_id": "maharashtra__osmanabad",
-   "agro_zone": "Maharashtra",
+   "case_id": "meghalaya__eastkhasihills__kharif__rainfed",
+   "zone_id": "meghalaya__eastkhasihills",
+   "agro_zone": "Meghalaya",
    "variant": "rainfed",
-   "split": "test",
+   "split": "tune",
    "type": "crop_ranking",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/maharashtra__osmanabad.geojson",
+   "aoi": "aoi/meghalaya__eastkhasihills.geojson",
    "request": {
     "irrigation_available": false
    },
@@ -5008,99 +5379,21 @@
     "season": "kharif",
     "k": 3,
     "gt_crops": [
-     "soybean",
-     "jowar_sorghum",
-     "bajra_pearl_millet",
-     "cotton",
-     "maize",
      "rice_paddy",
-     "groundnut"
+     "maize",
+     "potato"
     ],
     "baseline_crops": [
+     "rice_paddy",
+     "maize",
      "cotton",
      "soybean",
-     "rice_paddy",
-     "bajra_pearl_millet",
-     "jowar_sorghum"
+     "potato"
     ],
     "mean_area_share": {
-     "soybean": 0.386,
-     "jowar_sorghum": 0.262,
-     "bajra_pearl_millet": 0.092,
-     "cotton": 0.08,
-     "maize": 0.077,
-     "rice_paddy": 0.06,
-     "groundnut": 0.042
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "maharashtra__osmanabad__rabi__irrigated",
-   "zone_id": "maharashtra__osmanabad",
-   "agro_zone": "Maharashtra",
-   "variant": "irrigated",
-   "split": "test",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/maharashtra__osmanabad.geojson",
-   "request": {
-    "irrigation_available": true
-   },
-   "truth": {
-    "season": "rabi",
-    "k": 3,
-    "gt_crops": [
-     "jowar_sorghum",
-     "gram_chickpea",
-     "wheat"
-    ],
-    "baseline_crops": [
-     "jowar_sorghum",
-     "gram_chickpea",
-     "wheat",
-     "maize",
-     "mustard"
-    ],
-    "mean_area_share": {
-     "jowar_sorghum": 0.665,
-     "gram_chickpea": 0.233,
-     "wheat": 0.102
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "maharashtra__osmanabad__rabi__rainfed",
-   "zone_id": "maharashtra__osmanabad",
-   "agro_zone": "Maharashtra",
-   "variant": "rainfed",
-   "split": "test",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/maharashtra__osmanabad.geojson",
-   "request": {
-    "irrigation_available": false
-   },
-   "truth": {
-    "season": "rabi",
-    "k": 3,
-    "gt_crops": [
-     "jowar_sorghum",
-     "gram_chickpea",
-     "wheat"
-    ],
-    "baseline_crops": [
-     "jowar_sorghum",
-     "gram_chickpea",
-     "wheat",
-     "maize",
-     "mustard"
-    ],
-    "mean_area_share": {
-     "jowar_sorghum": 0.665,
-     "gram_chickpea": 0.233,
-     "wheat": 0.102
+     "rice_paddy": 0.764,
+     "maize": 0.188,
+     "potato": 0.048
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -5237,6 +5530,66 @@
      "rice_paddy": 0.758,
      "maize": 0.185,
      "soybean": 0.057
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "odisha__mayurbhanj__zaid__irrigated",
+   "zone_id": "odisha__mayurbhanj",
+   "agro_zone": "Odisha",
+   "variant": "irrigated",
+   "split": "test",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/odisha__mayurbhanj.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "season": "zaid",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.955,
+     "groundnut": 0.045
+    }
+   },
+   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "odisha__mayurbhanj__zaid__rainfed",
+   "zone_id": "odisha__mayurbhanj",
+   "agro_zone": "Odisha",
+   "variant": "rainfed",
+   "split": "test",
+   "type": "crop_ranking",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/odisha__mayurbhanj.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "season": "zaid",
+    "k": 3,
+    "gt_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "baseline_crops": [
+     "rice_paddy",
+     "groundnut"
+    ],
+    "mean_area_share": {
+     "rice_paddy": 0.955,
+     "groundnut": 0.045
     }
    },
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
@@ -5516,438 +5869,6 @@
    "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
   },
   {
-   "case_id": "tamilnadu__tiruchirappalli__kharif__irrigated",
-   "zone_id": "tamilnadu__tiruchirappalli",
-   "agro_zone": "Tamil Nadu",
-   "variant": "irrigated",
-   "split": "tune",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/tamilnadu__tiruchirappalli.geojson",
-   "request": {
-    "irrigation_available": true
-   },
-   "truth": {
-    "season": "kharif",
-    "k": 3,
-    "gt_crops": [
-     "rice_paddy",
-     "jowar_sorghum",
-     "cotton",
-     "groundnut",
-     "maize"
-    ],
-    "baseline_crops": [
-     "rice_paddy",
-     "groundnut",
-     "maize",
-     "jowar_sorghum",
-     "cotton"
-    ],
-    "mean_area_share": {
-     "rice_paddy": 0.71,
-     "jowar_sorghum": 0.102,
-     "cotton": 0.08,
-     "groundnut": 0.062,
-     "maize": 0.046
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 9 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "tamilnadu__tiruchirappalli__kharif__rainfed",
-   "zone_id": "tamilnadu__tiruchirappalli",
-   "agro_zone": "Tamil Nadu",
-   "variant": "rainfed",
-   "split": "tune",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/tamilnadu__tiruchirappalli.geojson",
-   "request": {
-    "irrigation_available": false
-   },
-   "truth": {
-    "season": "kharif",
-    "k": 3,
-    "gt_crops": [
-     "rice_paddy",
-     "jowar_sorghum",
-     "cotton",
-     "groundnut",
-     "maize"
-    ],
-    "baseline_crops": [
-     "rice_paddy",
-     "groundnut",
-     "maize",
-     "jowar_sorghum",
-     "cotton"
-    ],
-    "mean_area_share": {
-     "rice_paddy": 0.71,
-     "jowar_sorghum": 0.102,
-     "cotton": 0.08,
-     "groundnut": 0.062,
-     "maize": 0.046
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 9 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "uttarakhand__nainital__kharif__irrigated",
-   "zone_id": "uttarakhand__nainital",
-   "agro_zone": "Uttarakhand",
-   "variant": "irrigated",
-   "split": "tune",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/uttarakhand__nainital.geojson",
-   "request": {
-    "irrigation_available": true
-   },
-   "truth": {
-    "season": "kharif",
-    "k": 3,
-    "gt_crops": [
-     "rice_paddy",
-     "soybean",
-     "maize",
-     "potato"
-    ],
-    "baseline_crops": [
-     "rice_paddy",
-     "maize",
-     "potato",
-     "soybean",
-     "groundnut"
-    ],
-    "mean_area_share": {
-     "rice_paddy": 0.517,
-     "soybean": 0.241,
-     "maize": 0.194,
-     "potato": 0.048
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "uttarakhand__nainital__kharif__rainfed",
-   "zone_id": "uttarakhand__nainital",
-   "agro_zone": "Uttarakhand",
-   "variant": "rainfed",
-   "split": "tune",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/uttarakhand__nainital.geojson",
-   "request": {
-    "irrigation_available": false
-   },
-   "truth": {
-    "season": "kharif",
-    "k": 3,
-    "gt_crops": [
-     "rice_paddy",
-     "soybean",
-     "maize",
-     "potato"
-    ],
-    "baseline_crops": [
-     "rice_paddy",
-     "maize",
-     "potato",
-     "soybean",
-     "groundnut"
-    ],
-    "mean_area_share": {
-     "rice_paddy": 0.517,
-     "soybean": 0.241,
-     "maize": 0.194,
-     "potato": 0.048
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "uttarakhand__nainital__rabi__irrigated",
-   "zone_id": "uttarakhand__nainital",
-   "agro_zone": "Uttarakhand",
-   "variant": "irrigated",
-   "split": "tune",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/uttarakhand__nainital.geojson",
-   "request": {
-    "irrigation_available": true
-   },
-   "truth": {
-    "season": "rabi",
-    "k": 3,
-    "gt_crops": [
-     "wheat",
-     "potato",
-     "barley"
-    ],
-    "baseline_crops": [
-     "wheat",
-     "barley",
-     "mustard",
-     "potato",
-     "gram_chickpea"
-    ],
-    "mean_area_share": {
-     "wheat": 0.922,
-     "potato": 0.041,
-     "barley": 0.037
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "uttarakhand__nainital__rabi__rainfed",
-   "zone_id": "uttarakhand__nainital",
-   "agro_zone": "Uttarakhand",
-   "variant": "rainfed",
-   "split": "tune",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/uttarakhand__nainital.geojson",
-   "request": {
-    "irrigation_available": false
-   },
-   "truth": {
-    "season": "rabi",
-    "k": 3,
-    "gt_crops": [
-     "wheat",
-     "potato",
-     "barley"
-    ],
-    "baseline_crops": [
-     "wheat",
-     "barley",
-     "mustard",
-     "potato",
-     "gram_chickpea"
-    ],
-    "mean_area_share": {
-     "wheat": 0.922,
-     "potato": 0.041,
-     "barley": 0.037
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "uttarpradesh__mainpuri__kharif__irrigated",
-   "zone_id": "uttarpradesh__mainpuri",
-   "agro_zone": "Uttar Pradesh",
-   "variant": "irrigated",
-   "split": "test",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/uttarpradesh__mainpuri.geojson",
-   "request": {
-    "irrigation_available": true
-   },
-   "truth": {
-    "season": "kharif",
-    "k": 3,
-    "gt_crops": [
-     "rice_paddy",
-     "maize",
-     "bajra_pearl_millet"
-    ],
-    "baseline_crops": [
-     "rice_paddy",
-     "bajra_pearl_millet",
-     "maize",
-     "jowar_sorghum",
-     "groundnut"
-    ],
-    "mean_area_share": {
-     "rice_paddy": 0.544,
-     "maize": 0.336,
-     "bajra_pearl_millet": 0.12
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "uttarpradesh__mainpuri__kharif__rainfed",
-   "zone_id": "uttarpradesh__mainpuri",
-   "agro_zone": "Uttar Pradesh",
-   "variant": "rainfed",
-   "split": "test",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/uttarpradesh__mainpuri.geojson",
-   "request": {
-    "irrigation_available": false
-   },
-   "truth": {
-    "season": "kharif",
-    "k": 3,
-    "gt_crops": [
-     "rice_paddy",
-     "maize",
-     "bajra_pearl_millet"
-    ],
-    "baseline_crops": [
-     "rice_paddy",
-     "bajra_pearl_millet",
-     "maize",
-     "jowar_sorghum",
-     "groundnut"
-    ],
-    "mean_area_share": {
-     "rice_paddy": 0.544,
-     "maize": 0.336,
-     "bajra_pearl_millet": 0.12
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "uttarpradesh__mainpuri__rabi__irrigated",
-   "zone_id": "uttarpradesh__mainpuri",
-   "agro_zone": "Uttar Pradesh",
-   "variant": "irrigated",
-   "split": "test",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/uttarpradesh__mainpuri.geojson",
-   "request": {
-    "irrigation_available": true
-   },
-   "truth": {
-    "season": "rabi",
-    "k": 3,
-    "gt_crops": [
-     "wheat",
-     "potato",
-     "mustard"
-    ],
-    "baseline_crops": [
-     "wheat",
-     "mustard",
-     "gram_chickpea",
-     "potato",
-     "barley"
-    ],
-    "mean_area_share": {
-     "wheat": 0.866,
-     "potato": 0.084,
-     "mustard": 0.05
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "uttarpradesh__mainpuri__rabi__rainfed",
-   "zone_id": "uttarpradesh__mainpuri",
-   "agro_zone": "Uttar Pradesh",
-   "variant": "rainfed",
-   "split": "test",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/uttarpradesh__mainpuri.geojson",
-   "request": {
-    "irrigation_available": false
-   },
-   "truth": {
-    "season": "rabi",
-    "k": 3,
-    "gt_crops": [
-     "wheat",
-     "potato",
-     "mustard"
-    ],
-    "baseline_crops": [
-     "wheat",
-     "mustard",
-     "gram_chickpea",
-     "potato",
-     "barley"
-    ],
-    "mean_area_share": {
-     "wheat": 0.866,
-     "potato": 0.084,
-     "mustard": 0.05
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "westbengal__bankura__rabi__irrigated",
-   "zone_id": "westbengal__bankura",
-   "agro_zone": "West Bengal",
-   "variant": "irrigated",
-   "split": "test",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/westbengal__bankura.geojson",
-   "request": {
-    "irrigation_available": true
-   },
-   "truth": {
-    "season": "rabi",
-    "k": 3,
-    "gt_crops": [
-     "potato",
-     "mustard",
-     "wheat"
-    ],
-    "baseline_crops": [
-     "mustard",
-     "wheat",
-     "potato",
-     "gram_chickpea",
-     "maize"
-    ],
-    "mean_area_share": {
-     "potato": 0.539,
-     "mustard": 0.341,
-     "wheat": 0.12
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "westbengal__bankura__rabi__rainfed",
-   "zone_id": "westbengal__bankura",
-   "agro_zone": "West Bengal",
-   "variant": "rainfed",
-   "split": "test",
-   "type": "crop_ranking",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/westbengal__bankura.geojson",
-   "request": {
-    "irrigation_available": false
-   },
-   "truth": {
-    "season": "rabi",
-    "k": 3,
-    "gt_crops": [
-     "potato",
-     "mustard",
-     "wheat"
-    ],
-    "baseline_crops": [
-     "mustard",
-     "wheat",
-     "potato",
-     "gram_chickpea",
-     "maize"
-    ],
-    "mean_area_share": {
-     "potato": 0.539,
-     "mustard": 0.341,
-     "wheat": 0.12
-    }
-   },
-   "source": "Kaggle 'Crop Production in India' (data.gov.in/DES), mean annual area 2005-2014, 10 yrs; boundary: datameet Census 2011"
-  },
-  {
    "case_id": "andhrapradesh__chittoor__presence_mango__irrigated",
    "zone_id": "andhrapradesh__chittoor",
    "agro_zone": "Andhra Pradesh",
@@ -6092,38 +6013,38 @@
    "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
   },
   {
-   "case_id": "kerala__wayanad__presence_mango__irrigated",
-   "zone_id": "kerala__wayanad",
+   "case_id": "kerala__kozhikode__presence_mango__irrigated",
+   "zone_id": "kerala__kozhikode",
    "agro_zone": "Kerala",
    "variant": "irrigated",
    "split": "tune",
    "type": "presence",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/kerala__wayanad.geojson",
+   "aoi": "aoi/kerala__kozhikode.geojson",
    "request": {
     "irrigation_available": true
    },
    "truth": {
     "crop_id": "mango",
-    "mean_area_ha": 4968.0
+    "mean_area_ha": 8268.0
    },
    "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
   },
   {
-   "case_id": "kerala__wayanad__presence_mango__rainfed",
-   "zone_id": "kerala__wayanad",
+   "case_id": "kerala__kozhikode__presence_mango__rainfed",
+   "zone_id": "kerala__kozhikode",
    "agro_zone": "Kerala",
    "variant": "rainfed",
    "split": "tune",
    "type": "presence",
    "endpoint": "crop_suitability",
-   "aoi": "aoi/kerala__wayanad.geojson",
+   "aoi": "aoi/kerala__kozhikode.geojson",
    "request": {
     "irrigation_available": false
    },
    "truth": {
     "crop_id": "mango",
-    "mean_area_ha": 4968.0
+    "mean_area_ha": 8268.0
    },
    "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
   },
@@ -6164,6 +6085,42 @@
    "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
   },
   {
+   "case_id": "kerala__malappuram__presence_mango__irrigated",
+   "zone_id": "kerala__malappuram",
+   "agro_zone": "Kerala",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/kerala__malappuram.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 7750.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "kerala__malappuram__presence_mango__rainfed",
+   "zone_id": "kerala__malappuram",
+   "agro_zone": "Kerala",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/kerala__malappuram.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 7750.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
+  },
+  {
    "case_id": "andhrapradesh__eastgodavari__presence_mango__irrigated",
    "zone_id": "andhrapradesh__eastgodavari",
    "agro_zone": "Andhra Pradesh",
@@ -6198,6 +6155,42 @@
     "mean_area_ha": 15563.0
    },
    "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "kerala__kannur__presence_mango__irrigated",
+   "zone_id": "kerala__kannur",
+   "agro_zone": "Kerala",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/kerala__kannur.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 7732.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "kerala__kannur__presence_mango__rainfed",
+   "zone_id": "kerala__kannur",
+   "agro_zone": "Kerala",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/kerala__kannur.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 7732.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
   },
   {
    "case_id": "andhrapradesh__visakhapatnam__presence_mango__irrigated",
@@ -6236,6 +6229,42 @@
    "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
   },
   {
+   "case_id": "kerala__thrissur__presence_mango__irrigated",
+   "zone_id": "kerala__thrissur",
+   "agro_zone": "Kerala",
+   "variant": "irrigated",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/kerala__thrissur.geojson",
+   "request": {
+    "irrigation_available": true
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 6752.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
+  },
+  {
+   "case_id": "kerala__thrissur__presence_mango__rainfed",
+   "zone_id": "kerala__thrissur",
+   "agro_zone": "Kerala",
+   "variant": "rainfed",
+   "split": "tune",
+   "type": "presence",
+   "endpoint": "crop_suitability",
+   "aoi": "aoi/kerala__thrissur.geojson",
+   "request": {
+    "irrigation_available": false
+   },
+   "truth": {
+    "crop_id": "mango",
+    "mean_area_ha": 6752.0
+   },
+   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (2 yrs); boundary: datameet Census 2011"
+  },
+  {
    "case_id": "andhrapradesh__anantapur__presence_mango__irrigated",
    "zone_id": "andhrapradesh__anantapur",
    "agro_zone": "Andhra Pradesh",
@@ -6268,114 +6297,6 @@
    "truth": {
     "crop_id": "mango",
     "mean_area_ha": 8755.0
-   },
-   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "andhrapradesh__srikakulam__presence_mango__irrigated",
-   "zone_id": "andhrapradesh__srikakulam",
-   "agro_zone": "Andhra Pradesh",
-   "variant": "irrigated",
-   "split": "tune",
-   "type": "presence",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/andhrapradesh__srikakulam.geojson",
-   "request": {
-    "irrigation_available": true
-   },
-   "truth": {
-    "crop_id": "mango",
-    "mean_area_ha": 8374.0
-   },
-   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "andhrapradesh__srikakulam__presence_mango__rainfed",
-   "zone_id": "andhrapradesh__srikakulam",
-   "agro_zone": "Andhra Pradesh",
-   "variant": "rainfed",
-   "split": "tune",
-   "type": "presence",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/andhrapradesh__srikakulam.geojson",
-   "request": {
-    "irrigation_available": false
-   },
-   "truth": {
-    "crop_id": "mango",
-    "mean_area_ha": 8374.0
-   },
-   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "andhrapradesh__westgodavari__presence_mango__irrigated",
-   "zone_id": "andhrapradesh__westgodavari",
-   "agro_zone": "Andhra Pradesh",
-   "variant": "irrigated",
-   "split": "tune",
-   "type": "presence",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/andhrapradesh__westgodavari.geojson",
-   "request": {
-    "irrigation_available": true
-   },
-   "truth": {
-    "crop_id": "mango",
-    "mean_area_ha": 7496.0
-   },
-   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "andhrapradesh__westgodavari__presence_mango__rainfed",
-   "zone_id": "andhrapradesh__westgodavari",
-   "agro_zone": "Andhra Pradesh",
-   "variant": "rainfed",
-   "split": "tune",
-   "type": "presence",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/andhrapradesh__westgodavari.geojson",
-   "request": {
-    "irrigation_available": false
-   },
-   "truth": {
-    "crop_id": "mango",
-    "mean_area_ha": 7496.0
-   },
-   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "andhrapradesh__prakasam__presence_mango__irrigated",
-   "zone_id": "andhrapradesh__prakasam",
-   "agro_zone": "Andhra Pradesh",
-   "variant": "irrigated",
-   "split": "tune",
-   "type": "presence",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/andhrapradesh__prakasam.geojson",
-   "request": {
-    "irrigation_available": true
-   },
-   "truth": {
-    "crop_id": "mango",
-    "mean_area_ha": 6350.0
-   },
-   "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
-  },
-  {
-   "case_id": "andhrapradesh__prakasam__presence_mango__rainfed",
-   "zone_id": "andhrapradesh__prakasam",
-   "agro_zone": "Andhra Pradesh",
-   "variant": "rainfed",
-   "split": "tune",
-   "type": "presence",
-   "endpoint": "crop_suitability",
-   "aoi": "aoi/andhrapradesh__prakasam.geojson",
-   "request": {
-    "irrigation_available": false
-   },
-   "truth": {
-    "crop_id": "mango",
-    "mean_area_ha": 6350.0
    },
    "source": "Kaggle 'Crop Production in India' mean annual area 2005-2014 (3 yrs); boundary: datameet Census 2011"
   },

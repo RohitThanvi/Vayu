@@ -74,3 +74,13 @@ Every live run now saves each location's sampled evidence (monthly rain / temper
 * `python diagnose.py validation_runs/<run_id>` writes `diagnosis.md`: AUC of each factor against "observed major crop", per-crop over / under-rating,
   the limiting factor behind every widely grown crop rated < 0.5, false positives by crop, and results by season and state.
 Use these on the **tune** split. Look at the test split once, at the end, on states the model has never been tuned or diagnosed on.
+
+## Ground-truth correction (read this if you ran an earlier `cases.json`)
+An earlier `build_ground_truth.py` kept only DES rows labelled Kharif or Rabi. The dataset also uses Autumn, Winter and Summer, so it dropped 42% of national
+rice area and ALL rice in Bihar, West Bengal, Assam, Jharkhand, Kerala, Odisha and Meghalaya: districts where rice dominates were labelled "rice not major".
+`season_map.py` is now the single mapping (Kharif/Autumn/Winter -> kharif, Rabi -> rabi, Summer -> zaid) used by both the builder and `derive_crop_seasons.py`.
+Results from runs made with the old `cases.json` (sha 3d8427d5...) are not comparable with the corrected ones; saved profiles remain valid (same AOIs).
+
+## Live diagnostics
+`diagnostics/check_dem_slope.py` compares four ways of computing mean slope for an AOI (see its docstring). Profiles from the validation runs show implausibly
+low slopes everywhere (max 2.3% even in the Himalaya), so the slope factor currently contributes nothing.
