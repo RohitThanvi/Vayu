@@ -63,3 +63,6 @@ SUPPLEMENTAL_MAI = 0.55                    # ESTIMATE: below this a rainfed dry-
 # ---- heterogeneous (mountain) AOIs
 MOUNTAIN_AOI_SLOPE_DEG = 10.0              # ESTIMATE: AOI-mean slope at/above which climate (11 km grid) is averaged over a wide elevation range
 CONF_PENALTY_HETEROGENEOUS_TERRAIN = 0.10
+
+# ---- slope floor (separate from SOFT_FLOOR so it can be studied on its own): terracing / contour farming mitigate steep land, so slope may deserve a higher floor than other soft limits.
+SLOPE_MIN_SCORE = SOFT_FLOOR     # default = unchanged behaviour; change only on evidence from the development split
