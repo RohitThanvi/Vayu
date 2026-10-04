@@ -44,6 +44,7 @@ from . import suitability_engine as _engine
 logger = logging.getLogger(__name__)
 
 _POINT_BUFFER_M = 300          # ~1 OpenLandMap pixel around a tapped point
+_MIN_CROPLAND_FRACTION = 0.01   # below this share of cropland in the AOI, slope falls back to the all-land mean
 _SOIL_SCALE_M = 250            # OpenLandMap native
 _RAIN_SCALE_M = 5566           # CHIRPS native
 _TEMP_SCALE_M = 11132          # ERA5-Land native
@@ -98,7 +99,7 @@ def _aoi_latitude(aoi: Dict[str, Any]) -> Optional[float]:
 def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = None,
                             aoi: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     import ee
-    from ..gee_client import _polygon_geometry
+    from ..gee_client import _polygon_geometry, copernicus_dem
 
     if aoi:
         region = _polygon_geometry(aoi)
@@ -127,8 +128,13 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
     soil_img = ee.Image.cat([ph_top, oc_top])
     tex_img = ee.Image(_TEX_ASSET).select("b10").rename("texture")
 
-    dem = ee.ImageCollection("COPERNICUS/DEM/GLO30_2024_1").select("DEM").mosaic()
+    dem = copernicus_dem()                                   # projection restored (a bare mosaic gave ~25x too small slopes)
     slope_img = ee.Terrain.slope(dem).rename("slope_deg")
+    # Crops are grown on gentle land, so the slope that matters is the slope OF THE CROPLAND (ESA WorldCover class 40), not the mean over a
+    # mountain district. The mask is 10 m, the slope 30 m: nearest-neighbour masking samples cropland pixels without bias.
+    crop_mask = ee.ImageCollection("ESA/WorldCover/v200").first().select("Map").eq(40)
+    slope_crop_img = slope_img.updateMask(crop_mask).rename("slope_cropland_deg")
+    crop_frac_img = crop_mask.rename("cropland_fraction")
 
     chirps = ee.ImageCollection(_RAIN_ASSET).filterDate(f"{y0}-01-01", f"{y1 + 1}-01-01").select("precipitation")
     era = ee.ImageCollection(_TEMP_ASSET).filterDate(f"{y0}-01-01", f"{y1 + 1}-01-01").select("temperature_2m")
@@ -145,10 +151,20 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
         return img.reduceRegion(reducer=reducer, geometry=region, scale=scale,
                                 maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
 
+    def _optional(fn):
+        """Cropland refinement is best-effort: any Earth Engine failure falls back to the all-land mean slope instead of failing the request."""
+        try:
+            return fn()
+        except Exception as e:                                  # noqa: BLE001
+            logger.warning("cropland slope sampling failed, using all-land slope: %s", e)
+            return {}
+
     jobs = {
         "soil": lambda: _reduce(soil_img, _SOIL_SCALE_M, ee.Reducer.mean()),
         "tex": lambda: _reduce(tex_img, _SOIL_SCALE_M, ee.Reducer.mode()),
         "slope": lambda: _reduce(slope_img, _DEM_SCALE_M, ee.Reducer.mean()),
+        "slope_crop": lambda: _optional(lambda: _reduce(slope_crop_img, _DEM_SCALE_M, ee.Reducer.mean())),
+        "crop_frac": lambda: _optional(lambda: _reduce(crop_frac_img, _DEM_SCALE_M, ee.Reducer.mean())),
         "rain": lambda: _reduce(rain_img, _RAIN_SCALE_M, ee.Reducer.mean()),
         "temp": lambda: _reduce(temp_img, _TEMP_SCALE_M, ee.Reducer.mean()),
     }
@@ -157,6 +173,10 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
         out = {k: f.result() for k, f in futs.items()}
 
     soil, tex, slope, rain, temp = out["soil"] or {}, out["tex"] or {}, out["slope"] or {}, out["rain"] or {}, out["temp"] or {}
+    slope_crop, crop_frac = (out["slope_crop"] or {}).get("slope_cropland_deg"), (out["crop_frac"] or {}).get("cropland_fraction")
+    slope_all = slope.get("slope_deg")
+    use_crop = slope_crop is not None and crop_frac is not None and crop_frac >= _MIN_CROPLAND_FRACTION
+    slope_used = slope_crop if use_crop else slope_all
     tex_code = tex.get("texture")
     tex_code = int(round(tex_code)) if tex_code is not None else None
     rain_m = [rain.get(f"r{m}") for m in range(1, 13)]
@@ -169,8 +189,11 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
         "organic_carbon_gkg": _r(soil.get("oc_gkg"), 1),
         "texture_class": tex_code,
         "texture_name": TEXTURE_NAMES.get(tex_code),
-        "slope_deg": _r(slope.get("slope_deg"), 1),
-        "slope_pct": _r(math.tan(math.radians(slope["slope_deg"])) * 100, 1) if slope.get("slope_deg") is not None else None,
+        "slope_deg": _r(slope_used, 1),
+        "slope_pct": _r(math.tan(math.radians(slope_used)) * 100, 1) if slope_used is not None else None,
+        "slope_basis": "cropland" if use_crop else "all land",
+        "slope_all_deg": _r(slope_all, 1), "slope_cropland_deg": _r(slope_crop, 1),
+        "cropland_fraction": _r(crop_frac, 3),
         "monthly_rain_mm": [_r(v, 1) for v in rain_m],
         "monthly_temp_c": [_r(v, 1) for v in temp_m],
         "annual_rain_mm": _r(sum(v for v in rain_m if v is not None), 0) if all(v is not None for v in rain_m) else None,
@@ -180,7 +203,7 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
             "soil": "OpenLandMap (Hengl 2018), 250m modeled estimate, 0-30cm topsoil — CC-BY-SA-4.0",
             "rainfall": f"CHIRPS daily, {y0}-{y1} monthly means (~5.5km)",
             "temperature": f"ERA5-Land monthly, {y0}-{y1} (~11km), Copernicus Climate Change Service",
-            "slope": "Copernicus DEM GLO-30 (30m)",
+            "slope": "Copernicus DEM GLO-30 (30m), mean over ESA WorldCover cropland pixels when the AOI has any (else over all land)",
         },
     }
 
@@ -258,7 +281,9 @@ def score_crops(profile: Dict[str, Any], irrigation_available: bool = False,
     return {
         "profile": {**{k: p[k] for k in ("mode", "ph", "organic_carbon_gkg", "texture_class", "texture_name", "slope_pct",
                                          "annual_rain_mm", "annual_mean_temp_c", "climate_years", "value_source", "sources")},
-                    "monthly_rain_mm": p.get("monthly_rain_mm"), "monthly_temp_c": p.get("monthly_temp_c"), "lat": p.get("lat")},
+                    "monthly_rain_mm": p.get("monthly_rain_mm"), "monthly_temp_c": p.get("monthly_temp_c"), "lat": p.get("lat"),
+                    "slope_basis": p.get("slope_basis"), "slope_all_deg": p.get("slope_all_deg"),
+                    "slope_cropland_deg": p.get("slope_cropland_deg"), "cropland_fraction": p.get("cropland_fraction")},
         "evidence": {k: ev[k] for k in ("dry_months", "longest_dry_run_months", "wet_season_share", "drainage", "missing")},
         "irrigation_available": irrigation_available,
         "engine_version": ENGINE_VERSION, "engine_features": list(ENGINE_FEATURES),

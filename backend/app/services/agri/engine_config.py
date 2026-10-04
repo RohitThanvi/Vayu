@@ -59,3 +59,7 @@ CONF_PENALTY_ASSUMED_SOIL_DEPTH = 0.10     # rainfed rabi/zaid estimates lean on
 STORED_SHARE_FOR_DEPTH_CAVEAT = 0.25       # show the soil-depth caveat when stored water is at least this share of supply
 RAINFED_OK_MAI = 0.80
 SUPPLEMENTAL_MAI = 0.55                    # ESTIMATE: below this a rainfed dry-window crop needs irrigation
+
+# ---- heterogeneous (mountain) AOIs
+MOUNTAIN_AOI_SLOPE_DEG = 10.0              # ESTIMATE: AOI-mean slope at/above which climate (11 km grid) is averaged over a wide elevation range
+CONF_PENALTY_HETEROGENEOUS_TERRAIN = 0.10

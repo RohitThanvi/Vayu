@@ -84,3 +84,12 @@ Results from runs made with the old `cases.json` (sha 3d8427d5...) are not compa
 ## Live diagnostics
 `diagnostics/check_dem_slope.py` compares four ways of computing mean slope for an AOI (see its docstring). Profiles from the validation runs show implausibly
 low slopes everywhere (max 2.3% even in the Himalaya), so the slope factor currently contributes nothing.
+
+## Slope bug (found with the validation profiles, confirmed live) and the resample workflow
+Profiles showed mean slopes <= 2.3% everywhere, even in the Himalaya. `diagnostics/check_dem_slope.py` confirmed the cause: `ee.ImageCollection(...).mosaic()` drops
+the DEM's projection, so `ee.Terrain.slope` returned ~1 deg for Uttarkashi where the same DEM with its projection restored (and independent SRTM) gives ~30 deg.
+Fixed through `gee_client.copernicus_dem()` in the Crops sampler and the Spectra terrain tool. The Crops slope is now the mean over ESA WorldCover cropland
+pixels (falls back to all land if the AOI has <1% cropland or the cropland query fails); `slope_all_deg`, `slope_cropland_deg`, `cropland_fraction` and
+`slope_basis` are returned. Mountain AOIs (mean slope >= 10 deg) get an unscored caveat and lower confidence.
+To measure the effect: `diagnostics/resample_profiles.py` (live, writes `_profiles_v2`), then `run_validation.py --replay validation_runs/_profiles_v2 --split tune`
+and compare with the same replay on the old `_profiles`.
