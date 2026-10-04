@@ -93,3 +93,9 @@ pixels (falls back to all land if the AOI has <1% cropland or the cropland query
 `slope_basis` are returned. Mountain AOIs (mean slope >= 10 deg) get an unscored caveat and lower confidence.
 To measure the effect: `diagnostics/resample_profiles.py` (live, writes `_profiles_v2`), then `run_validation.py --replay validation_runs/_profiles_v2 --split tune`
 and compare with the same replay on the old `_profiles`.
+
+## Comparing engine variants offline (tune split only)
+`python experiment.py --profiles validation_runs/_profiles_v2 --split tune --variant slope50:engine_config.SLOPE_MIN_SCORE=0.5 --variant slope100:engine_config.SLOPE_MIN_SCORE=1.0`
+re-scores saved profiles under named constant overrides (`engine_config.*` or `water_balance.*`) and prints pooled / within-crop AUC, recall, false-positive rate,
+recall in hill vs plain states and top-3 overlap side by side. Keep the variant list short: many variants on one split overfit it. Choose a variant only with an
+agronomic rationale, then confirm once on untouched test states.

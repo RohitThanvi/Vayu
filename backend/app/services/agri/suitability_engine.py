@@ -179,7 +179,7 @@ def _score_factors(crop: Dict[str, Any], ev: Dict[str, Any], irrigation: bool):
         elif key in cfg.HARD_FACTORS and x.get("hard"):
             x["severity"], x["effective"] = "hard", 0.0
         else:
-            x["severity"], x["effective"] = "soft", max(x["raw"], cfg.SOFT_FLOOR)
+            x["severity"], x["effective"] = "soft", max(x["raw"], cfg.SLOPE_MIN_SCORE if key == "slope" else cfg.SOFT_FLOOR)
     return f
 
 
