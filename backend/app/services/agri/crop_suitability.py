@@ -258,7 +258,7 @@ def score_crops(profile: Dict[str, Any], irrigation_available: bool = False,
     return {
         "profile": {**{k: p[k] for k in ("mode", "ph", "organic_carbon_gkg", "texture_class", "texture_name", "slope_pct",
                                          "annual_rain_mm", "annual_mean_temp_c", "climate_years", "value_source", "sources")},
-                    "monthly_rain_mm": p.get("monthly_rain_mm"), "monthly_temp_c": p.get("monthly_temp_c")},
+                    "monthly_rain_mm": p.get("monthly_rain_mm"), "monthly_temp_c": p.get("monthly_temp_c"), "lat": p.get("lat")},
         "evidence": {k: ev[k] for k in ("dry_months", "longest_dry_run_months", "wet_season_share", "drainage", "missing")},
         "irrigation_available": irrigation_available,
         "engine_version": ENGINE_VERSION, "engine_features": list(ENGINE_FEATURES),

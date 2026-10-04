@@ -22,8 +22,40 @@ class VayuError(RuntimeError):
     pass
 
 
+def aoi_key(body):
+    """Stable key for a location: the AOI geometry (or lat/lon) of a request."""
+    aoi = body.get("aoi_geojson")
+    if aoi is None:
+        aoi = {"lat": body.get("lat"), "lon": body.get("lon")}
+    return hashlib.sha256(json.dumps(aoi, sort_keys=True, default=str).encode()).hexdigest()[:20]
+
+
+class ReplayClient:
+    """Re-scores SAVED location profiles with the engine in THIS checkout - no network, no Earth Engine.
+    Valid as long as the sampled evidence (soil, climate, slope) is unchanged; it tests the scoring logic, not the sampling."""
+    def __init__(self, profiles_dir, backend_path=None):
+        import sys
+        from pathlib import Path as _P
+        self.dir = _P(profiles_dir)
+        sys.path.insert(0, str(backend_path or _P(__file__).resolve().parent.parent / "backend"))
+        from app.services.agri.crop_suitability import score_crops, ENGINE_VERSION
+        self._score, self.local_engine_version = score_crops, ENGINE_VERSION
+
+    def call(self, endpoint, body, use_cache=True):
+        if endpoint != "crop_suitability":
+            raise VayuError(f"replay supports crop_suitability only (got {endpoint})")
+        f = self.dir / f"{aoi_key(body)}.json"
+        if not f.exists():
+            raise VayuError("no saved profile for this AOI - run once against the live backend (profiles are saved automatically)")
+        prof = json.loads(f.read_text(encoding="utf-8"))["profile"]
+        out = self._score(prof, bool(body.get("irrigation_available")), season=body.get("season"))
+        out["engine_version"] = "replay"
+        return out
+
+
 class VayuClient:
-    def __init__(self, base_url, cache_dir, timeout=120, retries=3, delay=5.0, poll_every=4, poll_max=900):
+    def __init__(self, base_url, cache_dir, timeout=120, retries=3, delay=5.0, poll_every=4, poll_max=900, profiles_dir=None):
+        self.profiles_dir = Path(profiles_dir) if profiles_dir else None
         self.base = base_url.rstrip("/")
         self.cache = Path(cache_dir); self.cache.mkdir(parents=True, exist_ok=True)
         self.timeout, self.retries, self.delay = timeout, retries, delay
@@ -62,12 +94,25 @@ class VayuClient:
         raise VayuError(f"gave up on {path}")
 
     # -- public --------------------------------------------------------
+    def _save_profile(self, endpoint, body, resp):
+        """Keep the sampled evidence (monthly climate, soil, slope, latitude) so any engine version can be replayed offline later."""
+        if endpoint != "crop_suitability" or not self.profiles_dir or not isinstance(resp, dict):
+            return
+        prof = resp.get("profile") or {}
+        if not prof.get("monthly_rain_mm") or not prof.get("monthly_temp_c"):
+            return                                              # older backend: profile too thin to replay
+        self.profiles_dir.mkdir(parents=True, exist_ok=True)
+        f = self.profiles_dir / f"{aoi_key(body)}.json"
+        if not f.exists():
+            f.write_text(json.dumps({"profile": prof, "engine_version": resp.get("engine_version"), "saved": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}), encoding="utf-8")
+
     def call_sync(self, endpoint, body, use_cache=True):
         f = self._key(endpoint, body)
         if use_cache and f.exists():
-            return json.loads(f.read_text(encoding="utf-8"))
+            resp = json.loads(f.read_text(encoding="utf-8")); self._save_profile(endpoint, body, resp); return resp
         resp = self._request("POST", SYNC_ENDPOINTS[endpoint], body)
         f.write_text(json.dumps(resp), encoding="utf-8")
+        self._save_profile(endpoint, body, resp)
         return resp
 
     def call_rs(self, tool, body, use_cache=True):
