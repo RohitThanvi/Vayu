@@ -115,7 +115,8 @@ class CropRanking:
         return {"pred": "|".join(pred[:k]), "truth": "|".join(truth[:k]), "k": k, **m,
                 "baseline_overlap_frac": None if b is None else b["overlap_frac"], "tie_at_cutoff": int(tied),
                 "season": season, "top1_pred": pred[0] if pred else "", "top1_truth": truth[0] if truth else "",
-                "pairs": json.dumps(pairs), "baseline_list": "|".join(base), "irrigated": int(bool(req_irr(case))),
+                "pairs": json.dumps(pairs), "baseline_list": "|".join(base), "irrigated": int(bool(resp.get("irrigation_available", req_irr(case)))),
+                "irrigation_auto": int(bool(resp.get("irrigation_auto", False))),
                 "calibrated": int(cal.startswith("fitted")), "abl": json.dumps(abl) if abl else "",
                 "engine_version": resp.get("engine_version", "pre-versioning"), "n_crops_ranked": len(crops)}
 

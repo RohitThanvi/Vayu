@@ -99,3 +99,8 @@ and compare with the same replay on the old `_profiles`.
 re-scores saved profiles under named constant overrides (`engine_config.*` or `water_balance.*`) and prints pooled / within-crop AUC, recall, false-positive rate,
 recall in hill vs plain states and top-3 overlap side by side. Keep the variant list short: many variants on one split overfit it. Choose a variant only with an
 agronomic rationale, then confirm once on untouched test states.
+
+## The `auto` irrigation variant
+Cases now come in three variants: `irrigated` and `rainfed` (the same irrigation assumed everywhere - blunt) and `auto` (`irrigation_available: null`, resolved per location from the
+saved irrigated-cropland share). `auto` is the realistic one, and the first test of whether the water factor carries signal once irrigation context is right. It needs profiles
+that contain `irrigated_cropland_share`: re-run `diagnostics/resample_profiles.py --force` after pulling this branch.

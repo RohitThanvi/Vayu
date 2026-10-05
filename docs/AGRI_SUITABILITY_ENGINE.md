@@ -82,3 +82,13 @@ that falls in its window. `water_balance.py` estimates that and compares it with
   so on shallow soils such as laterite the stored water is over-estimated and rainfed dry-season scores are optimistic; one Kc for all crops; Thornthwaite PET.
   The result: a high-rainfall coast (Ratnagiri) no longer rates rainfed jowar / maize / gram HIGH in rabi; the Indo-Gangetic plain, where post-monsoon storage
   plus winter rain cover demand, keeps its rabi ratings. These are behaviours on fixtures and on one live reading, not validated accuracy.
+
+## Sampling corrections (found by validation) and irrigation context
+* **DEM projection.** `ImageCollection.mosaic()` drops the DEM's projection, which made `ee.Terrain.slope` ~25x too small (Uttarkashi 1.1 deg vs ~30 deg with the
+  projection restored and from SRTM; verified live). All terrain operations now use `gee_client.copernicus_dem()`; a test fails if a bare GLO30 mosaic is used.
+* **Cropland slope.** The Crops slope is the mean over ESA WorldCover cropland pixels (all-land mean if the AOI has < 1% cropland or the cropland query fails).
+  `slope_basis`, `slope_all_deg`, `slope_cropland_deg`, `cropland_fraction` are returned. Mountain AOIs (all-land mean >= 10 deg) carry an unscored caveat + 0.10 confidence penalty,
+  because climate (5-11 km grids) is averaged over a wide elevation range while crops grow in valleys.
+* **Irrigation context.** `irrigated_cropland_share` = share of GFSAD1000 cropland pixels (nominal 2010, 1 km; classes 1-2 irrigated, 3-5 rainfed) in the AOI. The request's
+  `irrigation_available` may be `true`, `false` or `null`; `null` resolves to irrigated when the share is >= 0.5 (unknown -> rainfed). The response reports `irrigation_auto` and
+  `irrigation_evidence`; the UI shows the share as a hint and never changes the checkbox. An explicit true/false is never overridden.

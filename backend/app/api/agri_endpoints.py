@@ -101,7 +101,7 @@ class CropSuitabilityRequest(BaseModel):
     lat: Optional[float] = None
     lon: Optional[float] = None
     aoi_geojson: Optional[Dict[str, Any]] = None
-    irrigation_available: bool = False
+    irrigation_available: Optional[bool] = False  # true / false, or null = infer from the area's irrigated-cropland share (GFSAD1000)
     season: Optional[str] = "best"  # best | kharif | rabi | zaid  (best = each crop in its best season)
     state: Optional[str] = None  # Agmarknet state name, narrows mandi prices
     soil_overrides: Optional[SoilOverrides] = None

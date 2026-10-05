@@ -63,7 +63,14 @@ def check_replay():
     run = sorted(p for p in (tmp / "runs").iterdir() if p.name != "_cache")[-1]
     m = json.loads((run / "metrics.json").read_text()); man = json.loads((run / "manifest.json").read_text())
     assert m["crop_ranking"]["_coverage"]["ok"] == len(cases) and man["model_version"].startswith("replay@"), (m["crop_ranking"]["_coverage"], man["model_version"])
-    print("[ok] replay: saved profiles reproduce live scoring exactly; --replay runs offline end to end")
+    # auto irrigation must resolve from the SAVED irrigated share when the request says null
+    from client import ReplayClient
+    aoi = json.loads((tmp / "aoi" / "punjab.geojson").read_text()); key = aoi_key({"aoi_geojson": aoi})
+    saved = json.loads((prof_dir / f"{key}.json").read_text()); saved["profile"]["irrigated_cropland_share"] = 0.9
+    (prof_dir / f"{key}.json").write_text(json.dumps(saved))
+    out = ReplayClient(prof_dir).call("crop_suitability", {"aoi_geojson": aoi, "irrigation_available": None, "season": "rabi"})
+    assert out["irrigation_available"] is True and out["irrigation_auto"] is True
+    print("[ok] replay: saved profiles reproduce live scoring exactly; --replay runs offline end to end; null irrigation resolves from the saved share")
 
 
 def check_metrics():

@@ -135,6 +135,11 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
     crop_mask = ee.ImageCollection("ESA/WorldCover/v200").first().select("Map").eq(40)
     slope_crop_img = slope_img.updateMask(crop_mask).rename("slope_cropland_deg")
     crop_frac_img = crop_mask.rename("cropland_fraction")
+    # Irrigation context: share of GFSAD1000 cropland pixels (nominal 2010, 1 km) classed as irrigated (class 1 major, 2 minor; 3-5 are rainfed).
+    gf = ee.Image("USGS/GFSAD1000_V1").select("landcover")
+    gf_crop = gf.gte(1).And(gf.lte(5))
+    gfsad_img = ee.Image.cat([gf.eq(1).Or(gf.eq(2)).updateMask(gf_crop).rename("irrigated_cropland_share"),
+                              gf_crop.rename("gfsad_cropland_fraction")])
 
     chirps = ee.ImageCollection(_RAIN_ASSET).filterDate(f"{y0}-01-01", f"{y1 + 1}-01-01").select("precipitation")
     era = ee.ImageCollection(_TEMP_ASSET).filterDate(f"{y0}-01-01", f"{y1 + 1}-01-01").select("temperature_2m")
@@ -165,6 +170,7 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
         "slope": lambda: _reduce(slope_img, _DEM_SCALE_M, ee.Reducer.mean()),
         "slope_crop": lambda: _optional(lambda: _reduce(slope_crop_img, _DEM_SCALE_M, ee.Reducer.mean())),
         "crop_frac": lambda: _optional(lambda: _reduce(crop_frac_img, _DEM_SCALE_M, ee.Reducer.mean())),
+        "gfsad": lambda: _optional(lambda: _reduce(gfsad_img, 1000, ee.Reducer.mean())),
         "rain": lambda: _reduce(rain_img, _RAIN_SCALE_M, ee.Reducer.mean()),
         "temp": lambda: _reduce(temp_img, _TEMP_SCALE_M, ee.Reducer.mean()),
     }
@@ -194,6 +200,7 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
         "slope_basis": "cropland" if use_crop else "all land",
         "slope_all_deg": _r(slope_all, 1), "slope_cropland_deg": _r(slope_crop, 1),
         "cropland_fraction": _r(crop_frac, 3),
+        "irrigated_cropland_share": _r((out.get("gfsad") or {}).get("irrigated_cropland_share"), 3),
         "monthly_rain_mm": [_r(v, 1) for v in rain_m],
         "monthly_temp_c": [_r(v, 1) for v in temp_m],
         "annual_rain_mm": _r(sum(v for v in rain_m if v is not None), 0) if all(v is not None for v in rain_m) else None,
@@ -265,12 +272,16 @@ def score_crop(crop: Dict[str, Any], profile: Dict[str, Any], irrigation_availab
     return _engine.score_crop_v2(crop, profile, irrigation_available)
 
 
-def score_crops(profile: Dict[str, Any], irrigation_available: bool = False,
+def score_crops(profile: Dict[str, Any], irrigation_available: Optional[bool] = False,
                 overrides: Optional[Dict[str, Any]] = None, season: Optional[str] = None) -> Dict[str, Any]:
     """season: None / 'best' (each crop in its best eligible season) or 'kharif' | 'rabi' | 'zaid' (only crops grown in that season)."""
     if season not in (None, "best", "kharif", "rabi", "zaid"):
         raise ValueError(f"season must be best, kharif, rabi or zaid (got {season!r})")
     p = apply_overrides(profile, overrides)
+    share = p.get("irrigated_cropland_share")
+    irrigation_auto = irrigation_available is None
+    if irrigation_auto:                                      # None = infer from the area's irrigated-cropland share (GFSAD1000); unknown -> rainfed
+        irrigation_available = bool(share is not None and share >= _engine.cfg.IRRIGATED_SHARE_AUTO)
     ev = build_evidence(p)                                   # evidence is computed ONCE per location
     cal = _engine.get_calibrator()
     results = [_engine.score_crop_seasons(c, p, irrigation_available, ev=ev, calibrator=cal, season_request=season) for c in CROPS]
@@ -283,9 +294,12 @@ def score_crops(profile: Dict[str, Any], irrigation_available: bool = False,
                                          "annual_rain_mm", "annual_mean_temp_c", "climate_years", "value_source", "sources")},
                     "monthly_rain_mm": p.get("monthly_rain_mm"), "monthly_temp_c": p.get("monthly_temp_c"), "lat": p.get("lat"),
                     "slope_basis": p.get("slope_basis"), "slope_all_deg": p.get("slope_all_deg"),
-                    "slope_cropland_deg": p.get("slope_cropland_deg"), "cropland_fraction": p.get("cropland_fraction")},
+                    "slope_cropland_deg": p.get("slope_cropland_deg"), "cropland_fraction": p.get("cropland_fraction"),
+                    "irrigated_cropland_share": p.get("irrigated_cropland_share")},
         "evidence": {k: ev[k] for k in ("dry_months", "longest_dry_run_months", "wet_season_share", "drainage", "missing")},
-        "irrigation_available": irrigation_available,
+        "irrigation_available": irrigation_available, "irrigation_auto": irrigation_auto,
+        "irrigation_evidence": {"irrigated_cropland_share": share, "source": "USGS GFSAD1000 v1 (nominal 2010, 1 km): irrigation major + minor classes",
+                                "suggested_irrigation": None if share is None else share >= _engine.cfg.IRRIGATED_SHARE_AUTO},
         "engine_version": ENGINE_VERSION, "engine_features": list(ENGINE_FEATURES),
         "season_requested": season or "best",
         "season_windows": {k: v for k, v in SEASON_MONTHS.items() if k != "perennial"},
