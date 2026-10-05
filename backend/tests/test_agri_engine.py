@@ -374,6 +374,31 @@ def test_no_terrain_operation_runs_on_an_unprojected_dem_mosaic():
     assert "setDefaultProjection" in (root / "services" / "gee_client.py").read_text(encoding="utf-8")
 
 
+# ───────────────────────── G. irrigation context (null = infer from the irrigated-cropland share)
+def _auto(share):
+    prof = copy.deepcopy(LOCATIONS["rajasthan_semiarid"]); prof["irrigated_cropland_share"] = share
+    return score_crops(prof, None), prof
+
+
+def test_auto_irrigation_follows_the_irrigated_share_and_matches_the_explicit_setting():
+    hi, prof = _auto(0.8); lo, _ = _auto(0.1)
+    assert hi["irrigation_available"] is True and hi["irrigation_auto"] is True and lo["irrigation_available"] is False
+    explicit = score_crops(copy.deepcopy(prof), True)
+    assert [(c["crop_id"], c["score"]) for c in hi["crops"]] == [(c["crop_id"], c["score"]) for c in explicit["crops"]]
+    assert hi["irrigation_evidence"]["suggested_irrigation"] is True and lo["irrigation_evidence"]["suggested_irrigation"] is False
+
+
+def test_unknown_irrigated_share_resolves_to_rainfed_and_says_so():
+    out, _ = _auto(None)
+    assert out["irrigation_available"] is False and out["irrigation_auto"] is True and out["irrigation_evidence"]["suggested_irrigation"] is None
+
+
+def test_explicit_irrigation_is_never_overridden_by_the_evidence():
+    prof = copy.deepcopy(LOCATIONS["punjab"]); prof["irrigated_cropland_share"] = 0.95
+    off = score_crops(prof, False)
+    assert off["irrigation_available"] is False and off["irrigation_auto"] is False
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

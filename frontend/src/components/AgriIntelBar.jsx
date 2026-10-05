@@ -390,6 +390,12 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
                 </div>
               );
             })}
+            {result.irrigation_evidence && result.irrigation_evidence.irrigated_cropland_share != null && (
+              <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 8 }}>
+                Irrigation context: about {Math.round(result.irrigation_evidence.irrigated_cropland_share * 100)}% of cropland around here is irrigated (GFSAD1000, ~2010, 1 km)
+                {result.irrigation_evidence.suggested_irrigation && !result.irrigation_available ? ' - consider ticking "Irrigation available".' : '.'}
+              </div>
+            )}
             {notGrown.length > 0 && (
               <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 10 }}>
                 Not grown in {SEASON_NAME[result.season_requested] || result.season_requested} in practice (so not scored): {notGrown.map(n => `${n.name} (${Math.round((n.observed_area_share || 0) * 100)}% of national area)`).join(', ')}.

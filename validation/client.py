@@ -48,7 +48,8 @@ class ReplayClient:
         if not f.exists():
             raise VayuError("no saved profile for this AOI - run once against the live backend (profiles are saved automatically)")
         prof = json.loads(f.read_text(encoding="utf-8"))["profile"]
-        out = self._score(prof, bool(body.get("irrigation_available")), season=body.get("season"))
+        irr = body["irrigation_available"] if "irrigation_available" in body else False        # null = infer from the saved irrigated-cropland share
+        out = self._score(prof, None if irr is None else bool(irr), season=body.get("season"))
         out["engine_version"] = "replay"
         return out
 

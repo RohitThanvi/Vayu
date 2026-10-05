@@ -1,10 +1,11 @@
 # Agricultural engine regression report
-_generated 2026-10-03 by backend/tests/make_regression_report.py - offline, on APPROXIMATE regional fixtures; this is a behavioural check, NOT accuracy evidence._
+_generated 2026-10-05 by backend/tests/make_regression_report.py - offline, on APPROXIMATE regional fixtures; this is a behavioural check, NOT accuracy evidence._
 
 ## Test results
 
 | suite | test | result |
 |---|---|---|
+| test_agri_engine | test_auto_irrigation_follows_the_irrigated_share_and_matches_the_explicit_setting | PASS  |
 | test_agri_engine | test_best_season_is_the_highest_scoring_eligible_season_and_seasonal_block_is_consistent | PASS  |
 | test_agri_engine | test_calibration_is_identity_until_fitted_and_monotone_when_fitted | PASS  |
 | test_agri_engine | test_caveat_does_not_change_the_score | PASS  |
@@ -14,6 +15,7 @@ _generated 2026-10-03 by backend/tests/make_regression_report.py - offline, on A
 | test_agri_engine | test_every_crop_profile_is_schema_valid | PASS  |
 | test_agri_engine | test_every_seasonal_crop_has_observed_seasons_and_a_primary | PASS  |
 | test_agri_engine | test_explanation_is_generated_from_factors_that_reduced_the_score | PASS  |
+| test_agri_engine | test_explicit_irrigation_is_never_overridden_by_the_evidence | PASS  |
 | test_agri_engine | test_fuzz_endpoint_never_raises_and_outputs_stay_valid | PASS  |
 | test_agri_engine | test_generic_mechanism_mango_not_zeroed_even_without_dry_window_attribute | PASS  |
 | test_agri_engine | test_groundnut_ph_optimum_extends_to_7_5_only | PASS  |
@@ -22,6 +24,8 @@ _generated 2026-10-03 by backend/tests/make_regression_report.py - offline, on A
 | test_agri_engine | test_irrigation_barely_matters_for_drought_adapted_crops_and_for_humid_sites | PASS  |
 | test_agri_engine | test_irrigation_helps_water_sensitive_crops_in_dry_site | PASS  |
 | test_agri_engine | test_irrigation_never_lowers_a_score | PASS  |
+| test_agri_engine | test_mountain_aoi_gets_an_unscored_caveat_and_lower_confidence | PASS  |
+| test_agri_engine | test_no_terrain_operation_runs_on_an_unprojected_dem_mosaic | PASS  |
 | test_agri_engine | test_only_a_hard_constraint_can_make_a_crop_unsuitable | PASS  |
 | test_agri_engine | test_paddy_is_not_penalised_for_monsoon_rain_at_a_high_rainfall_coast | PASS  |
 | test_agri_engine | test_ranking_is_deterministic_and_tie_aware | PASS  |
@@ -32,6 +36,7 @@ _generated 2026-10-03 by backend/tests/make_regression_report.py - offline, on A
 | test_agri_engine | test_season_filter_ranks_only_crops_grown_in_that_season_and_lists_the_rest | PASS  |
 | test_agri_engine | test_summer_vs_winter_is_reported_when_a_crop_is_grown_in_both | PASS  |
 | test_agri_engine | test_unknown_evidence_is_not_unsuitable_and_lowers_confidence | PASS  |
+| test_agri_engine | test_unknown_irrigated_share_resolves_to_rainfed_and_says_so | PASS  |
 | test_agri_engine | test_unreviewed_crops_keep_their_original_ph_ranges | PASS  |
 | test_agri_engine | test_water_message_distinguishes_excess_from_deficit | PASS  |
 | test_agri_engine | test_wheat_ph_range_accepts_normal_indo_gangetic_soils_but_still_penalises_sodic | PASS  |
@@ -55,7 +60,7 @@ _generated 2026-10-03 by backend/tests/make_regression_report.py - offline, on A
 | test_water_balance | test_thornthwaite_is_in_a_sane_range_and_monotone_in_temperature | PASS  |
 | test_water_balance | test_window_wraps_the_year_end_and_uses_the_month_before_the_window | PASS  |
 
-49/49 passed
+54/54 passed
 
 ## Ratnagiri (live UI values, rainfed): all crops, ranked
 

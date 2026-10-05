@@ -75,7 +75,8 @@ def main():
                     "for diagnosis/tuning) - use this to draw a FRESH, untouched test set after changing the model")
     ap.add_argument("--presence-min-years", type=int, default=2, help="perennial area is stable, and the dataset reports mango for few years")
     ap.add_argument("--max-presence", type=int, default=24, help="perennial presence districts (mango / sugarcane)")
-    ap.add_argument("--irrigation", default="both", choices=["both", "true", "false"])
+    ap.add_argument("--irrigation", default="all", choices=["all", "both", "true", "false", "auto"],
+                    help="irrigated / rainfed assume the SAME irrigation everywhere; auto lets the backend infer it per location from the irrigated-cropland share (GFSAD1000)")
     ap.add_argument("--test-fraction", type=float, default=0.4, help="share of STATES held out whole (spatial holdout)")
     ap.add_argument("--simplify-deg", type=float, default=0.003, help="boundary simplification (~330 m)")
     a = ap.parse_args()
@@ -156,7 +157,9 @@ def main():
 
     # ---- write AOIs + cases ---------------------------------------------------------------
     (HERE / "aoi").mkdir(exist_ok=True); cases = []
-    variants = [("irrigated", True), ("rainfed", False)] if a.irrigation == "both" else [(("irrigated" if a.irrigation == "true" else "rainfed"), a.irrigation == "true")]
+    VAR = {"irrigated": True, "rainfed": False, "auto": None}
+    pick = {"all": ["irrigated", "rainfed", "auto"], "both": ["irrigated", "rainfed"], "true": ["irrigated"], "false": ["rainfed"], "auto": ["auto"]}[a.irrigation]
+    variants = [(n, VAR[n]) for n in pick]
     for sk, dk in chosen:
         b = match[(sk, dk)]; zid = f"{re.sub(r'[^a-z0-9]+', '_', nstate(b['state']))}__{re.sub(r'[^a-z0-9]+', '_', norm(b['district']))}"
         g = b["geom"].simplify(a.simplify_deg, preserve_topology=True)
