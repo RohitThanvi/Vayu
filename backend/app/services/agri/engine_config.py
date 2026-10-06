@@ -65,7 +65,8 @@ MOUNTAIN_AOI_SLOPE_DEG = 10.0              # ESTIMATE: AOI-mean slope at/above w
 CONF_PENALTY_HETEROGENEOUS_TERRAIN = 0.10
 
 # ---- slope floor (separate from SOFT_FLOOR so it can be studied on its own): terracing / contour farming mitigate steep land, so slope may deserve a higher floor than other soft limits.
-SLOPE_MIN_SCORE = SOFT_FLOOR     # default = unchanged behaviour; change only on evidence from the development split
+SLOPE_MIN_SCORE = 0.5             # ESTIMATE (tune split, 2 values tried): farmers cultivate steep land by terracing / contour farming (Himalayan and Konkan terraces; WOCAT, FAO), so steepness lowers
+                                 # a score at most to this level. Effect on the tune split: AUC unchanged, recall +3 pts (hill states +13 pts), false-positive rate +6 pts.
 
 # ---- irrigation context
 IRRIGATED_SHARE_AUTO = 0.5        # ESTIMATE: irrigation_available=null resolves to True when >= this share of the area's cropland is irrigated (GFSAD1000)

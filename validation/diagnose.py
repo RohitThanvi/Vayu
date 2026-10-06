@@ -18,14 +18,21 @@ from metrics import roc_auc
 
 FACTORS = ["temperature", "water", "ph", "texture", "organic_carbon", "slope"]
 FLOOR = 0.10
+SLOPE_FLOOR = 0.10
 MAJOR = 0.10
+try:                                                       # follow the engine's own floors when the backend checkout is available
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
+    from app.services.agri import engine_config as _cfg
+    FLOOR, SLOPE_FLOOR = _cfg.SOFT_FLOOR, _cfg.SLOPE_MIN_SCORE
+except Exception:
+    pass
 
 
 def factor_scores(inp, irrigated):
     """Effective (soft-floored) factor scores, as the production aggregator sees them."""
     out = {"temperature": inp.get("temperature"), "water": inp.get("water_irrigated") if irrigated else inp.get("water_rainfed"),
            "ph": inp.get("ph"), "texture": inp.get("texture"), "organic_carbon": inp.get("organic_carbon"), "slope": inp.get("slope")}
-    return {k: (None if v is None else max(float(v), FLOOR)) for k, v in out.items()}
+    return {k: (None if v is None else max(float(v), SLOPE_FLOOR if k == "slope" else FLOOR)) for k, v in out.items()}
 
 
 def load(run):

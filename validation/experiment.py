@@ -25,6 +25,22 @@ from metrics import roc_auc                                       # noqa: E402
 HILL_STATES = ("Himachal Pradesh", "Sikkim", "Uttarakhand", "Meghalaya", "Nagaland", "Mizoram", "Arunachal Pradesh", "Jammu and Kashmir")
 
 
+import math
+
+
+def make_profile_transform(min_cropland):
+    """Re-derive the slope the sampler would have used if _MIN_CROPLAND_FRACTION were `min_cropland` (uses the saved all-land and cropland slopes)."""
+    def tf(p):
+        p = dict(p); cf, sc, sa = p.get("cropland_fraction"), p.get("slope_cropland_deg"), p.get("slope_all_deg")
+        use = sc is not None and cf is not None and cf >= min_cropland
+        d = sc if use else sa
+        if d is not None:
+            p["slope_deg"] = round(d, 1); p["slope_pct"] = round(math.tan(math.radians(d)) * 100, 1)
+        p["slope_basis"] = "cropland" if use else "all land"
+        return p
+    return tf
+
+
 def parse_variant(spec):
     name, _, kv = spec.partition(":")
     sets = []
@@ -36,6 +52,8 @@ def parse_variant(spec):
 def apply(sets):
     saved = []
     for mod, key, val in sets:
+        if mod == "profile":
+            continue
         m = importlib.import_module(f"app.services.agri.{mod}"); saved.append((m, key, getattr(m, key))); setattr(m, key, val)
     return saved
 
@@ -81,6 +99,7 @@ def main():
         name, sets = parse_variant(spec)
         if name in results: continue
         saved = apply(sets)
+        client.profile_transform = next((make_profile_transform(v) for m, k, v in sets if m == "profile" and k == "min_cropland"), None)
         try:
             rows, failed = run(cases, client, HERE)
             results[name] = (metrics(rows), failed, len(rows))

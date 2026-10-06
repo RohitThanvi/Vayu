@@ -399,6 +399,17 @@ def test_explicit_irrigation_is_never_overridden_by_the_evidence():
     assert off["irrigation_available"] is False and off["irrigation_auto"] is False
 
 
+def test_steep_cropland_is_penalised_but_never_below_the_terracing_floor():
+    from app.services.agri import engine_config as cfg
+    for slope in (5.0, 25.0, 58.0, 120.0):
+        r = _factor("punjab", "wheat", "slope", slope_pct=slope)[0]
+        eff = r["factors"]["slope"]["effective_score"]
+        assert eff >= cfg.SLOPE_MIN_SCORE - 1e-9, (slope, eff)
+    flat = _factor("punjab", "wheat", "slope", slope_pct=1.0)[0]["factors"]["slope"]["effective_score"]
+    steep = _factor("punjab", "wheat", "slope", slope_pct=58.0)[0]["factors"]["slope"]["effective_score"]
+    assert flat == 1.0 and steep == cfg.SLOPE_MIN_SCORE
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
