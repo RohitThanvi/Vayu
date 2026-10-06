@@ -44,7 +44,7 @@ from . import suitability_engine as _engine
 logger = logging.getLogger(__name__)
 
 _POINT_BUFFER_M = 300          # ~1 OpenLandMap pixel around a tapped point
-_MIN_CROPLAND_FRACTION = 0.01   # below this share of cropland in the AOI, slope falls back to the all-land mean
+_MIN_CROPLAND_FRACTION = 0.0005  # share of cropland below which slope falls back to the all-land mean (was 0.01, which sent Uttarkashi / Sikkim back to the mountain-wide mean although they hold hundreds of hectares of cropland)
 _SOIL_SCALE_M = 250            # OpenLandMap native
 _RAIN_SCALE_M = 5566           # CHIRPS native
 _TEMP_SCALE_M = 11132          # ERA5-Land native

@@ -1,5 +1,5 @@
 # Agricultural engine regression report
-_generated 2026-10-05 by backend/tests/make_regression_report.py - offline, on APPROXIMATE regional fixtures; this is a behavioural check, NOT accuracy evidence._
+_generated 2026-10-06 by backend/tests/make_regression_report.py - offline, on APPROXIMATE regional fixtures; this is a behavioural check, NOT accuracy evidence._
 
 ## Test results
 
@@ -34,6 +34,7 @@ _generated 2026-10-05 by backend/tests/make_regression_report.py - offline, on A
 | test_agri_engine | test_response_exposes_the_requested_components | PASS  |
 | test_agri_engine | test_rice_slope_is_a_soft_terracing_requirement_not_a_cliff | PASS  |
 | test_agri_engine | test_season_filter_ranks_only_crops_grown_in_that_season_and_lists_the_rest | PASS  |
+| test_agri_engine | test_steep_cropland_is_penalised_but_never_below_the_terracing_floor | PASS  |
 | test_agri_engine | test_summer_vs_winter_is_reported_when_a_crop_is_grown_in_both | PASS  |
 | test_agri_engine | test_unknown_evidence_is_not_unsuitable_and_lowers_confidence | PASS  |
 | test_agri_engine | test_unknown_irrigated_share_resolves_to_rainfed_and_says_so | PASS  |
@@ -60,7 +61,7 @@ _generated 2026-10-05 by backend/tests/make_regression_report.py - offline, on A
 | test_water_balance | test_thornthwaite_is_in_a_sane_range_and_monotone_in_temperature | PASS  |
 | test_water_balance | test_window_wraps_the_year_end_and_uses_the_month_before_the_window | PASS  |
 
-54/54 passed
+55/55 passed
 
 ## Ratnagiri (live UI values, rainfed): all crops, ranked
 

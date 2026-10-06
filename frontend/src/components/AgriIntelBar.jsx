@@ -266,7 +266,7 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
   const [lat, setLat] = useState('');
   const [lon, setLon] = useState('');
   const [picking, setPicking] = useState(false);
-  const [irrigation, setIrrigation] = useState(false);
+  const [irrigation, setIrrigation] = useState('auto');   // auto = infer from the area's irrigated-cropland share (GFSAD1000) | yes | no
   const [season, setSeason] = useState('best');   // best | kharif | rabi | zaid
   const [ph, setPh] = useState('');
   const [oc, setOc] = useState('');
@@ -290,7 +290,7 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
     if (ph !== '' && !Number.isNaN(parseFloat(ph))) overrides.ph = parseFloat(ph);
     if (oc !== '' && !Number.isNaN(parseFloat(oc))) overrides.organic_carbon_gkg = parseFloat(oc);
     if (texture) overrides.texture = texture;
-    const body = { irrigation_available: irrigation, season, state: state.trim() || undefined, soil_overrides: Object.keys(overrides).length ? overrides : undefined };
+    const body = { irrigation_available: irrigation === 'auto' ? null : irrigation === 'yes', season, state: state.trim() || undefined, soil_overrides: Object.keys(overrides).length ? overrides : undefined };
     if (hasPoint) { body.lat = parseFloat(lat); body.lon = parseFloat(lon); } else { body.aoi_geojson = drawnAOI; }
     run(body);
   };
@@ -312,9 +312,15 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
         <button onClick={() => setPicking(v => !v)} style={{ width: '100%', marginBottom: 8, background: picking ? 'rgba(126,184,212,0.2)' : 'none', border: `1px solid ${S.border2}`, color: picking ? S.accent : S.text3, fontFamily: S.mono, fontSize: 10.5, padding: '5px 8px', borderRadius: 4, cursor: 'pointer' }}>
           {picking ? 'CLICK THE MAP…' : 'PICK POINT ON MAP'}
         </button>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: S.text2, marginBottom: 8 }}>
-          <input type="checkbox" checked={irrigation} onChange={e => setIrrigation(e.target.checked)} /> Irrigation available
-        </label>
+        <div style={{ margin: '8px 0 4px' }}>
+          <div style={{ fontSize: 10.5, color: S.text3, marginBottom: 4 }}>Irrigation</div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[['auto', 'Auto'], ['yes', 'Yes'], ['no', 'No']].map(([id, label]) => (
+              <button key={id} onClick={() => setIrrigation(id)} title={id === 'auto' ? 'Inferred from how much cropland around here is irrigated' : id === 'yes' ? 'Assume irrigation is available' : 'Rainfed only'}
+                style={{ padding: '3px 10px', fontSize: 10.5, cursor: 'pointer', borderRadius: 3, border: `1px solid ${irrigation === id ? S.accent : S.border}`, background: irrigation === id ? 'rgba(201,168,106,0.15)' : 'transparent', color: irrigation === id ? S.accent : S.text2 }}>{label}</button>
+            ))}
+          </div>
+        </div>
         <div style={{ margin: '8px 0 4px' }}>
           <div style={{ fontSize: 10.5, color: S.text3, marginBottom: 4 }}>Season</div>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -392,8 +398,9 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
             })}
             {result.irrigation_evidence && result.irrigation_evidence.irrigated_cropland_share != null && (
               <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 8 }}>
-                Irrigation context: about {Math.round(result.irrigation_evidence.irrigated_cropland_share * 100)}% of cropland around here is irrigated (GFSAD1000, ~2010, 1 km)
-                {result.irrigation_evidence.suggested_irrigation && !result.irrigation_available ? ' - consider ticking "Irrigation available".' : '.'}
+                Irrigation context: about {Math.round(result.irrigation_evidence.irrigated_cropland_share * 100)}% of cropland around here is irrigated (GFSAD1000, ~2010, 1 km).
+                {result.irrigation_auto ? ` Auto mode assumed irrigation ${result.irrigation_available ? 'is' : 'is not'} available.` : ''}
+                {result.irrigation_evidence.suggested_irrigation && !result.irrigation_available ? ' Consider setting Irrigation to Yes.' : ''}
               </div>
             )}
             {notGrown.length > 0 && (

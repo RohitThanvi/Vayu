@@ -25,3 +25,16 @@ summaries (university packages, review papers) and should be checked against the
 3. **Summer (zaid) ground truth.** The statistics dataset's summer rows are too sparse for a validated ranking.
 4. **Gram on humid coasts still scores high** (the caveat is shown). Fixing it needs (2).
 5. **Crop pH / temperature ranges for onion, potato, mustard, barley, cotton** were not reviewed for lack of a source found in this pass.
+
+## Slope and irrigation decisions made on the development split (2026-10)
+Evidence: 78 validation AOIs sampled with the corrected DEM; tune split only (153 ranking cases per irrigation variant).
+| Decision | Tried | Result on tune | Rationale |
+|---|---|---|---|
+| Slope minimum score (SLOPE_MIN_SCORE) 0.10 -> **0.5** | 0.5, and 1.0 (slope off) | slope off: AUC 0.639 -> 0.622 (slope carries signal). 0.5: AUC unchanged, recall 0.83 -> 0.86, hill-state recall 0.48 -> 0.61, false-positive rate 0.58 -> 0.64 | Farmers cultivate steep land by terracing (labels show Sikkim maize and Himalayan rice on cropland slopes up to ~58%); steepness is a cost / erosion factor, not an impossibility. ESTIMATE; only two values were tried. |
+| Cropland fraction needed to use the cropland slope 1% -> **0.05%** | 0.05% | metric-neutral (AUC unchanged; top-3 overlap 0.614 -> 0.601, within noise) | The 1% threshold sent Uttarkashi (0.9% cropland) and Sikkim (0.1%) back to the mountain-wide mean slope (30 deg) although they hold hundreds of hectares of cropland (cropland slope 8-12 deg). Chosen for correctness, not for the metric. |
+| UI irrigation: checkbox -> **Auto / Yes / No**, Auto default | irrigated, rainfed, auto variants | pooled AUC irrigated 0.64, **auto 0.61**, rainfed 0.53 | Auto (per-location irrigated-cropland share, GFSAD1000) beats the old unchecked-rainfed default. It does not beat assuming irrigation everywhere, so it is evidence, not proof that GFSAD1000 irrigation context is accurate. |
+Confirm all three on untouched test states before quoting them.
+
+### Water factor: documented, not changed
+Within-crop AUC averages ~0.50 and is below 0.5 for chickpea (0.24) and maize (0.41): chickpea is major in water-short Gujarat / Karnataka and absent from wet Assam / Bihar,
+so "more water = better" is wrong for a dry-season pulse that grows on residual moisture. That needs a humidity / disease-pressure term with sourced limits, not a re-tuned range.
