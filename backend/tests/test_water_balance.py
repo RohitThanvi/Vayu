@@ -94,6 +94,19 @@ def test_soil_depth_caveat_is_shown_for_dry_window_estimates_and_lowers_confiden
     assert r["confidence"] <= 0.9
 
 
+def test_root_zone_override_reaches_awc_at_call_time():
+    from app.services.agri import water_balance as wb
+    base = wb.awc_mm(6)
+    old = wb.ROOT_ZONE_M
+    try:
+        wb.ROOT_ZONE_M = old * 1.5
+        assert abs(wb.awc_mm(6) - base * 1.5) < 1e-9          # was a silent no-op while the default was bound at import time
+        assert abs(wb.awc_mm(6, 1.0) - wb.AWC_MM_PER_M[6]) < 1e-9   # explicit depth still wins
+    finally:
+        wb.ROOT_ZONE_M = old
+    assert wb.awc_mm(None) is None
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]; failed = 0
     for f in fns:
