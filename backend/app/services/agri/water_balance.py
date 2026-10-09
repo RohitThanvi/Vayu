@@ -62,7 +62,8 @@ def thornthwaite_pet(monthly_temp_c: List[Optional[float]], lat_deg: Optional[fl
     return out
 
 
-def awc_mm(texture_class: Optional[int], depth_m: float = ROOT_ZONE_M) -> Optional[float]:
+def awc_mm(texture_class: Optional[int], depth_m: Optional[float] = None) -> Optional[float]:
+    depth_m = ROOT_ZONE_M if depth_m is None else depth_m        # resolved at CALL time so an override of ROOT_ZONE_M (experiments, config) takes effect
     return None if texture_class not in AWC_MM_PER_M else AWC_MM_PER_M[texture_class] * depth_m
 
 
