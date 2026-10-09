@@ -1,0 +1,41 @@
+1.0 District Agriculture profile
+1.1 Agro-Climatic/ Ecological Zone
+Agro-Ecological Sub Region(ICAR) Western Plain Zone, 
+Agro-Climatic Zone (Planning Commission) Upper Gangetic Plain Region
+Agro-Climatic Zone (NARP) UP-3 South-western Semi-arid Zone
+1.2 Rainfall Normal RF 
+SW monsoon (June-sep) 584.3 45 3
+Post Monsoon (Oct-Dec.) 27.7 10 3
+Winter (Jan-March) 31.6 10 - -
+Pre monsoon 11.9 2 - -
+Annual 655.5 67 - -
+1.4 Major Soils Area(‘000 ha) Percent(%) of total
+Deep loamy soil 210.0 67.0
+Deep fine moderate saline/ sodic soil 62.0 20.0
+Silty soil 32.9 10.0
+Other(Eroded) 9.0 3.0
+1.5 Agricultural land use Area (‘000 ha) Cropping intensity (%)
+Net sown area 284.3 135 %
+Area sown more than once 139.5
+Gross cropped area 423.8
+1.6 Irrigation Area (‘000 ha)
+Net irrigation area 258.2
+Gross irrigated area 283.6
+Rain fed area 26.1
+1.7 Area under major field crops & (As per latest figures 2013-14)
+1.7 Major field crops cultivated(Descending order)
+Wheat - - - 137.263 0.3 137.6 - 137.6
+Pearl millet 15 115.7 130.7 - - - - 130.7
+Potato - - - 58.1 - 58.1 - 58.1
+Rapeseed Mustard - - - 47.6 4.4 52.0 - 52.0
+Paddy 5.2 0.02 5.2 - - - - 5.2
+Pigeon pea 0.3 0.7 1.0 - - - - 1.0
+Area under Horticulture crops -
+Crops -Fruits Area (‘000 ha)
+Total Irrigated Rain fed
+Mango 4.9 4.9 -
+Guava 1.04 1.0 -
+Vegetables crops Total Irrigated Rain fed
+Potato 51.8 51.8 -
+Onion 0.1 0.1 -
+Area under fodder crops & (As per latest figures 2010-11)
