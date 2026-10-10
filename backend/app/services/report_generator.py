@@ -2306,6 +2306,7 @@ RS_TOOL_LABELS = {
     "accuracy_assessment": "Accuracy Assessment",
     "flood_mapping": "Flood Mapping (SAR)",
     "soil_moisture": "Soil Moisture (SMAP)",
+    "spectral_composites": "Spectral Composites (X-ray views)",
 }
 
 RS_GLOSSARY = [
@@ -2325,6 +2326,9 @@ RS_GLOSSARY = [
     ("Valid pixel fraction", "Share of the AOI actually covered by cloud-free (unmasked) pixels in the composite used for this result."),
     ("Std. deviation (\u03c3)", "Spread of pixel values within the AOI around the reported mean \u2014 a rough indicator of spatial heterogeneity/uncertainty."),
     ("Volumetric water content (m\u00b3/m\u00b3)", "Soil moisture expressed as the fraction of soil volume occupied by water \u2014 SMAP's native unit. ~0.05 is very dry, ~0.4+ is saturated."),
+    ("Band composite (false colour)", "Three spectral bands assigned to the red, green and blue display channels. The colours are a display choice, so a composite shows contrast, not a measured quantity \u2014 e.g. vegetation looks red in colour infrared only because near-infrared is assigned to the red channel."),
+    ("SWIR", "Short-wave infrared (Sentinel-2 B11, ~1.6 \u00b5m, and B12, ~2.2 \u00b5m). Sensitive to water content and to burned surfaces, and penetrates haze and many kinds of smoke, but not thick cloud."),
+    ("Display stretch", "The fixed reflectance (or dB) range mapped onto the display scale. Values beyond it saturate; the Spectral Composites result reports the share of pixels clipped per channel."),
 ]
 
 
@@ -2449,6 +2453,23 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
                 ]
             else:
                 rows.append(("Soil Moisture (SMAP)", "No SMAP coverage found for this AOI/date range", ""))
+        elif tool == "spectral_composites":
+            for comp in (result.get("composites") or {}).values():
+                is_sar = str(comp.get("sensor", "")).startswith("Sentinel-1")
+                nd = 2 if is_sar else 4
+                for ch in comp.get("channels", []):
+                    val = f"{_fmt_num(ch.get('mean'), nd)} / {_fmt_num(ch.get('std_dev'), nd)}"
+                    if not is_sar:
+                        val += f" / {_fmt_num(ch.get('pct_clipped_by_display'), 1)}% clipped"
+                    rows.append((f"{comp.get('label')} \u2014 {ch.get('channel')} = {ch.get('band')} (mean / \u03c3)", val, "dB" if is_sar else "reflectance"))
+                if is_sar:
+                    rows.append((f"{comp.get('label')} \u2014 scenes / orbit pass", f"{comp.get('scene_count', 'N/A')} / {comp.get('orbit_pass', 'N/A')}", ""))
+            if result.get("valid_pixel_fraction") is not None:
+                rows.append(("Valid pixel coverage (optical)", _fmt_num(result["valid_pixel_fraction"] * 100, 1), "%"))
+            if result.get("scene_count") is not None:
+                rows.append(("Sentinel-2 scenes used", str(result["scene_count"]), ""))
+            for cid, why in (result.get("unavailable") or {}).items():
+                rows.append((f"{cid} \u2014 not built", str(why), ""))
     except Exception as e:
         logger.warning(f"_rs_metric_rows failed for tool={tool}: {type(e).__name__}: {e}")
     return rows

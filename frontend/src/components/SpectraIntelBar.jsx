@@ -51,6 +51,7 @@ const REFERENCE_DATA = [
   { tool: 'Accuracy Assessment', dataset: 'Your own reference points', resolution: 'n/a', note: 'Confusion matrix, overall/producer\'s/user\'s accuracy, Cohen\'s kappa (Congalton 1991; Cohen 1960) for Land Cover, Dynamic World, or Burn Severity, against reference points independent of any training data.' },
   { tool: 'Flood Mapping', dataset: 'Sentinel-1 GRD (SAR)', resolution: '10m', note: 'Before/after change detection, UN-SPIDER\'s Recommended Practice — post/pre backscatter ratio thresholded at 1.25, permanent water masked out (JRC GSW). All-weather, day/night.' },
   { tool: 'Soil Moisture', dataset: 'NASA SMAP L4 (SPL4SMGP.008)', resolution: '~9km, 3-hourly', note: 'Surface soil moisture (sm_surface, 0-5cm depth), single-period snapshot. Coarse resolution — suited to regional/district-scale monitoring, not field-level decisions. Entekhabi et al., NASA JPL/GSFC.' },
+  { tool: 'Spectral Composites', dataset: 'Sentinel-2 SR Harmonized + Sentinel-1 GRD', resolution: '10-20m', note: 'X-ray band-combination views of the same imagery: natural colour, colour infrared, SWIR (B12-B8A-B4, burn scars/haze), atmospheric penetration, agriculture, geology, plus a SAR VV/VH/VV-VH composite that sees through cloud. Published recipes (Sentinel Hub custom-scripts, Sentinel education band list); colours are a fixed display stretch, not a measurement — per-channel stats and raw-band GeoTIFFs are provided for quantitative work.' },
 ];
 
 function useJobPoll(apiUrl) {
