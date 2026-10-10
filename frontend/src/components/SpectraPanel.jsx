@@ -76,6 +76,7 @@ const TOOL_META = {
   accuracy_assessment: { label: 'Accuracy Assessment', needsDates: false, needsReferencePoints: true, icon: '✓' },
   soil_moisture: { label: 'Soil Moisture (SMAP)', needsDates: true, icon: '◍' },
   spectral_composites: { label: 'Spectral Composites', needsDates: true, icon: '◐' },
+  vegetation_drought_index: { label: 'Drought Index (VHI)', needsDates: true, icon: '☼' },
 };
 
 // Client-side mirror of gee_remote_sensing.py's WORLDCOVER_CLASSES /
@@ -490,6 +491,48 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
           </div>
         )}
         <SceneProvenance scenes={result.scene_provenance} label="Sentinel-2 scenes" />
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'vegetation_drought_index') {
+    const CLASS_COLORS = ['#7f0000', '#d7301f', '#fc8d59', '#fdd49e', '#1a9850'];
+    return (
+      <div>
+        {Object.entries(result.indices).map(([id, d]) => (
+          <div key={id} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '8px 10px', marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+              <span style={{ fontSize: 12, color: S.gold }}>{d.label}</span>
+              <span style={{ fontFamily: S.mono, fontSize: 15, color: S.text, fontWeight: 700 }}>{d.mean}</span>
+            </div>
+            <div style={{ fontSize: 10, color: S.text3, marginBottom: 3 }}>{d.formula} &middot; {d.citation}</div>
+            <div style={{ fontSize: 10.5, color: S.text2, lineHeight: 1.4, marginBottom: 4 }}>{d.interpretation}</div>
+            <div style={{ display: 'flex', gap: 12, fontSize: 10, color: S.text3, fontFamily: S.mono }}>
+              <span>min {d.min}</span><span>max {d.max}</span><span>σ {d.std_dev}</span>
+            </div>
+            <RasterControls mapLayer={d.map_layer} downloadUrl={null} label={id.toUpperCase()} onShowOverlay={onShowOverlay}
+              active={activeLayerId === `vdi_${id}`} onActivate={() => setActiveLayerId?.(`vdi_${id}`)} />
+          </div>
+        ))}
+        {result.drought_classes.map(c => (
+          <div key={c.code} style={{ marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 2 }}>
+              <span style={{ color: S.text2 }}><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 2, background: CLASS_COLORS[c.code], marginRight: 6, verticalAlign: 'middle' }} />{c.label} <span style={{ color: S.text3, fontSize: 10 }}>({c.vhi_range})</span></span>
+              <span style={{ fontFamily: S.mono, color: S.gold }}>{c.pct_of_valid_pixels}%</span>
+            </div>
+            <div style={{ height: 4, background: S.surface2, borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${c.pct_of_valid_pixels}%`, background: CLASS_COLORS[c.code] }} />
+            </div>
+          </div>
+        ))}
+        <div style={{ fontSize: 10, color: S.text3, marginBottom: 6 }}>{result.class_note}</div>
+        <StatRow label="Baseline years (NDVI / LST with data)" value={`${result.baseline.years_requested} (${result.baseline.ndvi_years_with_data} / ${result.baseline.lst_years_with_data})`} />
+        <StatRow label="Composites used (NDVI / LST)" value={`${result.ndvi_composites_used} / ${result.lst_composites_used}`} />
+        {result.valid_pixel_fraction != null && (
+          <StatRow label="Valid pixel coverage" value={`${Math.round(result.valid_pixel_fraction * 100)}%`} />
+        )}
+        <RasterControls mapLayer={null} downloadUrl={result.download_url} label="VCI/TCI/VHI" onShowOverlay={onShowOverlay} />
+        <div style={{ fontSize: 10, color: S.text3, marginTop: 6, lineHeight: 1.4 }}>{result.baseline.caveat}</div>
         <MethodNote text={result.method} />
       </div>
     );

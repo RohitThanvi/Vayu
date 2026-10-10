@@ -1942,6 +1942,172 @@ def compute_spectral_composites(aoi: Dict, start_date: str, end_date: str, compo
     }
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Vegetation drought index — VCI / TCI / VHI (Kogan 1990, 1995). Each pixel's
+# NDVI (VCI) and daytime land-surface temperature (TCI) for the chosen window
+# is rescaled 0-100 against that SAME pixel's min/max for the SAME calendar
+# window across all earlier years, then combined: VHI = 0.5*VCI + 0.5*TCI.
+#
+# Verified: MODIS/061/MOD13Q1 (NDVI, scale 0.0001, 250 m, 16-day, from
+# 2000-02-18, SummaryQA 0 good / 1 marginal / 2 snow-ice / 3 cloudy) and
+# MODIS/061/MOD11A2 (LST_Day_1km, scale 0.02 K, 1 km, 8-day) against the Earth
+# Engine catalog. The VHI formula and the 0.5/0.5 weighting were checked
+# against secondary sources only (Kogan's papers were not retrieved), as were
+# the drought-class cut-offs below (Kogan 2002 as reproduced in a MODIS
+# agricultural-drought method summary) — treat the class table as unverified
+# against the primary paper.
+# ═════════════════════════════════════════════════════════════════════════════
+
+VHI_ALPHA = 0.5  # VHI = alpha*VCI + (1-alpha)*TCI; 0.5/0.5 per secondary sources
+DROUGHT_BASELINE_FIRST_YEAR = 2001  # first year with a full MOD13Q1/MOD11A2 calendar year (record starts 2000-02-18)
+MIN_BASELINE_YEARS = 2  # mathematical minimum for max != min; NOT a quality threshold — see 'baseline' in the result
+LST_VALID_MIN = 7500  # catalog's documented minimum LST_Day_1km DN (fill value is below it)
+DROUGHT_SCALE_M = 1000  # LST native 1 km is the coarser input
+# (code, label, upper bound inclusive) — evaluated from the driest class up
+VHI_DROUGHT_CLASSES = [
+    (0, "Extreme drought", 10), (1, "Severe drought", 20), (2, "Moderate drought", 30),
+    (3, "Mild drought", 40), (4, "No drought", 100),
+]
+VHI_CLASS_PALETTE = ["#7f0000", "#d7301f", "#fc8d59", "#fdd49e", "#1a9850"]
+
+
+def _md_clamped(d):
+    """(month, day) with Feb 29 -> Feb 28 so the same window exists in every year."""
+    return (2, 28) if (d.month, d.day) == (2, 29) else (d.month, d.day)
+
+
+def _baseline_min_max(col, band, m1, d1, m2, d2, y0, y1):
+    """Per-pixel min and max over years y0..y1 of the window's mean `band`,
+    plus the number of years that actually had imagery over the AOI."""
+    def _year(y):
+        y = ee.Number(y).int()
+        s = ee.Date.fromYMD(y, m1, d1)
+        e = ee.Date.fromYMD(y, m2, d2).advance(1, "day")
+        sub = col.filterDate(s, e)
+        empty = ee.Image(0).rename(band).updateMask(ee.Image(0))
+        img = ee.Image(ee.Algorithms.If(sub.size().gt(0), sub.mean().select(band), empty))
+        return img.set("n", sub.size()).set("year", y)
+    yearly = ee.ImageCollection.fromImages(ee.List.sequence(y0, y1).map(_year))
+    return yearly.min(), yearly.max(), yearly
+
+
+def _build_vhi_stack(region: ee.Geometry, start_date: str, end_date: str) -> Dict[str, Any]:
+    """Server-side VCI/TCI/VHI image stack plus the counts needed to report
+    how much data backed it. Shared by the compute function and the PDF
+    thumbnail so both use identical logic."""
+    import datetime as _dt
+    _validate_date_range(start_date, end_date)
+    s, e = (_dt.date.fromisoformat(start_date), _dt.date.fromisoformat(end_date))
+    if s.year != e.year:
+        raise ValueError("vegetation_drought_index needs a window inside a single calendar year (the baseline is the same window in earlier years).")
+    year = s.year
+    if year - DROUGHT_BASELINE_FIRST_YEAR < MIN_BASELINE_YEARS:
+        raise ValueError(f"Need at least {MIN_BASELINE_YEARS} earlier baseline years from {DROUGHT_BASELINE_FIRST_YEAR}; choose {DROUGHT_BASELINE_FIRST_YEAR + MIN_BASELINE_YEARS} or later.")
+    (m1, d1), (m2, d2) = _md_clamped(s), _md_clamped(e)
+
+    def _ndvi(img):
+        qa = img.select("SummaryQA")
+        return img.select("NDVI").multiply(0.0001).updateMask(qa.lte(1)).rename("NDVI")  # 0 good, 1 marginal
+
+    def _lst(img):
+        raw = img.select("LST_Day_1km")
+        return raw.updateMask(raw.gte(LST_VALID_MIN)).multiply(0.02).rename("LST")  # Kelvin
+
+    ndvi_col = ee.ImageCollection("MODIS/061/MOD13Q1").filterBounds(region).map(_ndvi)
+    lst_col = ee.ImageCollection("MODIS/061/MOD11A2").filterBounds(region).map(_lst)
+
+    s_ee, e_ee = ee.Date(start_date), _cap_end_date(end_date).advance(1, "day")
+    n_target, l_target = ndvi_col.filterDate(s_ee, e_ee), lst_col.filterDate(s_ee, e_ee)
+    if n_target.size().getInfo() == 0 or l_target.size().getInfo() == 0:
+        raise ValueError(f"No MODIS NDVI/LST composites found for {start_date} - {end_date}. Try a wider window or earlier dates.")
+    ndvi_t, lst_t = n_target.mean(), l_target.mean()
+
+    y0, y1 = DROUGHT_BASELINE_FIRST_YEAR, year - 1
+    ndvi_min, ndvi_max, n_years_col = _baseline_min_max(ndvi_col, "NDVI", m1, d1, m2, d2, y0, y1)
+    lst_min, lst_max, l_years_col = _baseline_min_max(lst_col, "LST", m1, d1, m2, d2, y0, y1)
+    ndvi_years = sum(1 for n in n_years_col.aggregate_array("n").getInfo() if n)
+    lst_years = sum(1 for n in l_years_col.aggregate_array("n").getInfo() if n)
+    if min(ndvi_years, lst_years) < MIN_BASELINE_YEARS:
+        raise ValueError(f"Only {min(ndvi_years, lst_years)} baseline year(s) have MODIS data for this window/AOI; need at least {MIN_BASELINE_YEARS}.")
+
+    # Pixels where baseline max == min have no range, so the index is undefined there (masked, not zero-filled).
+    n_rng, l_rng = ndvi_max.subtract(ndvi_min), lst_max.subtract(lst_min)
+    vci = ndvi_t.subtract(ndvi_min).divide(n_rng.updateMask(n_rng.gt(0))).multiply(100).rename("VCI")
+    tci = lst_max.subtract(lst_t).divide(l_rng.updateMask(l_rng.gt(0))).multiply(100).rename("TCI")
+    vhi = vci.multiply(VHI_ALPHA).add(tci.multiply(1 - VHI_ALPHA)).rename("VHI")
+    stack = vci.addBands(tci).addBands(vhi)
+    return {"stack": stack, "vhi": vhi, "year": year, "y0": y0, "y1": y1, "m1": m1, "d1": d1, "m2": m2, "d2": d2,
+            "ndvi_years": ndvi_years, "lst_years": lst_years,
+            "ndvi_composites_used": n_target.size().getInfo(), "lst_composites_used": l_target.size().getInfo()}
+
+
+def compute_vegetation_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict[str, Any]:
+    """VCI, TCI and VHI (Kogan 1990/1995) for a window inside one calendar
+    year, against a per-pixel baseline of the same calendar window in
+    2001..(year-1). MODIS NDVI (250 m) and daytime LST (1 km), analysed at 1 km."""
+    logger.info(f"GEE (remote sensing): vegetation_drought_index {start_date} -> {end_date}")
+    region = _polygon_geometry(aoi)
+    b = _build_vhi_stack(region, start_date, end_date)
+    stack, vhi = b["stack"], b["vhi"]
+    y0, y1, m1, d1, m2, d2 = b["y0"], b["y1"], b["m1"], b["d1"], b["m2"], b["d2"]
+    ndvi_years, lst_years = b["ndvi_years"], b["lst_years"]
+
+    reducer = ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True)
+    kw = dict(geometry=region, scale=DROUGHT_SCALE_M, maxPixels=1e9, bestEffort=True, tileScale=4)
+    st = stack.reduceRegion(reducer=reducer, **kw).getInfo()
+    valid = vhi.mask().reduceRegion(reducer=ee.Reducer.mean(), **kw).getInfo()
+
+    cls = ee.Image(4)
+    for code, _label, upper in VHI_DROUGHT_CLASSES[:-1][::-1]:
+        cls = cls.where(vhi.lte(upper), code)
+    cls = cls.updateMask(vhi.mask()).rename("class")
+    hist = cls.reduceRegion(reducer=ee.Reducer.frequencyHistogram(), **kw).getInfo().get("class") or {}
+    total = sum(hist.values()) or 1
+    classes = [{
+        "code": code, "label": label, "vhi_range": (f"VHI ≤ {upper}" if code == 0 else f"{VHI_DROUGHT_CLASSES[code-1][2]} < VHI ≤ {upper}" if upper < 100 else f"VHI > {VHI_DROUGHT_CLASSES[code-1][2]}"),
+        "pct_of_valid_pixels": round(100 * (hist.get(str(code), 0) or 0) / total, 2),
+    } for code, label, upper in VHI_DROUGHT_CLASSES]
+
+    palettes = {
+        "VCI": {"min": 0, "max": 100, "palette": ["#7f0000", "#fdd49e", "#ffffbf", "#a6d96a", "#1a9850"]},
+        "TCI": {"min": 0, "max": 100, "palette": ["#7f0000", "#fdd49e", "#ffffbf", "#a6d96a", "#1a9850"]},
+        "VHI": {"min": 0, "max": 100, "palette": ["#7f0000", "#d7301f", "#fc8d59", "#fdd49e", "#ffffbf", "#a6d96a", "#1a9850"]},
+    }
+    meta = {
+        "VCI": ("VCI — Vegetation Condition Index", "100 × (NDVI − NDVImin) / (NDVImax − NDVImin)", "Kogan 1990, 1995", "Where this window's NDVI sits between the driest-looking and greenest this pixel has been in the same season across the baseline years. Low = poor vegetation for the time of year."),
+        "TCI": ("TCI — Temperature Condition Index", "100 × (LSTmax − LST) / (LSTmax − LSTmin)", "Kogan 1995", "Same idea for daytime land-surface temperature, inverted so hotter than usual scores low. Low = thermal stress."),
+        "VHI": ("VHI — Vegetation Health Index", f"{VHI_ALPHA} × VCI + {1 - VHI_ALPHA} × TCI", "Kogan 1995, 2001", "Combined moisture + thermal stress. Low values indicate agricultural drought stress; classes below."),
+    }
+    indices = {}
+    for key in ("VCI", "TCI", "VHI"):
+        label, formula, cite, interp = meta[key]
+        indices[key.lower()] = {
+            "label": label, "formula": formula, "citation": cite, "interpretation": interp,
+            "mean": round(st.get(f"{key}_mean", 0) or 0, 2), "min": round(st.get(f"{key}_min", 0) or 0, 2),
+            "max": round(st.get(f"{key}_max", 0) or 0, 2), "std_dev": round(st.get(f"{key}_stdDev", 0) or 0, 2),
+            "map_layer": _tile_layer(stack.select(key), palettes[key]),
+        }
+    return {
+        "indices": indices,
+        "drought_classes": classes,
+        "class_note": "Class cut-offs (Kogan 2002, via a secondary MODIS drought-method summary) were not checked against the primary paper.",
+        "baseline": {"years_requested": f"{y0}–{y1}", "ndvi_years_with_data": ndvi_years, "lst_years_with_data": lst_years,
+                     "window": f"{m1:02d}-{d1:02d} to {m2:02d}-{d2:02d} each year",
+                     "caveat": "VCI/TCI are relative to this baseline; short records understate extremes. Pixels with no baseline range are masked."},
+        "valid_pixel_fraction": round((valid.get("VHI", 0) or 0), 4),
+        "ndvi_composites_used": b["ndvi_composites_used"], "lst_composites_used": b["lst_composites_used"],
+        "download_url": _download_url(stack, region, scale=DROUGHT_SCALE_M),
+        "download_note": "3-band GeoTIFF: VCI, TCI, VHI (0–100) at 1 km.",
+        "method": (
+            "Kogan's VCI/TCI/VHI from MODIS/061/MOD13Q1 NDVI (250 m, quality-masked to SummaryQA 0–1: good or marginal) and "
+            "MODIS/061/MOD11A2 daytime LST (1 km), analysed at 1 km. Target window mean vs per-pixel min/max of the same calendar "
+            f"window in {y0}–{y1}. VHI = {VHI_ALPHA}·VCI + {1 - VHI_ALPHA}·TCI. Relative index: it says how stressed vegetation is "
+            "versus this pixel's own history, not an absolute drought measure. Documented-event validation still pending."
+        ),
+        "aoi_area_km2": round(_region_area_km2(region), 3),
+    }
+
+
 
 def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
     """Static PNG thumbnail for a Spectra PDF report — reconstructs the
@@ -2080,6 +2246,9 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
                 "min": [SAR_COMPOSITE_DB_MIN, SAR_COMPOSITE_DB_MIN, SAR_RATIO_DISPLAY_MIN],
                 "max": [SAR_COMPOSITE_DB_MAX, SAR_COMPOSITE_DB_MAX, SAR_RATIO_DISPLAY_MAX],
             })
+        if tool == "vegetation_drought_index":
+            b = _build_vhi_stack(region, params["start_date"], params["end_date"])
+            return _fetch_thumb_bytes(b["vhi"], region, {"min": 0, "max": 100, "palette": ["#7f0000", "#d7301f", "#fc8d59", "#fdd49e", "#ffffbf", "#a6d96a", "#1a9850"]})
         return None  # atmospheric_composition, index_time_series, accuracy_assessment (not single-raster thumbnails)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")

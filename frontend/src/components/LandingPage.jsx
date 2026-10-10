@@ -53,7 +53,7 @@ const SECTIONS = [['home', 'Home'], ['about', 'About'], ['tiers', 'Tiers'], ['fo
 const TIER_DETAILS = {
   business: ['Maritime & aviation live tracking', 'Commodity & market prices', 'Chokepoint risk scoring', 'Orbital (3D globe) view', 'Satellite analysis on any AOI'],
   agri: ['Composite 0-100 agri risk score', 'Drought & groundwater trend', 'Mandi (crop market) prices', 'Irrigation advisory', 'Crop-stage & extent mapping'],
-  remote_sensing: ['17 Spectra remote-sensing tools', 'Spectral indices, SAR, LULC, terrain', 'ML classification + accuracy assessment', 'Change detection & burn severity', 'GeoTIFF export + PDF reports'],
+  remote_sensing: ['18 Spectra remote-sensing tools', 'Spectral indices, SAR, LULC, terrain', 'ML classification + accuracy assessment', 'Change detection & burn severity', 'GeoTIFF export + PDF reports'],
   full: ['Every Business panel', 'Every Agri panel', 'Every Remote Sensing tool', 'Nothing hidden or gated'],
 };
 

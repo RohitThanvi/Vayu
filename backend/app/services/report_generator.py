@@ -2307,6 +2307,7 @@ RS_TOOL_LABELS = {
     "flood_mapping": "Flood Mapping (SAR)",
     "soil_moisture": "Soil Moisture (SMAP)",
     "spectral_composites": "Spectral Composites (X-ray views)",
+    "vegetation_drought_index": "Vegetation Drought Index (VCI/TCI/VHI)",
 }
 
 RS_GLOSSARY = [
@@ -2329,6 +2330,7 @@ RS_GLOSSARY = [
     ("Band composite (false colour)", "Three spectral bands assigned to the red, green and blue display channels. The colours are a display choice, so a composite shows contrast, not a measured quantity \u2014 e.g. vegetation looks red in colour infrared only because near-infrared is assigned to the red channel."),
     ("SWIR", "Short-wave infrared (Sentinel-2 B11, ~1.6 \u00b5m, and B12, ~2.2 \u00b5m). Sensitive to water content and to burned surfaces, and penetrates haze and many kinds of smoke, but not thick cloud."),
     ("Display stretch", "The fixed reflectance (or dB) range mapped onto the display scale. Values beyond it saturate; the Spectral Composites result reports the share of pixels clipped per channel."),
+    ("VCI / TCI / VHI", "Kogan's Vegetation Condition, Temperature Condition and Vegetation Health Indices (0\u2013100). Each pixel's NDVI (VCI) or land-surface temperature (TCI, inverted) is scaled between that pixel's own minimum and maximum for the same season in earlier years; VHI = 0.5\u00d7VCI + 0.5\u00d7TCI. Low values indicate vegetation/thermal stress relative to that pixel's history, not an absolute drought measure."),
 ]
 
 
@@ -2470,6 +2472,16 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
                 rows.append(("Sentinel-2 scenes used", str(result["scene_count"]), ""))
             for cid, why in (result.get("unavailable") or {}).items():
                 rows.append((f"{cid} \u2014 not built", str(why), ""))
+        elif tool == "vegetation_drought_index":
+            for d in (result.get("indices") or {}).values():
+                rows.append((f"{d.get('label')} \u2014 mean / \u03c3", f"{_fmt_num(d.get('mean'), 1)} / {_fmt_num(d.get('std_dev'), 1)}", "(0\u2013100)"))
+            for c in result.get("drought_classes", []):
+                rows.append((f"{c.get('label')} ({c.get('vhi_range')})", _fmt_num(c.get("pct_of_valid_pixels"), 1), "% of valid pixels"))
+            b = result.get("baseline") or {}
+            rows.append(("Baseline years (requested)", str(b.get("years_requested", "N/A")), ""))
+            rows.append(("Baseline years with data \u2014 NDVI / LST", f"{b.get('ndvi_years_with_data', 'N/A')} / {b.get('lst_years_with_data', 'N/A')}", ""))
+            if result.get("valid_pixel_fraction") is not None:
+                rows.append(("Valid pixel coverage", _fmt_num(result["valid_pixel_fraction"] * 100, 1), "%"))
     except Exception as e:
         logger.warning(f"_rs_metric_rows failed for tool={tool}: {type(e).__name__}: {e}")
     return rows
