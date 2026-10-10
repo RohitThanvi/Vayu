@@ -75,6 +75,7 @@ const TOOL_META = {
   supervised_classification: { label: 'ML Classify', needsDates: true, needsTrainingPoints: true, icon: '⊛' },
   accuracy_assessment: { label: 'Accuracy Assessment', needsDates: false, needsReferencePoints: true, icon: '✓' },
   soil_moisture: { label: 'Soil Moisture (SMAP)', needsDates: true, icon: '◍' },
+  spectral_composites: { label: 'Spectral Composites', needsDates: true, icon: '◐' },
 };
 
 // Client-side mirror of gee_remote_sensing.py's WORLDCOVER_CLASSES /
@@ -442,6 +443,53 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         </div>
         <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="surface temperature" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'land_surface_temperature'} onActivate={() => setActiveLayerId?.('land_surface_temperature')} />
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'spectral_composites') {
+    return (
+      <div>
+        <div style={{ fontSize: 10.5, color: S.text3, marginBottom: 10, lineHeight: 1.4 }}>
+          Same imagery, different bands. Colours are a fixed display stretch, not a measurement — use the per-channel stats and the raw-band GeoTIFFs for anything quantitative.
+        </div>
+        {Object.entries(result.composites).map(([id, c]) => {
+          const short = c.label.split(' — ')[0].split(' (')[0];
+          return (
+            <div key={id} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '8px 10px', marginBottom: 8 }}>
+              <div style={{ fontSize: 12, color: S.gold, marginBottom: 4 }}>{c.label}</div>
+              <div style={{ fontSize: 10.5, color: S.text2, lineHeight: 1.4, marginBottom: 6 }}>{c.reveals}</div>
+              {c.channels.map(ch => (
+                <div key={ch.channel} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 10, fontFamily: S.mono, color: S.text3, padding: '1px 0' }}>
+                  <span>{ch.channel} = {ch.band} · {ch.name}</span>
+                  <span>{ch.mean} (σ {ch.std_dev}){ch.pct_clipped_by_display != null ? ` · ${ch.pct_clipped_by_display}% clipped` : ''}</span>
+                </div>
+              ))}
+              <div style={{ fontSize: 9.5, color: S.text3, marginTop: 4 }}>Display stretch: {c.display_stretch}</div>
+              {c.orbit_pass && (
+                <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2 }}>
+                  {c.scene_count} scene(s), {c.orbit_pass} pass only · valid pixel coverage {Math.round((c.valid_pixel_fraction || 0) * 100)}%
+                </div>
+              )}
+              <RasterControls mapLayer={c.map_layer} downloadUrl={c.download_url} label={short} onShowOverlay={onShowOverlay}
+                active={activeLayerId === id} onActivate={() => setActiveLayerId?.(id)} />
+              {c.notes && <div style={{ fontSize: 9.5, color: S.text3, marginTop: 6, lineHeight: 1.4 }}>Note: {c.notes}</div>}
+              <div style={{ fontSize: 9.5, color: S.text3, marginTop: 4, lineHeight: 1.4 }}>Source: {c.citation}</div>
+              {c.scene_provenance && <SceneProvenance scenes={c.scene_provenance} label="Sentinel-1 scenes" />}
+            </div>
+          );
+        })}
+        {Object.entries(result.unavailable || {}).map(([id, why]) => (
+          <div key={id} style={{ fontSize: 10.5, color: '#e0c23c', background: 'rgba(224,194,60,0.08)', border: '1px solid rgba(224,194,60,0.3)', borderRadius: 4, padding: '6px 8px', marginBottom: 6 }}>
+            {id.replace(/_/g, ' ')}: not built — {why}
+          </div>
+        ))}
+        {result.valid_pixel_fraction != null && (
+          <div style={{ fontSize: 10, color: S.text3, marginBottom: 6 }}>
+            Optical composites — valid (cloud-free) pixel coverage: {Math.round(result.valid_pixel_fraction * 100)}% of AOI · {result.scene_count} Sentinel-2 scene(s)
+          </div>
+        )}
+        <SceneProvenance scenes={result.scene_provenance} label="Sentinel-2 scenes" />
         <MethodNote text={result.method} />
       </div>
     );

@@ -1665,6 +1665,283 @@ def compute_accuracy_assessment(tool: str, aoi: Dict, reference_points: list, to
     })
     return result
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Spectral composites ("X-ray" views) — the SAME Sentinel-2 / Sentinel-1
+# imagery the other tools here use, displayed through different band
+# combinations so it reveals what true colour hides (burn scars and
+# haze-obscured ground in SWIR, vegetation health in near-infrared, soil/rock
+# contrast in the SWIR geology composites, cloud-penetrating radar).
+#
+# No new science: every recipe is a published/standard band combination, and
+# the only thing computed beyond the imagery itself is per-channel AOI
+# statistics (mean, std dev, share of pixels clipped by the display stretch)
+# so the picture comes with an honest account of how much of it is real
+# signal vs. display saturation. Band recipes were checked against the
+# Sentinel Hub custom-scripts composites page, the Sentinel education band
+# list (as reproduced in the QGIS-in-Mineral-Exploration docs and
+# GISGeography) and NASA Earth Observatory's fire-imagery captions; the
+# places where those sources disagree are recorded in each recipe's "notes".
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Display stretch for the optical composites, in surface reflectance (0-1).
+# 0 - 0.3 is the stretch Google's own Earth Engine catalog sample uses for the
+# Sentinel-2 true-colour view; the same fixed stretch is used for every
+# optical recipe so composites are comparable across AOIs and dates (a
+# per-AOI percentile stretch would not be). This is a display choice, not a
+# measurement — NIR over dense vegetation can exceed 0.3, which is why the
+# result reports the share of pixels the stretch clips, per channel.
+COMPOSITE_DISPLAY_MIN = 0.0
+COMPOSITE_DISPLAY_MAX = 0.3
+
+# SAR composite display stretch (dB). -20..0 dB for VV and VH is the range
+# Sentinel Hub's published Sentinel-1 dB RGB example uses. The third channel
+# here is the VV-VH difference in dB (= the VV/VH ratio on a log scale); its
+# 0..20 dB display range is an ESTIMATE of mine, NOT taken from a source —
+# Sentinel Hub's example scales its ratio channel differently.
+SAR_COMPOSITE_DB_MIN = -20.0
+SAR_COMPOSITE_DB_MAX = 0.0
+SAR_RATIO_DISPLAY_MIN = 0.0   # ESTIMATE — display stretch only
+SAR_RATIO_DISPLAY_MAX = 20.0  # ESTIMATE — display stretch only
+
+S2_BAND_NAMES = {
+    "B2": "Blue", "B3": "Green", "B4": "Red", "B8": "NIR",
+    "B8A": "Narrow NIR (red edge 4)", "B11": "SWIR 1", "B12": "SWIR 2",
+}
+
+SPECTRAL_COMPOSITES = {
+    "natural_color": {
+        "label": "Natural colour (B4-B3-B2)", "sensor": "S2", "bands": ["B4", "B3", "B2"],
+        "reveals": "What the eye would see — the reference view to compare every other composite against.",
+        "citation": "Standard true-colour composite (Sentinel Hub custom-scripts, Sentinel-2 simple RGB composites).",
+        "notes": "",
+    },
+    "color_infrared": {
+        "label": "Colour infrared — vegetation health (B8-B4-B3)", "sensor": "S2", "bands": ["B8", "B4", "B3"],
+        "reveals": ("Vegetation vigour: intact vegetation reflects near-infrared strongly and appears red; bare ground "
+                    "appears light; burned areas absorb all three bands and appear dark."),
+        "citation": ("NASA Earth Observatory (R. Simmon), BAER feature — NIR/red/green composite description; band set "
+                     "per Sentinel Hub custom-scripts 'Color Infrared'."),
+        "notes": "NIR over dense vegetation often exceeds the fixed display stretch — check the per-channel clipped share.",
+    },
+    "swir": {
+        "label": "Short-wave infrared — burn scars, haze (B12-B8A-B4)", "sensor": "S2", "bands": ["B12", "B8A", "B4"],
+        "reveals": ("Burn scars and bare/built-up ground: newly burned land reflects strongly in SWIR, vegetation shows in "
+                    "shades of green, bare soil and built-up areas in brown. SWIR light penetrates haze and many kinds of "
+                    "smoke, so ground can be visible where true colour is washed out — but thick cloud still blocks it."),
+        "citation": ("Sentinel education band list (B12, B8A, B4) as reproduced in the QGIS-in-Mineral-Exploration docs and "
+                     "GISGeography; burn/smoke behaviour per NASA Earth Observatory fire-imagery captions (Landsat SWIR/NIR "
+                     "composites) and the Sentinel Hub custom-scripts SWIR description."),
+        "notes": "Sentinel Hub's own script for this composite uses B08 (not B8A) in the green channel; B8A follows the Sentinel education list.",
+    },
+    "atmospheric_penetration": {
+        "label": "Atmospheric penetration (B12-B11-B8A)", "sensor": "S2", "bands": ["B12", "B11", "B8A"],
+        "reveals": ("Built from the two SWIR bands plus narrow NIR to look through atmospheric haze; the result resembles "
+                    "false-colour infrared while staying clear, and water, snow and ice are sharply delineated."),
+        "citation": ("Sentinel education band list ('Atmospheric Penetration'); description after the BD-SAT dataset paper "
+                     "(arXiv:2406.05912)."),
+        "notes": "BD-SAT lists B8 rather than B8A for the third band; B8A follows the Sentinel education list.",
+    },
+    "agriculture": {
+        "label": "Agriculture — crop health & moisture (B11-B8-B2)", "sensor": "S2", "bands": ["B11", "B8", "B2"],
+        "reveals": ("Crop health and moisture: SWIR is sensitive to water in plants and soil, NIR to dense vegetation; "
+                    "healthy dense vegetation appears dark green."),
+        "citation": "Sentinel Hub custom-scripts 'Agriculture' composite (B11, B08, B02); also the Sentinel education band list.",
+        "notes": "",
+    },
+    "geology": {
+        "label": "Geology — rock & soil contrast (B12-B11-B2)", "sensor": "S2", "bands": ["B12", "B11", "B2"],
+        "reveals": ("Rock and soil contrasts: different rock types reflect SWIR light differently, so lithological boundaries "
+                    "and faults can stand out where true colour looks uniform."),
+        "citation": "Sentinel Hub custom-scripts 'Geology' composite (B12, B11, B02); also GISGeography's Sentinel-2 band-combination guide.",
+        "notes": "The QGIS-in-Mineral-Exploration docs list a second geology recipe (B12, B4, B2); B12-B11-B2 is the one most sources agree on.",
+    },
+    "sar_composite": {
+        "label": "SAR composite — sees through cloud (VV, VH, VV−VH)", "sensor": "S1", "bands": ["VV", "VH", "VV_minus_VH"],
+        "reveals": ("Radar works through cloud and at night. Open water and other smooth surfaces scatter the signal away "
+                    "from the sensor and look dark; cross-polarised VH is raised by volume scattering such as dense canopy "
+                    "(the physical basis of the RVI in the SAR Backscatter tool). The third channel is the VV−VH difference "
+                    "in dB, i.e. the VV/VH ratio on a log scale."),
+        "citation": ("Earth Engine Sentinel-1 algorithm guide (backscatter in dB, 10·log10 σ°); VV / VH / VV-VH-ratio RGB "
+                     "convention after Sentinel Hub's Sentinel-1 dB RGB example."),
+        "notes": ("Single orbit pass only (the dominant one in the window) so every scene shares one viewing geometry. "
+                  "Third-channel display range is an ESTIMATE, not a published value."),
+    },
+}
+
+
+def _s1_composite_image(region: ee.Geometry, start_date: str, end_date: str) -> Dict[str, Any]:
+    """Sentinel-1 IW dual-pol median in dB (VV, VH) plus VV_minus_VH, built
+    from a single orbit pass. Taking the median in dB is identical to taking
+    it in linear power (a median is an order statistic, so it is unchanged by
+    the monotonic dB transform). Restricting to the dominant pass follows the
+    same-orbit rule the flood_mapping tool already applies (UN-SPIDER)."""
+    _require_start_after(start_date, "2014-04-01", "Sentinel-1")
+    end_ee = _cap_end_date(end_date)
+    base = (
+        ee.ImageCollection("COPERNICUS/S1_GRD")
+        .filterBounds(region).filterDate(ee.Date(start_date), end_ee)
+        .filter(ee.Filter.eq("instrumentMode", "IW"))
+        .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+        .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH"))
+    )
+    if base.size().getInfo() == 0:
+        raise ValueError(f"No dual-pol (VV+VH) Sentinel-1 IW imagery found for {start_date} - {end_date}. Try a wider date range.")
+    n_asc = base.filter(ee.Filter.eq("orbitProperties_pass", "ASCENDING")).size().getInfo()
+    n_desc = base.filter(ee.Filter.eq("orbitProperties_pass", "DESCENDING")).size().getInfo()
+    orbit = "ASCENDING" if n_asc >= n_desc else "DESCENDING"
+    col = base.filter(ee.Filter.eq("orbitProperties_pass", orbit))
+    median = col.select(["VV", "VH"]).median()
+    image = median.addBands(median.select("VV").subtract(median.select("VH")).rename("VV_minus_VH"))
+    return {"image": image, "collection": col, "orbit": orbit, "scene_count": max(n_asc, n_desc),
+            "scenes_ascending": n_asc, "scenes_descending": n_desc}
+
+
+def _s1_scene_list(col: "ee.ImageCollection") -> list:
+    """Scene IDs/dates behind a Sentinel-1 composite (same idea as
+    _scene_provenance, but S1 has no cloud percentage — it reports the orbit
+    pass instead)."""
+    try:
+        def _meta(img):
+            return ee.Feature(None, {
+                "id": img.get("system:index"),
+                "date": img.date().format("YYYY-MM-dd"),
+                "orbit_pass": img.get("orbitProperties_pass"),
+            })
+        feats = ee.FeatureCollection(col.map(_meta)).sort("date").getInfo().get("features", [])
+        return [f["properties"] for f in feats]
+    except Exception as e:
+        logger.warning(f"_s1_scene_list failed: {type(e).__name__}: {e}")
+        return []
+
+
+def _mean_std_reducer():
+    return ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True)
+
+
+def compute_spectral_composites(aoi: Dict, start_date: str, end_date: str, composites: list = None) -> Dict[str, Any]:
+    """Band-combination ("X-ray") views of the same imagery: natural colour,
+    colour infrared, SWIR, atmospheric penetration, agriculture, geology
+    (all Sentinel-2 SR Harmonized, cloud-masked median composite) and a
+    Sentinel-1 SAR composite. Each composite returns its method/citation, a
+    pixel-level map layer, a GeoTIFF of the underlying RAW bands (reflectance
+    or dB — not the stretched picture), per-channel AOI mean/std dev, and the
+    share of pixels clipped by the display stretch. Default: all of them.
+    A composite that cannot be built (e.g. no Sentinel-1 scenes) is listed
+    under 'unavailable' instead of failing the whole request."""
+    logger.info(f"GEE (remote sensing): spectral_composites {composites} {start_date} -> {end_date}")
+    composites = composites or list(SPECTRAL_COMPOSITES.keys())
+    unknown = [c for c in composites if c not in SPECTRAL_COMPOSITES]
+    if unknown:
+        raise ValueError(f"Unknown composite(s): {unknown}. Valid: {list(SPECTRAL_COMPOSITES)}")
+    _validate_date_range(start_date, end_date)
+    region = _polygon_geometry(aoi)
+
+    built: Dict[str, Any] = {}
+    unavailable: Dict[str, str] = {}
+    scene_count = None
+    valid_pixel_fraction = None
+    scene_provenance: list = []
+
+    optical_ids = [c for c in composites if SPECTRAL_COMPOSITES[c]["sensor"] == "S2"]
+    if optical_ids:
+        try:
+            composite, scene_count = _s2_composite(region, start_date, end_date)
+        except ValueError as e:
+            for c in optical_ids:
+                unavailable[c] = str(e)
+        else:
+            valid_px = composite.select("B4").mask().reduceRegion(
+                reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
+            ).getInfo()
+            valid_pixel_fraction = round((valid_px.get("B4", 0) or 0), 4)
+            scene_provenance = _scene_provenance(region, start_date, end_date)
+
+            union = sorted({b for c in optical_ids for b in SPECTRAL_COMPOSITES[c]["bands"]})
+            stats = composite.select(union).reduceRegion(
+                reducer=_mean_std_reducer(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
+            ).getInfo()
+            clipped = composite.select(union).gt(COMPOSITE_DISPLAY_MAX).reduceRegion(
+                reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
+            ).getInfo()
+
+            for cid in optical_ids:
+                spec = SPECTRAL_COMPOSITES[cid]
+                channels = []
+                for chan, band in zip(("R", "G", "B"), spec["bands"]):
+                    channels.append({
+                        "channel": chan, "band": band, "name": S2_BAND_NAMES[band],
+                        "mean": round(stats.get(f"{band}_mean", 0) or 0, 4),
+                        "std_dev": round(stats.get(f"{band}_stdDev", 0) or 0, 4),
+                        "pct_clipped_by_display": round(100 * (clipped.get(band, 0) or 0), 2),
+                    })
+                vis = {"bands": spec["bands"], "min": COMPOSITE_DISPLAY_MIN, "max": COMPOSITE_DISPLAY_MAX}
+                built[cid] = {
+                    "label": spec["label"], "sensor": "Sentinel-2 SR Harmonized", "reveals": spec["reveals"],
+                    "citation": spec["citation"], "notes": spec["notes"], "channels": channels,
+                    "display_stretch": f"{COMPOSITE_DISPLAY_MIN}–{COMPOSITE_DISPLAY_MAX} surface reflectance (fixed, same for every optical composite)",
+                    "map_layer": _tile_layer(composite, vis),
+                    "download_url": _download_url(composite.select(spec["bands"]), region, scale=20),
+                    "download_note": "Raw surface-reflectance bands in R, G, B channel order (not the stretched picture).",
+                }
+
+    if "sar_composite" in composites:
+        spec = SPECTRAL_COMPOSITES["sar_composite"]
+        try:
+            s1 = _s1_composite_image(region, start_date, end_date)
+        except ValueError as e:
+            unavailable["sar_composite"] = str(e)
+        else:
+            img = s1["image"]
+            stats = img.reduceRegion(
+                reducer=_mean_std_reducer(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
+            ).getInfo()
+            valid_px = img.select("VV").mask().reduceRegion(
+                reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
+            ).getInfo()
+            names = {"VV": "VV backscatter (dB)", "VH": "VH backscatter (dB)", "VV_minus_VH": "VV − VH (dB)"}
+            channels = [{
+                "channel": chan, "band": band, "name": names[band],
+                "mean": round(stats.get(f"{band}_mean", 0) or 0, 2),
+                "std_dev": round(stats.get(f"{band}_stdDev", 0) or 0, 2),
+            } for chan, band in zip(("R", "G", "B"), spec["bands"])]
+            vis = {"bands": spec["bands"],
+                   "min": [SAR_COMPOSITE_DB_MIN, SAR_COMPOSITE_DB_MIN, SAR_RATIO_DISPLAY_MIN],
+                   "max": [SAR_COMPOSITE_DB_MAX, SAR_COMPOSITE_DB_MAX, SAR_RATIO_DISPLAY_MAX]}
+            built["sar_composite"] = {
+                "label": spec["label"], "sensor": "Sentinel-1 GRD (IW, dual-pol)", "reveals": spec["reveals"],
+                "citation": spec["citation"], "notes": spec["notes"], "channels": channels,
+                "display_stretch": (f"VV, VH: {SAR_COMPOSITE_DB_MIN:g} to {SAR_COMPOSITE_DB_MAX:g} dB; "
+                                    f"VV−VH: {SAR_RATIO_DISPLAY_MIN:g} to {SAR_RATIO_DISPLAY_MAX:g} dB (ESTIMATE, display only)"),
+                "scene_count": s1["scene_count"], "orbit_pass": s1["orbit"],
+                "scenes_ascending": s1["scenes_ascending"], "scenes_descending": s1["scenes_descending"],
+                "valid_pixel_fraction": round((valid_px.get("VV", 0) or 0), 4),
+                "scene_provenance": _s1_scene_list(s1["collection"]),
+                "map_layer": _tile_layer(img, vis),
+                "download_url": _download_url(img, region, scale=20),
+                "download_note": "Raw VV, VH and VV−VH bands in dB, R, G, B channel order (not the stretched picture).",
+            }
+
+    if not built:
+        raise ValueError("No composite could be built: " + "; ".join(f"{k}: {v}" for k, v in unavailable.items()))
+
+    return {
+        "composites": {c: built[c] for c in composites if c in built},
+        "unavailable": unavailable,
+        "method": (
+            "Band-combination composites of Sentinel-2 SR Harmonized (cloud/shadow/cirrus-masked via the Scene "
+            "Classification Layer, median composite"
+            + (f" of {scene_count} scene(s)" if scene_count else "")
+            + ", 10-20m native resolution) and Sentinel-1 GRD IW dual-pol (single-orbit-pass median, dB). No new science: "
+            "each recipe is a published band combination (see each composite's citation). Colours are a fixed display "
+            "stretch, not a measurement — use the per-channel statistics and the raw-band GeoTIFFs for anything quantitative."
+        ),
+        "scene_count": scene_count,
+        "valid_pixel_fraction": valid_pixel_fraction,
+        "scene_provenance": scene_provenance,
+        "aoi_area_km2": round(_region_area_km2(region), 3),
+    }
+
+
 
 def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
     """Static PNG thumbnail for a Spectra PDF report — reconstructs the
@@ -1788,6 +2065,21 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
                 return None
             sm = col.mean().clip(region)
             return _fetch_thumb_bytes(sm, region, {"min": 0, "max": 0.5, "palette": ["#a0522d", "#c9a86a", "#e8e2c8", "#8ab4cc", "#1a4d7a"]})
+        if tool == "spectral_composites":
+            # One picture per report: the first requested composite (natural colour if none were named).
+            cid = (params.get("composites") or ["natural_color"])[0]
+            spec = SPECTRAL_COMPOSITES.get(cid)
+            if spec is None:
+                return None
+            if spec["sensor"] == "S2":
+                composite, _ = _s2_composite(region, params["start_date"], params["end_date"])
+                return _fetch_thumb_bytes(composite, region, {"bands": spec["bands"], "min": COMPOSITE_DISPLAY_MIN, "max": COMPOSITE_DISPLAY_MAX})
+            s1 = _s1_composite_image(region, params["start_date"], params["end_date"])
+            return _fetch_thumb_bytes(s1["image"], region, {
+                "bands": spec["bands"],
+                "min": [SAR_COMPOSITE_DB_MIN, SAR_COMPOSITE_DB_MIN, SAR_RATIO_DISPLAY_MIN],
+                "max": [SAR_COMPOSITE_DB_MAX, SAR_COMPOSITE_DB_MAX, SAR_RATIO_DISPLAY_MAX],
+            })
         return None  # atmospheric_composition, index_time_series, accuracy_assessment (not single-raster thumbnails)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")

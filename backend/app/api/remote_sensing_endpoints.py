@@ -94,6 +94,10 @@ TOOLS = {
         "label": "Soil Moisture (SMAP)", "needs_dates": True,
         "description": "Surface soil moisture (sm_surface) — NASA SMAP L4, ~9km, single-period snapshot.",
     },
+    "spectral_composites": {
+        "label": "Spectral Composites (X-ray views)", "needs_dates": True,
+        "description": "Band-combination views of the same imagery — SWIR (burn scars, haze), colour infrared, agriculture, geology, atmospheric penetration, plus a Sentinel-1 SAR composite that sees through cloud.",
+    },
 }
 
 
@@ -118,6 +122,7 @@ class RemoteSensingRequest(BaseModel):
     assess_tool: Optional[str] = None  # accuracy_assessment: which tool's classification to validate (lulc | dynamic_world | burn_severity)
     reference_points: Optional[List[Dict[str, Any]]] = None  # accuracy_assessment: [{lat, lon, true_class}]
     polarization: Optional[str] = None  # flood_mapping: 'VH' (default) or 'VV'
+    composites: Optional[List[str]] = None  # spectral_composites: subset of rs.SPECTRAL_COMPOSITES keys; omitted = all
 
 
 def _dispatch_tool(req: RemoteSensingRequest):
@@ -195,6 +200,10 @@ def _dispatch_tool(req: RemoteSensingRequest):
         if not req.start_date or not req.end_date:
             raise ValueError("soil_moisture requires start_date and end_date.")
         return rs.compute_soil_moisture(req.aoi_geojson, req.start_date, req.end_date)
+    elif req.tool == "spectral_composites":
+        if not req.start_date or not req.end_date:
+            raise ValueError("spectral_composites requires start_date and end_date.")
+        return rs.compute_spectral_composites(req.aoi_geojson, req.start_date, req.end_date, req.composites)
     else:
         raise ValueError(f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}")
 

@@ -2732,7 +2732,7 @@ export default function App({ tier = 'full', onChangeTier }) {
       {/* Mobile "Tools" panel — the same Business/Spectra/Agri IntelBar
           that renders as a bottom strip on desktop, full-screen instead
           on mobile (was previously not rendered on mobile AT ALL, so
-          Spectra's 16 tools, Business's Live/Analysis/Economics tabs,
+          Spectra's 17 tools, Business's Live/Analysis/Economics tabs,
           and Agri's Groundwater/Analysis/Crop Stage/Irrigation/ML
           Extent tabs were simply unreachable on a phone). Each bar's
           own root layout already just fills its container (flexShrink:0,
