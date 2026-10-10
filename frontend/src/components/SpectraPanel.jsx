@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import SparkChart from './SparkChart';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
@@ -77,6 +78,7 @@ const TOOL_META = {
   soil_moisture: { label: 'Soil Moisture (SMAP)', needsDates: true, icon: '◍' },
   spectral_composites: { label: 'Spectral Composites', needsDates: true, icon: '◐' },
   vegetation_drought_index: { label: 'Drought Index (VHI)', needsDates: true, icon: '☼' },
+  night_lights: { label: 'Night Lights (VIIRS)', needsDates: true, icon: '✦' },
 };
 
 // Client-side mirror of gee_remote_sensing.py's WORLDCOVER_CLASSES /
@@ -533,6 +535,34 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         )}
         <RasterControls mapLayer={null} downloadUrl={result.download_url} label="VCI/TCI/VHI" onShowOverlay={onShowOverlay} />
         <div style={{ fontSize: 10, color: S.text3, marginTop: 6, lineHeight: 1.4 }}>{result.baseline.caveat}</div>
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'night_lights') {
+    const ta = result.trend_analysis;
+    return (
+      <div>
+        <SparkChart
+          points={result.points.map(p => ({ date: p.date, value: p.value }))} height={170}
+          formatX={(d) => new Date(d).toLocaleDateString(undefined, { month: 'short', year: '2-digit' })}
+          formatY={(v) => v.toFixed(2)}
+          emptyLabel="No usable VIIRS months in this range."
+        />
+        <div style={{ fontSize: 10, color: S.text3, margin: '4px 0 8px' }}>Mean radiance, nW/sr/cm² per month</div>
+        <StatRow label="Months in window / usable" value={`${result.months_in_window} / ${result.usable_months}`} />
+        <StatRow label="Mean radiance (usable months)" value={result.mean_radiance_overall ?? '—'} />
+        {ta?.status === 'ok' && (
+          <>
+            <StatRow label="Trend (Mann-Kendall)" value={`${ta.trend} · p=${ta.p_value} ${ta.significant ? '(significant)' : '(not significant)'}`} />
+            {ta.sens_slope_per_year != null && <StatRow label="Sen's slope" value={`${ta.sens_slope_per_year > 0 ? '+' : ''}${ta.sens_slope_per_year} / year`} />}
+          </>
+        )}
+        {ta?.status === 'insufficient_data' && <div style={{ fontSize: 10.5, color: S.text3, marginTop: 6 }}>{ta.note}</div>}
+        <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="mean radiance" onShowOverlay={onShowOverlay}
+          active={activeLayerId === 'night_lights'} onActivate={() => setActiveLayerId?.('night_lights')} />
+        <div style={{ fontSize: 9.5, color: S.text3, marginTop: 4 }}>Map stretch: {result.display_stretch}</div>
+        {result.caveats.map((c, i) => <div key={i} style={{ fontSize: 10, color: S.text3, marginTop: 4, lineHeight: 1.4 }}>• {c}</div>)}
         <MethodNote text={result.method} />
       </div>
     );
