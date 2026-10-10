@@ -98,6 +98,10 @@ TOOLS = {
         "label": "Spectral Composites (X-ray views)", "needs_dates": True,
         "description": "Band-combination views of the same imagery — SWIR (burn scars, haze), colour infrared, agriculture, geology, atmospheric penetration, plus a Sentinel-1 SAR composite that sees through cloud.",
     },
+    "vegetation_drought_index": {
+        "label": "Vegetation Drought Index (VCI/TCI/VHI)", "needs_dates": True,
+        "description": "Kogan's VCI, TCI and VHI from MODIS NDVI + land-surface temperature vs the same season in earlier years — 1 km, window within one calendar year.",
+    },
 }
 
 
@@ -204,6 +208,10 @@ def _dispatch_tool(req: RemoteSensingRequest):
         if not req.start_date or not req.end_date:
             raise ValueError("spectral_composites requires start_date and end_date.")
         return rs.compute_spectral_composites(req.aoi_geojson, req.start_date, req.end_date, req.composites)
+    elif req.tool == "vegetation_drought_index":
+        if not req.start_date or not req.end_date:
+            raise ValueError("vegetation_drought_index requires start_date and end_date (within one calendar year).")
+        return rs.compute_vegetation_drought_index(req.aoi_geojson, req.start_date, req.end_date)
     else:
         raise ValueError(f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}")
 
