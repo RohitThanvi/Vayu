@@ -2308,6 +2308,7 @@ RS_TOOL_LABELS = {
     "soil_moisture": "Soil Moisture (SMAP)",
     "spectral_composites": "Spectral Composites (X-ray views)",
     "vegetation_drought_index": "Vegetation Drought Index (VCI/TCI/VHI)",
+    "night_lights": "Night Lights (VIIRS)",
 }
 
 RS_GLOSSARY = [
@@ -2331,6 +2332,8 @@ RS_GLOSSARY = [
     ("SWIR", "Short-wave infrared (Sentinel-2 B11, ~1.6 \u00b5m, and B12, ~2.2 \u00b5m). Sensitive to water content and to burned surfaces, and penetrates haze and many kinds of smoke, but not thick cloud."),
     ("Display stretch", "The fixed reflectance (or dB) range mapped onto the display scale. Values beyond it saturate; the Spectral Composites result reports the share of pixels clipped per channel."),
     ("VCI / TCI / VHI", "Kogan's Vegetation Condition, Temperature Condition and Vegetation Health Indices (0\u2013100). Each pixel's NDVI (VCI) or land-surface temperature (TCI, inverted) is scaled between that pixel's own minimum and maximum for the same season in earlier years; VHI = 0.5\u00d7VCI + 0.5\u00d7TCI. Low values indicate vegetation/thermal stress relative to that pixel's history, not an absolute drought measure."),
+    ("VIIRS DNB radiance", "Night-time radiance from the Visible Infrared Imaging Radiometer Suite Day/Night Band, in nW/sr/cm\u00b2. A proxy for lit human activity, not a direct measure of economic output; this product version also includes fires, boats and aurora."),
+    ("cf_cvg", "Number of cloud-free observations behind a monthly VIIRS composite pixel. Zero means no information for that month, not darkness."),
 ]
 
 
@@ -2482,6 +2485,15 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
             rows.append(("Baseline years with data \u2014 NDVI / LST", f"{b.get('ndvi_years_with_data', 'N/A')} / {b.get('lst_years_with_data', 'N/A')}", ""))
             if result.get("valid_pixel_fraction") is not None:
                 rows.append(("Valid pixel coverage", _fmt_num(result["valid_pixel_fraction"] * 100, 1), "%"))
+        elif tool == "night_lights":
+            rows.append(("Months in window / usable", f"{result.get('months_in_window', 'N/A')} / {result.get('usable_months', 'N/A')}", ""))
+            rows.append(("Mean radiance (usable months)", _fmt_num(result.get("mean_radiance_overall"), 3), "nW/sr/cm\u00b2"))
+            ta = result.get("trend_analysis") or {}
+            if ta.get("status") == "ok":
+                rows.append(("Trend (Mann-Kendall)", f"{ta.get('trend')} (p = {_fmt_num(ta.get('p_value'), 4)})", ""))
+                rows.append(("Sen's slope", _fmt_num(ta.get("sens_slope_per_year"), 4), "nW/sr/cm\u00b2 per year"))
+            elif ta.get("note"):
+                rows.append(("Trend", str(ta["note"]), ""))
     except Exception as e:
         logger.warning(f"_rs_metric_rows failed for tool={tool}: {type(e).__name__}: {e}")
     return rows

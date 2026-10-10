@@ -2108,6 +2108,97 @@ def compute_vegetation_drought_index(aoi: Dict, start_date: str, end_date: str) 
     }
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Night lights — monthly VIIRS Day/Night Band radiance as a proxy for
+# lit human activity (an economic-activity PROXY, not a measurement of GDP).
+#
+# Verified against the Earth Engine catalog: NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG
+# (stray-light-corrected monthly composites, 2014-01 onward), bands avg_rad
+# (nW/sr/cm^2) and cf_cvg (number of cloud-free observations), 463.83 m. The
+# catalog states v1 is NOT filtered: aurora, fires, boats and other
+# temporary lights are included, and a zero avg_rad does not mean no lights
+# were seen — check cf_cvg. The 0-60 display range is the catalog's own
+# sample stretch.
+# ═════════════════════════════════════════════════════════════════════════════
+
+VIIRS_MONTHLY_ID = "NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG"
+VIIRS_SCALE_M = 463.83
+VIIRS_DISPLAY_MIN, VIIRS_DISPLAY_MAX = 0, 60  # catalog sample stretch (display only)
+NIGHT_LIGHTS_PALETTE = ["#000000", "#3b2a6b", "#c2453a", "#ffd24d", "#ffffff"]
+
+
+def compute_night_lights(aoi: Dict, start_date: str, end_date: str) -> Dict[str, Any]:
+    """Monthly mean VIIRS DNB radiance (and summed radiance) over the AOI for
+    each month in the window, with the cloud-free-observation count behind each
+    month and a Mann-Kendall / Sen's slope trend. Months with no composite or
+    with zero cloud-free observations over the AOI are reported as gaps."""
+    logger.info(f"GEE (remote sensing): night_lights {start_date} -> {end_date}")
+    _validate_date_range(start_date, end_date)
+    _require_start_after(start_date, "2014-01-01", "VIIRS DNB stray-light-corrected monthly")
+    region = _polygon_geometry(aoi)
+
+    col = (
+        ee.ImageCollection(VIIRS_MONTHLY_ID).filterBounds(region)
+        .filterDate(ee.Date(start_date), _cap_end_date(end_date).advance(1, "day"))
+        .select(["avg_rad", "cf_cvg"])
+    )
+    if col.size().getInfo() == 0:
+        raise ValueError(f"No VIIRS monthly composites found for {start_date} - {end_date}. Try an earlier window (the product lags real time).")
+
+    reducer = ee.Reducer.mean().combine(ee.Reducer.sum(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True)
+
+    def _month(img):
+        stats = img.reduceRegion(reducer=reducer, geometry=region, scale=VIIRS_SCALE_M, maxPixels=1e9, bestEffort=True, tileScale=4)
+        return ee.Feature(None, stats).set("date", img.date().format("YYYY-MM-dd"))
+
+    feats = ee.FeatureCollection(col.map(_month)).getInfo().get("features", [])
+    by_date = {f["properties"].get("date"): f["properties"] for f in feats}
+
+    points = []
+    for d in sorted(by_date):
+        p = by_date[d]
+        mean, cf = p.get("avg_rad_mean"), p.get("cf_cvg_mean")
+        usable = mean is not None and (cf or 0) > 0  # zero cloud-free observations = no information, not "no lights"
+        points.append({
+            "date": d,
+            "value": round(mean, 4) if usable else None,
+            "std_dev": round(p.get("avg_rad_stdDev") or 0, 4) if usable else None,
+            "sum_of_lights": round(p.get("avg_rad_sum") or 0, 2) if usable else None,
+            "mean_cf_cvg": round(cf, 2) if cf is not None else None,
+        })
+
+    valid = [(p["date"], p["value"]) for p in points if p["value"] is not None]
+    trend_analysis = (
+        mann_kendall_test([v for _, v in valid], [d_ for d_, _ in valid]) if len(valid) >= trend_stats.MIN_POINTS
+        else {"status": "insufficient_data", "note": f"Only {len(valid)} usable months — Mann-Kendall needs at least {trend_stats.MIN_POINTS}."}
+    )
+
+    mean_img = col.select("avg_rad").mean()
+    return {
+        "points": points,
+        "months_in_window": len(points), "usable_months": len(valid),
+        "trend_analysis": trend_analysis,
+        "mean_radiance_overall": round(sum(v for _, v in valid) / len(valid), 4) if valid else None,
+        "units": "nW/sr/cm² (avg_rad); sum_of_lights = radiance summed over AOI pixels (a relative index, depends on AOI size)",
+        "display_stretch": f"{VIIRS_DISPLAY_MIN}–{VIIRS_DISPLAY_MAX} nW/sr/cm² (catalog sample stretch, display only)",
+        "map_layer": _tile_layer(mean_img, {"min": VIIRS_DISPLAY_MIN, "max": VIIRS_DISPLAY_MAX, "palette": NIGHT_LIGHTS_PALETTE}),
+        "download_url": _download_url(col.select(["avg_rad", "cf_cvg"]).mean(), region, scale=int(VIIRS_SCALE_M)),
+        "download_note": "Window-mean avg_rad and cf_cvg at ~464 m.",
+        "caveats": [
+            "Night lights are a proxy for lit activity, not a direct measure of economic output.",
+            "This product version is unfiltered: fires, boats, aurora and other temporary lights are included.",
+            "Months with zero cloud-free observations over the AOI are shown as gaps, not as darkness.",
+            "The monthly series has a seasonal cycle and serial correlation; Mann-Kendall here ignores both, so treat p-values as indicative.",
+        ],
+        "method": (
+            f"{VIIRS_MONTHLY_ID} (VIIRS Day/Night Band monthly average radiance, stray-light corrected, ~464 m, from 2014-01). "
+            "AOI mean, std dev and sum of avg_rad per month, with the mean cloud-free observation count (cf_cvg) behind each month; "
+            "Mann-Kendall test and Sen's slope on the usable months."
+        ),
+        "aoi_area_km2": round(_region_area_km2(region), 3),
+    }
+
+
 
 def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
     """Static PNG thumbnail for a Spectra PDF report — reconstructs the
@@ -2249,6 +2340,12 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
         if tool == "vegetation_drought_index":
             b = _build_vhi_stack(region, params["start_date"], params["end_date"])
             return _fetch_thumb_bytes(b["vhi"], region, {"min": 0, "max": 100, "palette": ["#7f0000", "#d7301f", "#fc8d59", "#fdd49e", "#ffffbf", "#a6d96a", "#1a9850"]})
+        if tool == "night_lights":
+            col = (ee.ImageCollection(VIIRS_MONTHLY_ID).filterBounds(region)
+                   .filterDate(ee.Date(params["start_date"]), _cap_end_date(params["end_date"]).advance(1, "day")).select("avg_rad"))
+            if col.size().getInfo() == 0:
+                return None
+            return _fetch_thumb_bytes(col.mean(), region, {"min": VIIRS_DISPLAY_MIN, "max": VIIRS_DISPLAY_MAX, "palette": NIGHT_LIGHTS_PALETTE})
         return None  # atmospheric_composition, index_time_series, accuracy_assessment (not single-raster thumbnails)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")
