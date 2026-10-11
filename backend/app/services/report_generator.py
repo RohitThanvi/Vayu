@@ -2514,12 +2514,13 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
         elif tool == "timelapse":
             frames = result.get("frames") or []
             if frames:
-                rows.append(("Frames (years)", f"{len(frames)} ({result.get('years', ['N/A', 'N/A'])[0]}\u2013{result.get('years', ['N/A', 'N/A'])[1]})", ""))
+                pl = result.get("period_labels") or ["N/A", "N/A"]
+                rows.append((f"Frames ({result.get('frequency', 'yearly')})", f"{len(frames)} ({pl[0]} \u2013 {pl[1]})", ""))
                 first, last = frames[0], frames[-1]
-                rows.append((f"Mean NDVI \u2014 {first.get('year')} / {last.get('year')}", f"{_fmt_num(first.get('mean_ndvi'), 3)} / {_fmt_num(last.get('mean_ndvi'), 3)}", ""))
-                rows.append((f"Scenes \u2014 {first.get('year')} / {last.get('year')}", f"{first.get('scene_count')} / {last.get('scene_count')}", ""))
-            if result.get("skipped_years"):
-                rows.append(("Years skipped (no clear coverage)", ", ".join(str(y) for y in result["skipped_years"]), ""))
+                rows.append((f"Mean NDVI \u2014 {first.get('label')} / {last.get('label')}", f"{_fmt_num(first.get('mean_ndvi'), 3)} / {_fmt_num(last.get('mean_ndvi'), 3)}", ""))
+                rows.append((f"Scenes \u2014 {first.get('label')} / {last.get('label')}", f"{first.get('scene_count')} / {last.get('scene_count')}", ""))
+            if result.get("skipped_periods"):
+                rows.append(("Periods skipped (no clear coverage)", ", ".join(str(y) for y in result["skipped_periods"]), ""))
             ta = result.get("ndvi_trend") or {}
             if ta.get("status") == "ok":
                 rows.append(("NDVI trend (Mann-Kendall)", f"{ta.get('trend')} (p = {_fmt_num(ta.get('p_value'), 4)})", ""))

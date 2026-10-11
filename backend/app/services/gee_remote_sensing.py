@@ -2370,7 +2370,7 @@ LANDSAT_C2_SENSORS = [
     {"id": "LANDSAT/LC09/C02/T1_L2", "name": "Landsat 9 OLI-2", "bands": ["SR_B2", "SR_B3", "SR_B4", "SR_B5"]},
 ]
 TIMELAPSE_FIRST_YEAR = 1984  # Landsat 5 launch year; years without data are dropped
-TIMELAPSE_MAX_FRAMES = 30
+TIMELAPSE_MAX_FRAMES = 60  # per-frame thumbnail URLs are generated server-side; this keeps the request bounded
 TIMELAPSE_MIN_FRAMES = 2
 TIMELAPSE_SCALE_M = 30
 TIMELAPSE_THUMB_PX = 512
@@ -2394,99 +2394,150 @@ def _landsat_merged(region, first_year: int, last_year: int):
     return merged
 
 
+TIMELAPSE_FREQUENCIES = {"yearly": 12, "quarterly": 3, "monthly": 1}  # months per frame
+TIMELAPSE_GIF_FPS = 4  # animation speed of the optional GIF (display only)
+TIMELAPSE_PERIOD_NAMES = {"yearly": "calendar year", "quarterly": "calendar quarter", "monthly": "calendar month"}
+
+
+def _period_composite(merged, year: int, month: int, step_months: int):
+    """Median of all cloud-masked scenes in [year-month-01, +step_months)."""
+    s = ee.Date.fromYMD(year, month, 1)
+    return merged.filterDate(s, s.advance(step_months, "month")).median()
+
+
 def _year_composite(merged, year: int):
-    s = ee.Date.fromYMD(year, 1, 1)
-    return merged.filterDate(s, s.advance(1, "year")).median()
+    return _period_composite(merged, year, 1, 12)
 
 
-def compute_timelapse(aoi: Dict, start_date: str, end_date: str) -> Dict[str, Any]:
-    """Annual Landsat timelapse (one cloud-masked median frame per calendar
-    year from start_date's year to end_date's year; the last year may be
-    partial). Returns per-frame thumbnail URLs for client-side playback plus
-    per-frame scene count, valid-pixel fraction and AOI-mean NDVI, and a
-    Mann-Kendall trend on the NDVI series."""
+def _timelapse_periods(start, end, step_months: int) -> list:
+    """[(label, year, month)] for every frame period from the one containing
+    `start` to the one containing `end`. Periods are calendar-aligned
+    (quarters start Jan/Apr/Jul/Oct)."""
+    y, m = start.year, ((start.month - 1) // step_months) * step_months + 1
+    out = []
+    while (y, m) <= (end.year, end.month):
+        label = f"{y}" if step_months == 12 else (f"{y} Q{(m - 1) // 3 + 1}" if step_months == 3 else f"{y}-{m:02d}")
+        out.append((label, y, m))
+        m += step_months
+        if m > 12:
+            m -= 12
+            y += 1
+    return out
+
+
+def compute_timelapse(aoi: Dict, start_date: str, end_date: str, frequency: str = "yearly") -> Dict[str, Any]:
+    """Landsat timelapse with one cloud-masked median frame per calendar year,
+    quarter or month between start_date and end_date (the last period may be
+    partial). Periods with no clear coverage are skipped and listed. Returns
+    per-frame thumbnail URLs for client-side playback (with period labels),
+    an optional animated-GIF URL, per-frame scene count, valid-pixel fraction
+    and AOI-mean NDVI, and — for yearly frames only — a Mann-Kendall trend."""
     import datetime as _dt
     from concurrent.futures import ThreadPoolExecutor
-    logger.info(f"GEE (remote sensing): timelapse {start_date} -> {end_date}")
+    frequency = (frequency or "yearly").lower()
+    logger.info(f"GEE (remote sensing): timelapse {frequency} {start_date} -> {end_date}")
+    if frequency not in TIMELAPSE_FREQUENCIES:
+        raise ValueError(f"Unknown frequency '{frequency}'. Valid: {list(TIMELAPSE_FREQUENCIES)}")
+    step = TIMELAPSE_FREQUENCIES[frequency]
     _validate_date_range(start_date, end_date)
-    y0, y1 = _dt.date.fromisoformat(start_date).year, _dt.date.fromisoformat(end_date).year
-    if y0 < TIMELAPSE_FIRST_YEAR:
+    s_d, e_d = _dt.date.fromisoformat(start_date), _dt.date.fromisoformat(end_date)
+    if s_d.year < TIMELAPSE_FIRST_YEAR:
         raise ValueError(f"Landsat Collection 2 imagery starts in {TIMELAPSE_FIRST_YEAR} (Landsat 5); choose a later start.")
-    n_years = y1 - y0 + 1
-    if n_years < TIMELAPSE_MIN_FRAMES:
-        raise ValueError(f"A timelapse needs at least {TIMELAPSE_MIN_FRAMES} calendar years; widen the date range.")
-    if n_years > TIMELAPSE_MAX_FRAMES:
-        raise ValueError(f"At most {TIMELAPSE_MAX_FRAMES} yearly frames per timelapse; narrow the date range (got {n_years}).")
+    periods = _timelapse_periods(s_d, e_d, step)
+    if len(periods) < TIMELAPSE_MIN_FRAMES:
+        raise ValueError(f"A timelapse needs at least {TIMELAPSE_MIN_FRAMES} {frequency} frames; widen the date range.")
+    if len(periods) > TIMELAPSE_MAX_FRAMES:
+        raise ValueError(f"At most {TIMELAPSE_MAX_FRAMES} frames per timelapse; this range gives {len(periods)} {frequency} frames — narrow the range or use a coarser frequency.")
     region = _polygon_geometry(aoi)
-    merged = _landsat_merged(region, y0, y1)
+    merged = _landsat_merged(region, periods[0][1], periods[-1][1])
 
     empty = ee.Image.constant([0, 0, 0, 0]).rename(["blue", "green", "red", "nir"]).updateMask(ee.Image(0))
+    ys, ms = ee.List([p[1] for p in periods]), ee.List([p[2] for p in periods])
 
-    def _year_stats(y):
-        y = ee.Number(y).int()
-        s = ee.Date.fromYMD(y, 1, 1)
-        sub = merged.filterDate(s, s.advance(1, "year"))
+    def _period_stats(i):
+        i = ee.Number(i).int()
+        s = ee.Date.fromYMD(ys.get(i), ms.get(i), 1)
+        sub = merged.filterDate(s, s.advance(step, "month"))
         n = sub.size()
         comp = ee.Image(ee.Algorithms.If(n.gt(0), sub.median(), empty))
         both = comp.normalizedDifference(["nir", "red"]).rename("ndvi").addBands(comp.select("red").mask().rename("valid"))
         stats = both.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=TIMELAPSE_SCALE_M, maxPixels=1e9, bestEffort=True, tileScale=4)
-        return ee.Feature(None, stats).set("year", y).set("n", n)
+        return ee.Feature(None, stats).set("i", i).set("n", n)
 
-    feats = ee.FeatureCollection(ee.List.sequence(y0, y1).map(_year_stats)).getInfo().get("features", [])
-    rows = sorted((f["properties"] for f in feats), key=lambda p: p["year"])
-    usable = [p for p in rows if (p.get("n") or 0) > 0 and (p.get("valid") or 0) > 0]
+    feats = ee.FeatureCollection(ee.List.sequence(0, len(periods) - 1).map(_period_stats)).getInfo().get("features", [])
+    by_i = {int(f["properties"]["i"]): f["properties"] for f in feats}
+    usable = [(periods[i], by_i[i]) for i in sorted(by_i) if (by_i[i].get("n") or 0) > 0 and (by_i[i].get("valid") or 0) > 0]
     if len(usable) < TIMELAPSE_MIN_FRAMES:
-        raise ValueError(f"Fewer than {TIMELAPSE_MIN_FRAMES} years have cloud-free Landsat coverage for this AOI in {y0}–{y1}.")
-    skipped = [p["year"] for p in rows if p not in usable]
+        raise ValueError(f"Fewer than {TIMELAPSE_MIN_FRAMES} {frequency} periods have cloud-free Landsat coverage for this AOI between {periods[0][0]} and {periods[-1][0]}.")
+    skipped = [periods[i][0] for i in sorted(by_i) if (periods[i], by_i[i]) not in usable]
 
     vis = {"bands": ["red", "green", "blue"], "min": TIMELAPSE_DISPLAY_MIN, "max": TIMELAPSE_DISPLAY_MAX}
     thumb_params = {**vis, "dimensions": TIMELAPSE_THUMB_PX, "region": region, "format": "png"}
 
-    def _thumb(year):
+    def _thumb(item):
+        (label, y, m), _ = item
         try:
-            return _year_composite(merged, year).getThumbURL(thumb_params)
+            return _period_composite(merged, y, m, step).getThumbURL(thumb_params)
         except Exception as e:
-            logger.warning(f"timelapse: thumbnail for {year} failed: {type(e).__name__}: {e}")
+            logger.warning(f"timelapse: thumbnail for {label} failed: {type(e).__name__}: {e}")
             return None
 
     with ThreadPoolExecutor(max_workers=6) as pool:
-        urls = list(pool.map(_thumb, [p["year"] for p in usable]))
+        urls = list(pool.map(_thumb, usable))
 
     frames = [{
-        "year": p["year"], "scene_count": int(p["n"]),
+        "label": label, "year": y, "month": m, "period_start": f"{y}-{m:02d}-01", "scene_count": int(p["n"]),
         "valid_pixel_fraction": round(p.get("valid") or 0, 4),
         "mean_ndvi": None if p.get("ndvi") is None else round(p["ndvi"], 4),
         "thumb_url": u,
-    } for p, u in zip(usable, urls)]
+    } for ((label, y, m), p), u in zip(usable, urls)]
 
-    series = [(f"{f['year']}-07-01", f["mean_ndvi"]) for f in frames if f["mean_ndvi"] is not None]
-    trend = (mann_kendall_test([v for _, v in series], [d for d, _ in series]) if len(series) >= trend_stats.MIN_POINTS
-             else {"status": "insufficient_data", "note": f"Only {len(series)} yearly NDVI values — Mann-Kendall needs at least {trend_stats.MIN_POINTS}."})
+    if frequency == "yearly":
+        series = [(f["period_start"], f["mean_ndvi"]) for f in frames if f["mean_ndvi"] is not None]
+        trend = (mann_kendall_test([v for _, v in series], [d for d, _ in series]) if len(series) >= trend_stats.MIN_POINTS
+                 else {"status": "insufficient_data", "note": f"Only {len(series)} yearly NDVI values — Mann-Kendall needs at least {trend_stats.MIN_POINTS}."})
+    else:
+        trend = {"status": "not_computed", "note": f"No trend test for {frequency} frames: NDVI follows a strong seasonal cycle that a Mann-Kendall test would mistake for (or hide) a trend. Use yearly frames for a trend."}
 
-    first_y, last_y = usable[0]["year"], usable[-1]["year"]
-    last_img = _year_composite(merged, last_y)
+    (first_label, fy, fm), (last_label, ly, lm) = usable[0][0], usable[-1][0]
+    last_img = _period_composite(merged, ly, lm, step)
+
+    gif_url = None  # experimental: built from Earth Engine's video endpoint; not live-tested from the dev sandbox
+    try:
+        stills = [_period_composite(merged, y, m, step).visualize(**vis) for (_, y, m), _p in usable]
+        gif_url = ee.ImageCollection.fromImages(stills).getVideoThumbURL(
+            {"dimensions": TIMELAPSE_THUMB_PX, "region": region, "framesPerSecond": TIMELAPSE_GIF_FPS, "crs": "EPSG:3857"})
+    except Exception as e:
+        logger.warning(f"timelapse: GIF URL failed: {type(e).__name__}: {e}")
+
     return {
-        "frames": frames, "skipped_years": skipped, "years": [first_y, last_y],
+        "frequency": frequency, "frames": frames, "skipped_periods": skipped, "skipped_years": [s for s in skipped if len(s) == 4],
+        "period_labels": [first_label, last_label], "years": [fy, ly],
+        "gif_url": gif_url,
+        "gif_note": f"Experimental animated GIF ({TIMELAPSE_GIF_FPS} frames/s). It has no period labels burned in — use the in-app player for labels.",
         "ndvi_trend": trend,
         "map_layers": {
-            "first": {"year": first_y, "map_layer": _tile_layer(_year_composite(merged, first_y), vis)},
-            "last": {"year": last_y, "map_layer": _tile_layer(last_img, vis)},
+            "first": {"year": first_label, "map_layer": _tile_layer(_period_composite(merged, fy, fm, step), vis)},
+            "last": {"year": last_label, "map_layer": _tile_layer(last_img, vis)},
         },
         "display_stretch": f"{TIMELAPSE_DISPLAY_MIN}–{TIMELAPSE_DISPLAY_MAX} surface reflectance (fixed, display only)",
         "download_url": _download_url(last_img, region, scale=TIMELAPSE_SCALE_M),
-        "download_note": f"Raw surface-reflectance bands (blue, green, red, NIR) of the {last_y} composite at 30 m.",
+        "download_note": f"Raw surface-reflectance bands (blue, green, red, NIR) of the {last_label} composite at 30 m.",
         "caveats": [
-            "Each frame is a full-calendar-year median, so seasons and monsoon timing differ between frames; a dry-year frame can look 'browner' without any land change.",
-            "Frames mix Landsat 5, 7, 8 and 9 without cross-sensor harmonisation; small reflectance/NDVI steps at sensor changes are possible, and the NDVI trend should be read with that in mind.",
-            "Landsat 7 ETM+ imagery has known scan-line gaps in its later years; compositing across scenes mostly fills them but residual striping can remain.",
+            ("Yearly frames are full-calendar-year medians, so monsoon timing and seasons differ between frames; a dry-year frame can look 'browner' without any land change."
+             if frequency == "yearly" else
+             f"{frequency.capitalize()} frames keep the season constant between years, so same-season frames are comparable — but compare the same month/quarter across years, not neighbouring frames, which differ by season."),
+            "Landsat revisits each place about every 16 days per satellite, and cloud (especially in the monsoon) can leave short periods with no clear scenes: those frames are skipped, so monthly timelapses can have gaps.",
+            "Frames mix Landsat 5, 7, 8 and 9 without cross-sensor harmonisation; small reflectance/NDVI steps at sensor changes are possible.",
+            "Landsat 7 ETM+ imagery has known scan-line gaps in its later years; compositing across scenes mostly fills them but residual striping can remain, more likely in single-month frames built from few scenes.",
             "Check each frame's valid-pixel fraction and scene count: a frame built from few scenes or little clear sky is less reliable.",
-            "Frame images are generated on demand from Earth Engine and the URLs may expire; reload the tool result if frames stop loading.",
+            "Frame images and the GIF are generated on demand from Earth Engine and the URLs may expire; reload the tool result if they stop loading.",
         ],
         "method": (
-            "Landsat 5/7/8/9 Collection 2 Level-2 surface reflectance (DN × 0.0000275 − 0.2), masked for fill, dilated cloud, cloud and "
-            "cloud shadow with QA_PIXEL (snow kept), median-composited per calendar year at 30 m and shown in natural colour with a fixed "
-            "0–0.3 reflectance stretch. Per frame: scene count, share of the AOI with valid pixels, AOI-mean NDVI (nir−red)/(nir+red), "
-            "plus a Mann-Kendall / Sen's slope trend on the yearly NDVI series."
+            f"Landsat 5/7/8/9 Collection 2 Level-2 surface reflectance (DN × 0.0000275 − 0.2), masked for fill, dilated cloud, cloud and "
+            f"cloud shadow with QA_PIXEL (snow kept), median-composited per {TIMELAPSE_PERIOD_NAMES[frequency]} at 30 m and shown in natural colour with a fixed "
+            "0–0.3 reflectance stretch. Per frame: scene count, share of the AOI with valid pixels, AOI-mean NDVI (nir−red)/(nir+red)"
+            + (", plus a Mann-Kendall / Sen's slope trend on the yearly NDVI series." if frequency == "yearly" else ".")
         ),
         "aoi_area_km2": round(_region_area_km2(region), 3),
     }
