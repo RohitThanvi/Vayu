@@ -2346,6 +2346,152 @@ def compute_gedi_forest_structure(aoi: Dict, start_date: str, end_date: str) -> 
     }
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Timelapse — one natural-colour frame per calendar year from Landsat 5/7/8/9
+# Collection 2 Level-2 surface reflectance, cloud-masked and median-composited,
+# with per-frame scene count, valid-pixel fraction and mean NDVI so the
+# animation comes with numbers rather than just pictures.
+#
+# Verified (Earth Engine catalog / Landsat C2 documentation as reproduced in
+# several sources): collections LANDSAT/LT05|LE07|LC08|LC09/C02/T1_L2; surface
+# reflectance = DN * 0.0000275 - 0.2; QA_PIXEL bits 0 fill, 1 dilated cloud,
+# 3 cloud, 4 cloud shadow (bit 5 snow is deliberately NOT masked so Himalayan
+# snow stays visible); TM/ETM+ blue,green,red,NIR = SR_B1..SR_B4; OLI
+# (L8/L9) = SR_B2..SR_B5.
+# Not verified here: exact first-available date of the L5 C2 L2 collection
+# (the 1984 floor below is Landsat 5's launch year; frames with no data are
+# simply dropped) and the lifetime of generated thumbnail URLs.
+# ═════════════════════════════════════════════════════════════════════════════
+
+LANDSAT_C2_SENSORS = [
+    {"id": "LANDSAT/LT05/C02/T1_L2", "name": "Landsat 5 TM", "bands": ["SR_B1", "SR_B2", "SR_B3", "SR_B4"]},
+    {"id": "LANDSAT/LE07/C02/T1_L2", "name": "Landsat 7 ETM+", "bands": ["SR_B1", "SR_B2", "SR_B3", "SR_B4"]},
+    {"id": "LANDSAT/LC08/C02/T1_L2", "name": "Landsat 8 OLI", "bands": ["SR_B2", "SR_B3", "SR_B4", "SR_B5"]},
+    {"id": "LANDSAT/LC09/C02/T1_L2", "name": "Landsat 9 OLI-2", "bands": ["SR_B2", "SR_B3", "SR_B4", "SR_B5"]},
+]
+TIMELAPSE_FIRST_YEAR = 1984  # Landsat 5 launch year; years without data are dropped
+TIMELAPSE_MAX_FRAMES = 30
+TIMELAPSE_MIN_FRAMES = 2
+TIMELAPSE_SCALE_M = 30
+TIMELAPSE_THUMB_PX = 512
+TIMELAPSE_DISPLAY_MIN, TIMELAPSE_DISPLAY_MAX = 0.0, 0.3  # same fixed reflectance stretch as the Sentinel-2 composites (display only)
+
+
+def _landsat_merged(region, first_year: int, last_year: int):
+    """Cloud-masked, scaled Landsat 5/7/8/9 C2 SR with common band names blue/green/red/nir."""
+    s = ee.Date.fromYMD(first_year, 1, 1)
+    e = ee.Date.fromYMD(last_year, 12, 31).advance(1, "day")
+    merged = None
+    for sensor in LANDSAT_C2_SENSORS:
+        def _prep(img, _bands=sensor["bands"]):
+            qa = img.select("QA_PIXEL")
+            ok = (qa.bitwiseAnd(1).eq(0).And(qa.bitwiseAnd(1 << 1).eq(0))
+                  .And(qa.bitwiseAnd(1 << 3).eq(0)).And(qa.bitwiseAnd(1 << 4).eq(0)))
+            sr = img.select(_bands).multiply(0.0000275).add(-0.2).rename(["blue", "green", "red", "nir"])
+            return sr.updateMask(ok).copyProperties(img, ["system:time_start"])
+        col = ee.ImageCollection(sensor["id"]).filterBounds(region).filterDate(s, e).map(_prep)
+        merged = col if merged is None else merged.merge(col)
+    return merged
+
+
+def _year_composite(merged, year: int):
+    s = ee.Date.fromYMD(year, 1, 1)
+    return merged.filterDate(s, s.advance(1, "year")).median()
+
+
+def compute_timelapse(aoi: Dict, start_date: str, end_date: str) -> Dict[str, Any]:
+    """Annual Landsat timelapse (one cloud-masked median frame per calendar
+    year from start_date's year to end_date's year; the last year may be
+    partial). Returns per-frame thumbnail URLs for client-side playback plus
+    per-frame scene count, valid-pixel fraction and AOI-mean NDVI, and a
+    Mann-Kendall trend on the NDVI series."""
+    import datetime as _dt
+    from concurrent.futures import ThreadPoolExecutor
+    logger.info(f"GEE (remote sensing): timelapse {start_date} -> {end_date}")
+    _validate_date_range(start_date, end_date)
+    y0, y1 = _dt.date.fromisoformat(start_date).year, _dt.date.fromisoformat(end_date).year
+    if y0 < TIMELAPSE_FIRST_YEAR:
+        raise ValueError(f"Landsat Collection 2 imagery starts in {TIMELAPSE_FIRST_YEAR} (Landsat 5); choose a later start.")
+    n_years = y1 - y0 + 1
+    if n_years < TIMELAPSE_MIN_FRAMES:
+        raise ValueError(f"A timelapse needs at least {TIMELAPSE_MIN_FRAMES} calendar years; widen the date range.")
+    if n_years > TIMELAPSE_MAX_FRAMES:
+        raise ValueError(f"At most {TIMELAPSE_MAX_FRAMES} yearly frames per timelapse; narrow the date range (got {n_years}).")
+    region = _polygon_geometry(aoi)
+    merged = _landsat_merged(region, y0, y1)
+
+    empty = ee.Image.constant([0, 0, 0, 0]).rename(["blue", "green", "red", "nir"]).updateMask(ee.Image(0))
+
+    def _year_stats(y):
+        y = ee.Number(y).int()
+        s = ee.Date.fromYMD(y, 1, 1)
+        sub = merged.filterDate(s, s.advance(1, "year"))
+        n = sub.size()
+        comp = ee.Image(ee.Algorithms.If(n.gt(0), sub.median(), empty))
+        both = comp.normalizedDifference(["nir", "red"]).rename("ndvi").addBands(comp.select("red").mask().rename("valid"))
+        stats = both.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=TIMELAPSE_SCALE_M, maxPixels=1e9, bestEffort=True, tileScale=4)
+        return ee.Feature(None, stats).set("year", y).set("n", n)
+
+    feats = ee.FeatureCollection(ee.List.sequence(y0, y1).map(_year_stats)).getInfo().get("features", [])
+    rows = sorted((f["properties"] for f in feats), key=lambda p: p["year"])
+    usable = [p for p in rows if (p.get("n") or 0) > 0 and (p.get("valid") or 0) > 0]
+    if len(usable) < TIMELAPSE_MIN_FRAMES:
+        raise ValueError(f"Fewer than {TIMELAPSE_MIN_FRAMES} years have cloud-free Landsat coverage for this AOI in {y0}–{y1}.")
+    skipped = [p["year"] for p in rows if p not in usable]
+
+    vis = {"bands": ["red", "green", "blue"], "min": TIMELAPSE_DISPLAY_MIN, "max": TIMELAPSE_DISPLAY_MAX}
+    thumb_params = {**vis, "dimensions": TIMELAPSE_THUMB_PX, "region": region, "format": "png"}
+
+    def _thumb(year):
+        try:
+            return _year_composite(merged, year).getThumbURL(thumb_params)
+        except Exception as e:
+            logger.warning(f"timelapse: thumbnail for {year} failed: {type(e).__name__}: {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        urls = list(pool.map(_thumb, [p["year"] for p in usable]))
+
+    frames = [{
+        "year": p["year"], "scene_count": int(p["n"]),
+        "valid_pixel_fraction": round(p.get("valid") or 0, 4),
+        "mean_ndvi": None if p.get("ndvi") is None else round(p["ndvi"], 4),
+        "thumb_url": u,
+    } for p, u in zip(usable, urls)]
+
+    series = [(f"{f['year']}-07-01", f["mean_ndvi"]) for f in frames if f["mean_ndvi"] is not None]
+    trend = (mann_kendall_test([v for _, v in series], [d for d, _ in series]) if len(series) >= trend_stats.MIN_POINTS
+             else {"status": "insufficient_data", "note": f"Only {len(series)} yearly NDVI values — Mann-Kendall needs at least {trend_stats.MIN_POINTS}."})
+
+    first_y, last_y = usable[0]["year"], usable[-1]["year"]
+    last_img = _year_composite(merged, last_y)
+    return {
+        "frames": frames, "skipped_years": skipped, "years": [first_y, last_y],
+        "ndvi_trend": trend,
+        "map_layers": {
+            "first": {"year": first_y, "map_layer": _tile_layer(_year_composite(merged, first_y), vis)},
+            "last": {"year": last_y, "map_layer": _tile_layer(last_img, vis)},
+        },
+        "display_stretch": f"{TIMELAPSE_DISPLAY_MIN}–{TIMELAPSE_DISPLAY_MAX} surface reflectance (fixed, display only)",
+        "download_url": _download_url(last_img, region, scale=TIMELAPSE_SCALE_M),
+        "download_note": f"Raw surface-reflectance bands (blue, green, red, NIR) of the {last_y} composite at 30 m.",
+        "caveats": [
+            "Each frame is a full-calendar-year median, so seasons and monsoon timing differ between frames; a dry-year frame can look 'browner' without any land change.",
+            "Frames mix Landsat 5, 7, 8 and 9 without cross-sensor harmonisation; small reflectance/NDVI steps at sensor changes are possible, and the NDVI trend should be read with that in mind.",
+            "Landsat 7 ETM+ imagery has known scan-line gaps in its later years; compositing across scenes mostly fills them but residual striping can remain.",
+            "Check each frame's valid-pixel fraction and scene count: a frame built from few scenes or little clear sky is less reliable.",
+            "Frame images are generated on demand from Earth Engine and the URLs may expire; reload the tool result if frames stop loading.",
+        ],
+        "method": (
+            "Landsat 5/7/8/9 Collection 2 Level-2 surface reflectance (DN × 0.0000275 − 0.2), masked for fill, dilated cloud, cloud and "
+            "cloud shadow with QA_PIXEL (snow kept), median-composited per calendar year at 30 m and shown in natural colour with a fixed "
+            "0–0.3 reflectance stretch. Per frame: scene count, share of the AOI with valid pixels, AOI-mean NDVI (nir−red)/(nir+red), "
+            "plus a Mann-Kendall / Sen's slope trend on the yearly NDVI series."
+        ),
+        "aoi_area_km2": round(_region_area_km2(region), 3),
+    }
+
+
 
 def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
     """Static PNG thumbnail for a Spectra PDF report — reconstructs the
@@ -2498,6 +2644,11 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
             if col.size().getInfo() == 0:
                 return None
             return _fetch_thumb_bytes(col.mean(), region, {"bands": ["rh98"], "min": GEDI_RH_DISPLAY_MIN, "max": GEDI_RH_DISPLAY_MAX, "palette": GEDI_HEIGHT_PALETTE})
+        if tool == "timelapse":
+            import datetime as _dt
+            y1 = _dt.date.fromisoformat(params["end_date"]).year
+            merged = _landsat_merged(region, y1, y1)
+            return _fetch_thumb_bytes(_year_composite(merged, y1), region, {"bands": ["red", "green", "blue"], "min": TIMELAPSE_DISPLAY_MIN, "max": TIMELAPSE_DISPLAY_MAX})
         return None  # atmospheric_composition, index_time_series, accuracy_assessment (not single-raster thumbnails)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")
