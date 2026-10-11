@@ -112,7 +112,7 @@ TOOLS = {
     },
     "timelapse": {
         "label": "Timelapse (Landsat)", "needs_dates": True,
-        "description": "Annual natural-colour timelapse from Landsat 5/7/8/9 (one cloud-masked median frame per year, up to 30 years) with per-frame scene count, valid-pixel fraction and NDVI.",
+        "description": "Natural-colour Landsat 5/7/8/9 timelapse — yearly, quarterly or monthly frames (up to 60) with per-frame scene count, valid-pixel fraction and NDVI, plus an experimental animated GIF.",
     },
     "water_quality": {
         "label": "Water Quality (indicative)", "needs_dates": True,
@@ -143,6 +143,7 @@ class RemoteSensingRequest(BaseModel):
     reference_points: Optional[List[Dict[str, Any]]] = None  # accuracy_assessment: [{lat, lon, true_class}]
     polarization: Optional[str] = None  # flood_mapping: 'VH' (default) or 'VV'
     composites: Optional[List[str]] = None  # spectral_composites: subset of rs.SPECTRAL_COMPOSITES keys; omitted = all
+    frequency: Optional[str] = None  # timelapse: 'yearly' (default) | 'quarterly' | 'monthly'
 
 
 def _dispatch_tool(req: RemoteSensingRequest):
@@ -239,7 +240,7 @@ def _dispatch_tool(req: RemoteSensingRequest):
     elif req.tool == "timelapse":
         if not req.start_date or not req.end_date:
             raise ValueError("timelapse requires start_date and end_date (at least 2 and at most 30 calendar years).")
-        return rs.compute_timelapse(req.aoi_geojson, req.start_date, req.end_date)
+        return rs.compute_timelapse(req.aoi_geojson, req.start_date, req.end_date, req.frequency or "yearly")
     elif req.tool == "water_quality":
         if not req.start_date or not req.end_date:
             raise ValueError("water_quality requires start_date and end_date.")

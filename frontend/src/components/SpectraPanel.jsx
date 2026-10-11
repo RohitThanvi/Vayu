@@ -80,7 +80,7 @@ const TOOL_META = {
   vegetation_drought_index: { label: 'Drought Index (VHI)', needsDates: true, icon: '☼' },
   night_lights: { label: 'Night Lights (VIIRS)', needsDates: true, icon: '✦' },
   gedi_forest_structure: { label: 'Forest Structure (GEDI)', needsDates: true, icon: '♣' },
-  timelapse: { label: 'Timelapse (Landsat)', needsDates: true, icon: '▶' },
+  timelapse: { label: 'Timelapse (Landsat)', needsDates: true, needsFrequency: true, icon: '▶' },
   water_quality: { label: 'Water Quality (indicative)', needsDates: true, icon: '≈' },
 };
 
@@ -228,9 +228,9 @@ function TimelapsePlayer({ frames }) {
     <div style={{ marginBottom: 8 }}>
       <div style={{ position: 'relative', background: '#000', borderRadius: 4, overflow: 'hidden', minHeight: 120 }}>
         {f.thumb_url && !failed[idx]
-          ? <img src={f.thumb_url} alt={`Landsat ${f.year}`} style={{ width: '100%', display: 'block' }} onError={() => setFailed(s => ({ ...s, [idx]: true }))} />
-          : <div style={{ padding: 24, fontSize: 11, color: S.text3, textAlign: 'center' }}>Frame {f.year} unavailable — reload the result.</div>}
-        <div style={{ position: 'absolute', top: 6, left: 8, fontFamily: S.mono, fontSize: 14, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px #000' }}>{f.year}</div>
+          ? <img src={f.thumb_url} alt={`Landsat ${f.label}`} style={{ width: '100%', display: 'block' }} onError={() => setFailed(s => ({ ...s, [idx]: true }))} />
+          : <div style={{ padding: 24, fontSize: 11, color: S.text3, textAlign: 'center' }}>Frame {f.label} unavailable — reload the result.</div>}
+        <div style={{ position: 'absolute', top: 6, left: 8, fontFamily: S.mono, fontSize: 14, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px #000' }}>{f.label}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
         <button onClick={() => setPlaying(p => !p)} style={{ background: 'none', border: `1px solid ${S.border}`, color: S.gold, borderRadius: 4, padding: '2px 10px', cursor: 'pointer', fontSize: 11 }}>{playing ? 'Pause' : 'Play'}</button>
@@ -644,14 +644,20 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
       <div>
         <TimelapsePlayer frames={result.frames} />
         <SparkChart
-          points={result.frames.filter(f => f.mean_ndvi != null).map(f => ({ date: `${f.year}-07-01`, value: f.mean_ndvi }))} height={130}
-          formatX={(d) => new Date(d).getFullYear()} formatY={(v) => v.toFixed(2)} emptyLabel="No NDVI values."
+          points={result.frames.filter(f => f.mean_ndvi != null).map(f => ({ date: f.period_start, value: f.mean_ndvi }))} height={130}
+          formatX={(d) => (result.frequency === 'yearly' ? String(new Date(d).getFullYear()) : new Date(d).toLocaleDateString(undefined, { month: 'short', year: '2-digit' }))} formatY={(v) => v.toFixed(2)} emptyLabel="No NDVI values."
         />
-        <div style={{ fontSize: 10, color: S.text3, margin: '4px 0 8px' }}>AOI-mean NDVI per year (not harmonised across Landsat sensors)</div>
+        <div style={{ fontSize: 10, color: S.text3, margin: '4px 0 8px' }}>AOI-mean NDVI per {result.frequency === 'yearly' ? 'year' : result.frequency === 'quarterly' ? 'quarter' : 'month'} (not harmonised across Landsat sensors)</div>
         {ta?.status === 'ok' && <StatRow label="NDVI trend (Mann-Kendall)" value={`${ta.trend} · p=${ta.p_value} ${ta.significant ? '(significant)' : '(not significant)'}`} />}
         {ta?.status === 'ok' && ta.sens_slope_per_year != null && <StatRow label="Sen's slope" value={`${ta.sens_slope_per_year > 0 ? '+' : ''}${ta.sens_slope_per_year} NDVI / year`} />}
-        {ta?.status === 'insufficient_data' && <div style={{ fontSize: 10.5, color: S.text3 }}>{ta.note}</div>}
-        {result.skipped_years?.length > 0 && <div style={{ fontSize: 10.5, color: '#e0c23c', marginTop: 4 }}>Skipped (no clear coverage): {result.skipped_years.join(', ')}</div>}
+        {(ta?.status === 'insufficient_data' || ta?.status === 'not_computed') && <div style={{ fontSize: 10.5, color: S.text3 }}>{ta.note}</div>}
+        {result.skipped_periods?.length > 0 && <div style={{ fontSize: 10.5, color: '#e0c23c', marginTop: 4 }}>Skipped (no clear coverage): {result.skipped_periods.join(', ')}</div>}
+        {result.gif_url && (
+          <div style={{ fontSize: 10.5, marginTop: 6 }}>
+            <a href={result.gif_url} target="_blank" rel="noreferrer" style={{ color: S.gold }}>Open animated GIF (experimental)</a>
+            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2 }}>{result.gif_note}</div>
+          </div>
+        )}
         {['first', 'last'].map(k => (
           <RasterControls key={k} mapLayer={result.map_layers[k].map_layer} downloadUrl={k === 'last' ? result.download_url : null}
             label={`${result.map_layers[k].year} composite`} onShowOverlay={onShowOverlay}
@@ -878,6 +884,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
   const [refPtLon, setRefPtLon] = useState('');
   const [refPtClass, setRefPtClass] = useState('');
   const [polarization, setPolarization] = useState('VH'); // flood_mapping
+  const [frequency, setFrequency] = useState('yearly'); // timelapse
   const [loading, setLoading] = useState(false);
   const dateInputStyle = { flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 };
   const [error, setError] = useState(null);
@@ -1035,6 +1042,9 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
       body.pre_start = preStart; body.pre_end = preEnd;
       body.post_start = postStart; body.post_end = postEnd;
     }
+    if (meta.needsFrequency) {
+      body.frequency = frequency;
+    }
     if (meta.needsPolarization) {
       body.polarization = polarization;
     }
@@ -1085,7 +1095,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
     } catch (e) {
       setError(`Failed to submit: ${e.message}`); setLoading(false);
     }
-  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices, changeIndex, period1Start, period1End, period2Start, period2End, preStart, preEnd, postStart, postEnd, trainingSamples, numTrees, assessTool, referencePoints, polarization]);
+  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices, changeIndex, period1Start, period1End, period2Start, period2End, preStart, preEnd, postStart, postEnd, trainingSamples, numTrees, assessTool, referencePoints, polarization, frequency]);
 
   const meta = TOOL_META[tool];
 
@@ -1194,6 +1204,20 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
             </div>
           </Field>
         </>
+      )}
+
+      {meta.needsFrequency && (
+        <Field label="Frame frequency">
+          <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.4, marginBottom: 6 }}>
+            Yearly gives a trend test; quarterly and monthly keep the season constant between years but can have gaps where cloud leaves no clear scenes. Up to 60 frames.
+          </div>
+          <select value={frequency} onChange={e => setFrequency(e.target.value)}
+            style={{ width: '100%', background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }}>
+            <option value="yearly">Yearly (one frame per year)</option>
+            <option value="quarterly">Quarterly (Jan-Mar, Apr-Jun, ...)</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </Field>
       )}
 
       {meta.needsPolarization && (
