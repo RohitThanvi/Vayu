@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from ..services import gee_client
 from ..services.report_generator import build_analysis_report, build_agri_risk_report, build_remote_sensing_report, ANALYSIS_SPECS
 from ..services import gee_remote_sensing as rs
+from ..services import timelapse_media
 from ..services.agri.risk_scoring import compute_risk_score
 from ..services.agri.baseline import compute_seasonal_baseline
 from ..services.agri.groundwater import compute_groundwater_trend
@@ -360,12 +361,22 @@ class RemoteSensingReportRequest(BaseModel):
     num_trees: Optional[int] = None  # supervised_classification
     polarization: Optional[str] = None  # flood_mapping
     composites: Optional[List[str]] = None  # spectral_composites
+    frequency: Optional[str] = None  # timelapse
+    layer: Optional[str] = None  # timelapse
 
 
 @router.post("/remote-sensing", summary="Generate a scientific PDF report for a Spectra (remote sensing) result")
 async def remote_sensing_report(req: RemoteSensingReportRequest):
     thumbnail_bytes = None
-    if req.include_imagery:
+    frame_images = None
+    if req.include_imagery and req.tool == "timelapse" and (req.result or {}).get("frames"):
+        # A timelapse report embeds every frame, taken from the links the result already carries (no recomputation).
+        try:
+            frame_images = await asyncio.to_thread(timelapse_media.fetch_frame_images, req.result["frames"])
+        except Exception as e:
+            logger.warning(f"timelapse frame fetch failed, continuing without frame images: {e}")
+            frame_images = [None] * len(req.result["frames"])
+    elif req.include_imagery:
         try:
             thumbnail_bytes = await asyncio.to_thread(
                 rs.get_report_thumbnail, req.tool, req.aoi_geojson,
@@ -388,7 +399,7 @@ async def remote_sensing_report(req: RemoteSensingReportRequest):
     try:
         pdf_bytes = build_remote_sensing_report(
             tool=req.tool, aoi_geojson=req.aoi_geojson, result=req.result,
-            thumbnail_bytes=thumbnail_bytes, region_name=req.region_name,
+            thumbnail_bytes=thumbnail_bytes, region_name=req.region_name, frame_images=frame_images,
         )
     except Exception as e:
         logger.error(f"remote sensing report generation failed: {e}", exc_info=True)

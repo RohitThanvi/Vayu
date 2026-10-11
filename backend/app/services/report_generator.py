@@ -2513,30 +2513,75 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
                 rows.append(("Biomass footprints (per km\u00b2)", f"{bm.get('footprints')} ({_fmt_num(bm.get('footprints_per_km2'), 2)})", ""))
         elif tool == "timelapse":
             frames = result.get("frames") or []
+            vl, un = result.get("value_label") or "Value", result.get("units") or ""
+            rows.append(("Layer", str(result.get("layer_label") or result.get("layer") or "N/A"), ""))
             if frames:
                 pl = result.get("period_labels") or ["N/A", "N/A"]
                 rows.append((f"Frames ({result.get('frequency', 'yearly')})", f"{len(frames)} ({pl[0]} \u2013 {pl[1]})", ""))
                 first, last = frames[0], frames[-1]
-                rows.append((f"Mean NDVI \u2014 {first.get('label')} / {last.get('label')}", f"{_fmt_num(first.get('mean_ndvi'), 3)} / {_fmt_num(last.get('mean_ndvi'), 3)}", ""))
-                rows.append((f"Scenes \u2014 {first.get('label')} / {last.get('label')}", f"{first.get('scene_count')} / {last.get('scene_count')}", ""))
+                rows.append((f"{vl} \u2014 {first.get('label')} / {last.get('label')}", f"{_fmt_num(first.get('mean_value'), 4)} / {_fmt_num(last.get('mean_value'), 4)}", un))
+                rows.append((f"Images \u2014 {first.get('label')} / {last.get('label')}", f"{first.get('scene_count')} / {last.get('scene_count')}", ""))
             if result.get("skipped_periods"):
-                rows.append(("Periods skipped (no clear coverage)", ", ".join(str(y) for y in result["skipped_periods"]), ""))
-            ta = result.get("ndvi_trend") or {}
+                rows.append(("Periods skipped (no usable data)", ", ".join(str(y) for y in result["skipped_periods"]), ""))
+            ta = result.get("value_trend") or {}
             if ta.get("status") == "ok":
-                rows.append(("NDVI trend (Mann-Kendall)", f"{ta.get('trend')} (p = {_fmt_num(ta.get('p_value'), 4)})", ""))
-                rows.append(("Sen's slope", _fmt_num(ta.get("sens_slope_per_year"), 4), "NDVI per year"))
-        elif tool == "water_quality":
-            rows.append(("Status", "INDICATIVE ONLY \u2014 uncalibrated proxies, not concentrations", ""))
-            for d in (result.get("indices") or {}).values():
-                rows.append((f"{d.get('label')} \u2014 mean / \u03c3", f"{_fmt_num(d.get('mean'), 3)} / {_fmt_num(d.get('std_dev'), 3)}", "(relative index)"))
-                rows.append((f"{d.get('label')} \u2014 p10 / p50 / p90", f"{_fmt_num(d.get('p10'), 3)} / {_fmt_num(d.get('p50'), 3)} / {_fmt_num(d.get('p90'), 3)}", ""))
-            rows.append(("Valid water area", _fmt_num(result.get("valid_water_area_km2"), 2), "km\u00b2"))
-            rows.append(("Valid water pixels", str(result.get("valid_water_pixels", "N/A")), "20 m pixels"))
-            if result.get("scene_count") is not None:
-                rows.append(("Sentinel-2 scenes used", str(result["scene_count"]), ""))
+                rows.append((f"Trend of {vl} (Mann-Kendall)", f"{ta.get('trend')} (p = {_fmt_num(ta.get('p_value'), 4)})", ""))
+                rows.append(("Sen's slope", _fmt_num(ta.get("sens_slope_per_year"), 5), f"{un} per year" if un else "per year"))
     except Exception as e:
         logger.warning(f"_rs_metric_rows failed for tool={tool}: {type(e).__name__}: {e}")
     return rows
+
+
+def _timelapse_frames_section(styles, frames: List[Dict[str, Any]], images: List[Optional[bytes]], section_num: int,
+                              value_label: str = "value", units: str = "") -> List:
+    """Contact sheet with EVERY timelapse frame (3 per row, aspect ratio preserved, period label and per-frame numbers
+    under each) — a timelapse report that showed one image would hide the very thing the tool is for."""
+    from PIL import Image as PILImage
+    flow = [Paragraph(f"{section_num}. Timelapse Frames", styles["section_head"])]
+    shown = [(f, b) for f, b in zip(frames, images) if b]
+    missing = len(frames) - len(shown)
+    note = f"All {len(frames)} frames in period order, left to right and top to bottom."
+    if missing:
+        note = (f"{len(shown)} of {len(frames)} frames could be embedded; {missing} could not be fetched "
+                "(the Earth Engine frame links may have expired — re-run the timelapse and regenerate the report). "
+                "The numeric results below cover all frames regardless.")
+    flow.append(Paragraph(note, styles["caveat"]))
+    flow.append(Spacer(1, 4))
+    if not shown:
+        return flow
+
+    img_w = 54 * mm
+    cap = ParagraphStyle("tl_caption", parent=styles["footer"], alignment=TA_CENTER, spaceBefore=2, fontSize=7.5, leading=9)
+
+    def _cell(frame, raw):
+        try:
+            w, h = PILImage.open(io.BytesIO(raw)).size
+            ih = img_w * (h / w) if w else img_w
+            content = [Image(io.BytesIO(raw), width=img_w, height=ih)]
+        except Exception:
+            content = [Paragraph("(image unreadable)", cap)]
+        detail = []
+        if frame.get("mean_value") is not None:
+            detail.append(f"{value_label}: {frame['mean_value']:g}{(' ' + units) if units else ''}")
+        if frame.get("scene_count") is not None:
+            detail.append(f"{frame['scene_count']} image(s)")
+        if frame.get("valid_pixel_fraction") is not None:
+            detail.append(f"valid {round(frame['valid_pixel_fraction'] * 100)}%")
+        content.append(Paragraph(f"<b>{frame.get('label', '')}</b>", cap))
+        if detail:
+            content.append(Paragraph(" \u00b7 ".join(detail), cap))
+        content.append(Spacer(1, 5))
+        return content
+
+    rows = []
+    for i in range(0, len(shown), 3):
+        chunk = [_cell(f, b) for f, b in shown[i:i + 3]]
+        chunk += [""] * (3 - len(chunk))
+        rows.append(chunk)
+    t = Table(rows, colWidths=[img_w + 4] * 3)
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]))
+    flow.append(t)
+    return flow
 
 
 def build_remote_sensing_report(
@@ -2545,6 +2590,7 @@ def build_remote_sensing_report(
     result: Dict[str, Any],
     thumbnail_bytes: Optional[bytes] = None,
     region_name: Optional[str] = None,
+    frame_images: Optional[List[Optional[bytes]]] = None,
 ) -> bytes:
     """Builds a Spectra (remote sensing) PDF report from an already-
     computed compute_*() result (see gee_remote_sensing.py) — mirrors
@@ -2592,7 +2638,12 @@ def build_remote_sensing_report(
     flow.append(PageBreak())
 
     section_num = 3
-    if thumbnail_bytes:
+    tl_frames = result.get("frames") if tool == "timelapse" else None
+    if tl_frames and frame_images is not None:
+        flow += _timelapse_frames_section(styles, tl_frames, frame_images, section_num,
+                                          value_label=result.get("value_label") or "value", units=result.get("units") or "")
+        flow.append(PageBreak())
+    elif thumbnail_bytes:
         flow += _imagery_grid_section(styles, [
             {"label": label, "bytes": thumbnail_bytes,
              "caption": "Rendered from the same Earth Engine computation as the results in the next section."},

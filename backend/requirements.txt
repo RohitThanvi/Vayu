@@ -35,3 +35,5 @@ Pillow==11.0.0
 # Redis cache for GEE remote-sensing results (optional — falls back to
 # in-memory cache if REDIS_URL isn't set, see services/gee_cache.py)
 redis==5.2.1
+imageio==2.37.3          # timelapse video (GIF/MP4) assembly
+imageio-ffmpeg==0.6.0     # bundled ffmpeg binary for MP4 encoding
