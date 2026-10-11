@@ -98,6 +98,7 @@ A direct-access toolkit for domain researchers (IIRS/NRSC/ISRO-adjacent workflow
 * **GeoTIFF download** of the underlying raster (raw values, not the stretched picture), and a client-side **CSV** export of any result.
 * **Scene provenance** for composites — the exact scene IDs, dates and cloud % that fed the composite.
 * A source-cited **PDF report** for any result (see [Scientific PDF Reporting](#scientific-pdf-reporting)).
+* For tools that measure something over time, a one-click **"View as … timelapse"** that replays the layer over the same AOI and dates (see **Timelapse** below).
 
 Results are cached (exact-match on tool + every parameter, 30-day TTL, Redis if `REDIS_URL` is set, in-memory otherwise), which is safe because a historical query over a fixed geometry and date range is deterministic.
 
@@ -113,7 +114,7 @@ Results are cached (exact-match on tool + every parameter, 30-day TTL, Redis if 
 | **Snow Cover** | NDSI &gt; 0.4 classification threshold (Hall et al. 1995 — the same threshold MODIS's operational snow product uses) | Sentinel-2 SR · 20 m — resolves individual Himalayan valley glaciers far better than MODIS's native 500 m |
 | **Change Detection** | A chosen spectral index differenced between two independent date ranges over the same AOI — per-period mean, delta and % change | Sentinel-2 SR · 20 m |
 | **Burn Severity** | dNBR with the USGS FIREMON classes (Key &amp; Benson 2006) alongside **RBR** (Relativized Burn Ratio, Parks et al. 2014), which corrects for pre-fire vegetation density; the dNBR classes are applied to RBR only for side-by-side comparison, not as RBR's own calibrated cut-offs | Sentinel-2 SR · 20 m |
-| **Timelapse** | A natural-colour Landsat timelapse with **yearly, quarterly or monthly** frames (up to 60), each a cloud-masked median (snow kept). Played in-app with period labels, with per-frame scene count, valid-pixel fraction and AOI-mean NDVI; a Mann-Kendall / Sen's slope trend on the NDVI series for yearly frames only (a seasonal cycle would corrupt it otherwise). An experimental animated-GIF link is also returned. Periods with no clear coverage are skipped and listed | Landsat 5/7/8/9 Collection 2 Level-2 SR · 30 m, 1984 onward |
+| **Timelapse** | A frame-by-frame timelapse of **natural colour, NDVI, night lights, NO₂, SAR backscatter or soil moisture** with **yearly, quarterly or monthly** frames (up to 60). Each frame is a composite of its period (Landsat/SAR: median; VIIRS/NO₂/SMAP: mean) drawn with one stretch shared by every frame, so frames are comparable. Played in-app with period labels and speed control; per-frame image count, valid-pixel fraction and AOI-mean value; a Mann-Kendall / Sen's slope trend for yearly frames only (a seasonal cycle would corrupt it otherwise). **Download as MP4 or GIF** (period label burned in; built server-side from the frames). The PDF report embeds **every frame** in a contact sheet. Periods with no usable data are skipped and listed. Also reachable with one click ("View as … timelapse") from the Night Lights, Spectral Indices, Spectral Composites, Atmosphere, SAR Backscatter and Soil Moisture results | Landsat 5/7/8/9 C2 L2 (30 m, 1984+), VIIRS DNB (2014+), Sentinel-5P NO₂ (mid-2018+), Sentinel-1 GRD (2014+), SMAP L4 (Apr 2015+) |
 | **Forest Structure (GEDI)** | Canopy height (rh98) and aboveground biomass density (AGBD, with the model's own standard error) from spaceborne-lidar footprints, filtered with the Earth Engine catalog's own quality masks. Reports footprint statistics, footprint counts and density — **no area totals or carbon stock** are computed, because GEDI samples along orbit tracks and is not a probability sample of the AOI | GEDI L2A + L4A monthly rasters · 25 m footprints, 51.6°N–51.6°S, 2019 onward |
 | **Water Quality (indicative)** | **Indicative only.** NDTI turbidity proxy (Lacaux et al. 2007) and NDCI chlorophyll proxy (Mishra &amp; Mishra 2012) over permanent water (JRC occurrence ≥ 90%). Uncalibrated relative indices for comparing places or dates within one waterbody — no NTU or chlorophyll-a concentrations are reported | Sentinel-2 SR + JRC GSW v1.4 · 20 m |
 
@@ -127,7 +128,7 @@ Results are cached (exact-match on tool + every parameter, 30-day TTL, Redis if 
 | **Soil Moisture** | Surface soil-moisture (`sm_surface`) mean snapshot over the period | NASA SMAP L4 · coarse (~10 km class) |
 | **Land Surface Temperature** | Surface temperature from the Landsat thermal band — urban heat and drought stress | Landsat 8/9 Collection 2 Level-2 (ST_B10) |
 | **Vegetation Drought Index** | Kogan's **VCI, TCI and VHI** (0–100): this window's NDVI and daytime land-surface temperature scaled against each pixel's own min/max for the same calendar window in 2001..(year−1); VHI = 0.5×VCI + 0.5×TCI, with drought classes. Relative to each pixel's own history, not an absolute drought measure; the number of baseline years actually used is reported. Window must sit inside one calendar year | MODIS MOD13Q1 NDVI (250 m) + MOD11A2 LST (1 km), analysed at 1 km |
-| **Night Lights (VIIRS)** | Monthly night-time radiance (mean, σ, summed) with the cloud-free observation count behind each month, Mann-Kendall + Sen's slope. An economic-activity *proxy*, not a GDP measure; this product version is unfiltered (fires, boats, aurora included) and zero-observation months are shown as gaps, not darkness | NOAA VIIRS DNB monthly, stray-light-corrected · ~464 m, 2014 onward |
+| **Night Lights (VIIRS)** | Monthly night-time radiance (mean, σ, summed) with the cloud-free observation count behind each month, Mann-Kendall + Sen's slope. An economic-activity *proxy*, not a GDP measure; this product version is unfiltered (fires, boats, aurora included) and zero-observation months are shown as gaps, not darkness. Replayable as a timelapse | NOAA VIIRS DNB monthly, stray-light-corrected · ~464 m, 2014 onward |
 | **Atmospheric Composition** | Tropospheric NO₂, SO₂, CO column densities and the absorbing aerosol index — column densities, not ground-level concentrations, so not comparable to a surface AQI monitor | Sentinel-5P / TROPOMI OFFL L3 · ~1 km grid, 2018 onward |
 
 ### Statistics, machine learning and validation
@@ -219,7 +220,7 @@ Ranks a set of Indian crops (13 are evaluated seasonally) for a location from mo
 
 ## Scientific PDF Reporting
 
-Every satellite analysis (the 9 Analyze-tab metrics, the agricultural risk score, and any Spectra result) exports as a structured PDF, not raw numbers:
+Every satellite analysis (the 9 Analyze-tab metrics, the agricultural risk score, and any Spectra result) exports as a structured PDF, not raw numbers. A **timelapse report embeds every frame** (a labelled contact sheet with each frame's value, image count and valid-pixel share), not a single image:
 
 * Executive summary, study-area geometry, full methodology with a worked numeric example, indicator definitions and thresholds, results table, findings &amp; interpretation, data-quality/confidence section, recommendations, glossary, full dataset citations, and stated limitations.
 * **Satellite imagery panels** (true color, NDVI, NDDI, SAR, thermal, SMAP as applicable) with proper legends, plus a dedicated gain/loss/unchanged **change map** for vegetation/built-up/water reports.
@@ -290,6 +291,8 @@ Credibility is the stated priority, so this section separates what *is* tested f
 
 **Statistics modules** (`trend_stats.py`, `accuracy_stats.py`) are pure Python and unit-tested against known/hand-worked cases.
 
+**Timelapse and video tests** (`tests/test_timelapse_media.py`, `tests/test_spectra_timelapse.py`) encode real GIF and MP4 files from synthetic frames, check the Earth-Engine-host-only URL guard, period/label maths and error paths, and include a regression guard for a bug that only appears on live Earth Engine (arithmetic on images drops `system:time_start`, which silently emptied the drought index's date filters).
+
 **Not yet done — stated plainly:**
 * Spectra tools have **not** been validated against documented real-world events (for example a recorded wildfire for dNBR, a documented drought year for VHI, or a known reservoir filling for the Timelapse). This is the main credibility gap for scientific use.
 * The six most recently added Spectra tools have not yet been run against live Earth Engine; their dataset IDs, bands, scale factors and formulas were checked against the Earth Engine catalog and source papers, and their Python logic is mocked-tested.
@@ -346,6 +349,7 @@ Vayu/
 │   │   ├── gee_client.py              # 9 natural-language-driven satellite metrics
 │   │   ├── gee_remote_sensing.py      # Spectra toolkit -- the 22 remote-sensing tools
 │   │   ├── gee_cache.py               # exact-match result cache for Spectra (Redis or in-memory)
+│   │   ├── timelapse_media.py         # timelapse video (GIF/MP4) assembly + frame fetching for PDFs (Earth Engine hosts only)
 │   │   ├── trend_stats.py             # Mann-Kendall + Sen's slope
 │   │   ├── accuracy_stats.py          # confusion matrix, OA/kappa, producer's/user's accuracy
 │   │   ├── report_generator.py        # source-cited PDF reports (Analyze, Agri, Spectra)
@@ -467,11 +471,12 @@ All routes are under `/api/v1`. The full, authoritative OpenAPI schema is served
 | `GET` | `/metrics` | List the supported Analyze-tab metrics |
 | `POST` | `/remote-sensing/analyze` | Run a Spectra tool directly (async job, `202`); `tool` is one of the 22 tools below |
 | `GET` | `/remote-sensing/analyze/{id}` | Poll/retrieve a Spectra job |
+| `GET` | `/remote-sensing/analyze/{id}/video?format=mp4\|gif&fps=4` | Download a finished **timelapse** as an MP4 or GIF with period labels burned in (assembled from the job's stored frame images; `404` if the result has expired, `422` if the Earth Engine frame links have expired) |
 | `GET` | `/remote-sensing/tools` | List available Spectra tools |
 | `POST` | `/report/analysis` &middot; `/report/agri-risk` &middot; `/report/remote-sensing` | Source-cited PDF generation (Analyze metrics / agri risk / any Spectra result) |
 | `GET` | `/layers/{layer_key}` | Cached satellite basemap tile URL |
 
-Spectra `tool` values: `spectral_indices`, `spectral_composites`, `terrain`, `lulc`, `dynamic_world`, `snow_cover`, `change_detection`, `burn_severity`, `timelapse` (`frequency`: `yearly` \| `quarterly` \| `monthly`), `gedi_forest_structure`, `water_quality`, `sar_backscatter`, `flood_mapping`, `surface_water_dynamics`, `soil_moisture`, `land_surface_temperature`, `vegetation_drought_index`, `night_lights`, `atmospheric_composition`, `index_time_series`, `supervised_classification`, `accuracy_assessment`.
+Spectra `tool` values: `spectral_indices`, `spectral_composites`, `terrain`, `lulc`, `dynamic_world`, `snow_cover`, `change_detection`, `burn_severity`, `timelapse` (`frequency`: `yearly` \| `quarterly` \| `monthly`; `layer`: `natural_color` \| `ndvi` \| `night_lights` \| `no2` \| `sar_vv` \| `soil_moisture`), `gedi_forest_structure`, `water_quality`, `sar_backscatter`, `flood_mapping`, `surface_water_dynamics`, `soil_moisture`, `land_surface_temperature`, `vegetation_drought_index`, `night_lights`, `atmospheric_composition`, `index_time_series`, `supervised_classification`, `accuracy_assessment`.
 
 **Agriculture** (`/agri`)
 
@@ -538,6 +543,7 @@ Every non-satellite result in the app states its source dataset in a `method` fi
 * **Crop-suitability scores are not yet calibrated or accuracy-validated** — calibration is the identity until fitted, `confidence` is a completeness heuristic, and its validation is district-level against observed crop area (which reflects irrigation, prices and policy as well as suitability); see the harness's stated limitations.
 * **Spectra validation is outstanding** — see [Validation &amp; Testing](#validation--testing). Proxy tools (Water Quality, Night Lights) are labelled as proxies; GEDI results are footprint statistics, not area totals.
 * **Earth Engine dependence and quotas** — all satellite analysis runs on Google Earth Engine, so availability and quotas are Google's; very large AOIs at fine resolution can exceed GeoTIFF export limits (the download link is then omitted).
+* **Timelapse videos are built on demand** from Earth Engine frame links that may expire, so a very old result may need re-running before its video or PDF contact sheet can be built; encoding runs on the backend (bundled ffmpeg for MP4) and large timelapses add memory and bandwidth load on a free-tier host.
 * **Hosting limits** — the free-tier backend's monthly bandwidth cap can suspend the service; results are cached to reduce repeated Earth Engine work, but a cold start or suspension is visible to users.
 > * **Resolution mismatch in the agri regional-context layer** — groundwater (GRACE, ~300 km grid) and rainfall (CHIRPS, ~5.5 km grid) are coarser/slower than the three scored risk indicators, hence reported separately from the composite score.
 

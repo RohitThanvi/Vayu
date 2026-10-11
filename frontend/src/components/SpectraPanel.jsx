@@ -60,6 +60,24 @@ function downloadResultCsv(tool, result) {
   URL.revokeObjectURL(url);
 }
 
+const TIMELAPSE_LAYER_OPTIONS = [
+  ['natural_color', 'Natural colour (Landsat, 1984 on)'],
+  ['ndvi', 'NDVI (Landsat, 1984 on)'],
+  ['night_lights', 'Night lights (VIIRS, 2014 on)'],
+  ['no2', 'Tropospheric NO₂ (Sentinel-5P, mid-2018 on)'],
+  ['sar_vv', 'SAR backscatter VV (Sentinel-1, 2014 on)'],
+  ['soil_moisture', 'Soil moisture (SMAP, Apr 2015 on)'],
+];
+// Tools whose result can be replayed over time: result tool -> [timelapse layer, label]
+const TIMELAPSE_SHORTCUTS = {
+  night_lights: ['night_lights', 'night-lights'],
+  spectral_indices: ['ndvi', 'NDVI'],
+  spectral_composites: ['natural_color', 'natural-colour'],
+  atmospheric_composition: ['no2', 'NO₂'],
+  sar_backscatter: ['sar_vv', 'SAR VV'],
+  soil_moisture: ['soil_moisture', 'soil-moisture'],
+};
+
 const TOOL_META = {
   spectral_indices: { label: 'Spectral Indices', needsDates: true, icon: '≈' },
   terrain: { label: 'Terrain Analysis', needsDates: false, icon: '△' },
@@ -80,7 +98,7 @@ const TOOL_META = {
   vegetation_drought_index: { label: 'Drought Index (VHI)', needsDates: true, icon: '☼' },
   night_lights: { label: 'Night Lights (VIIRS)', needsDates: true, icon: '✦' },
   gedi_forest_structure: { label: 'Forest Structure (GEDI)', needsDates: true, icon: '♣' },
-  timelapse: { label: 'Timelapse (Landsat)', needsDates: true, needsFrequency: true, icon: '▶' },
+  timelapse: { label: 'Timelapse', needsDates: true, needsFrequency: true, icon: '▶' },
   water_quality: { label: 'Water Quality (indicative)', needsDates: true, icon: '≈' },
 };
 
@@ -210,40 +228,59 @@ function RasterControls({ mapLayer, downloadUrl, label, onShowOverlay, active, o
   );
 }
 
-function TimelapsePlayer({ frames }) {
+function TimelapsePlayer({ frames, valueLabel, units, jobId, apiUrl }) {
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [fps, setFps] = useState(4);
   const [failed, setFailed] = useState({});
   useEffect(() => {
-    // Warm the browser cache so playback does not stutter on first loop.
+    // Warm the browser cache so playback does not stutter on the first loop.
     frames.forEach(f => { if (f.thumb_url) { const im = new Image(); im.src = f.thumb_url; } });
   }, [frames]);
   useEffect(() => {
     if (!playing) return undefined;
-    const t = setInterval(() => setIdx(i => (i + 1) % frames.length), 700);
+    const t = setInterval(() => setIdx(i => (i + 1) % frames.length), Math.round(1000 / fps));
     return () => clearInterval(t);
-  }, [playing, frames.length]);
+  }, [playing, frames.length, fps]);
   const f = frames[idx];
+  const videoHref = (fmt) => `${apiUrl}/api/v1/remote-sensing/analyze/${jobId}/video?format=${fmt}&fps=${fps}`;
+  const btn = { background: 'none', border: `1px solid ${S.border}`, color: S.gold, borderRadius: 4, padding: '2px 10px', cursor: 'pointer', fontSize: 11, textDecoration: 'none' };
   return (
     <div style={{ marginBottom: 8 }}>
       <div style={{ position: 'relative', background: '#000', borderRadius: 4, overflow: 'hidden', minHeight: 120 }}>
         {f.thumb_url && !failed[idx]
-          ? <img src={f.thumb_url} alt={`Landsat ${f.label}`} style={{ width: '100%', display: 'block' }} onError={() => setFailed(s => ({ ...s, [idx]: true }))} />
-          : <div style={{ padding: 24, fontSize: 11, color: S.text3, textAlign: 'center' }}>Frame {f.label} unavailable — reload the result.</div>}
+          ? <img src={f.thumb_url} alt={`Frame ${f.label}`} style={{ width: '100%', display: 'block' }} onError={() => setFailed(s => ({ ...s, [idx]: true }))} />
+          : <div style={{ padding: 24, fontSize: 11, color: S.text3, textAlign: 'center' }}>Frame {f.label} unavailable — re-run the timelapse.</div>}
         <div style={{ position: 'absolute', top: 6, left: 8, fontFamily: S.mono, fontSize: 14, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px #000' }}>{f.label}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-        <button onClick={() => setPlaying(p => !p)} style={{ background: 'none', border: `1px solid ${S.border}`, color: S.gold, borderRadius: 4, padding: '2px 10px', cursor: 'pointer', fontSize: 11 }}>{playing ? 'Pause' : 'Play'}</button>
+        <button onClick={() => setPlaying(p => !p)} style={btn}>{playing ? 'Pause' : 'Play'}</button>
         <input type="range" min={0} max={frames.length - 1} value={idx} onChange={e => { setPlaying(false); setIdx(Number(e.target.value)); }} style={{ flex: 1 }} />
+        <select value={fps} onChange={e => setFps(Number(e.target.value))} title="Playback and video speed (frames per second)"
+          style={{ background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 10.5, fontFamily: S.mono, padding: '2px 4px', borderRadius: 3 }}>
+          <option value={2}>2 fps</option><option value={4}>4 fps</option><option value={8}>8 fps</option>
+        </select>
       </div>
       <div style={{ fontSize: 10, color: S.text3, fontFamily: S.mono, marginTop: 4 }}>
-        {f.scene_count} scene(s) · valid {Math.round(f.valid_pixel_fraction * 100)}% · NDVI {f.mean_ndvi ?? '—'}
+        {f.scene_count} image(s) · valid {Math.round(f.valid_pixel_fraction * 100)}% · {valueLabel} {f.mean_value ?? '—'} {units}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 10.5, color: S.text3 }}>Download video:</span>
+        {jobId ? (
+          <>
+            <a href={videoHref('mp4')} style={btn} download>MP4</a>
+            <a href={videoHref('gif')} style={btn} download>GIF</a>
+          </>
+        ) : <span style={{ fontSize: 10.5, color: S.text3 }}>(available right after a run)</span>}
+      </div>
+      <div style={{ fontSize: 9.5, color: S.text3, marginTop: 3, lineHeight: 1.4 }}>
+        Built on the server from these frames with the period label burned in; it can take a few seconds. If it fails, the frame links have expired — re-run the timelapse.
       </div>
     </div>
   );
 }
 
-function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayerId }) {
+function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayerId, jobId, apiUrl }) {
   if (tool === 'spectral_indices') {
     return (
       <div>
@@ -639,28 +676,26 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
     );
   }
   if (tool === 'timelapse') {
-    const ta = result.ndvi_trend;
+    const ta = result.value_trend;
+    const per = result.frequency === 'yearly' ? 'year' : result.frequency === 'quarterly' ? 'quarter' : 'month';
     return (
       <div>
-        <TimelapsePlayer frames={result.frames} />
+        <div style={{ fontSize: 11, color: S.gold, marginBottom: 2 }}>{result.layer_label}</div>
+        <div style={{ fontSize: 10, color: S.text3, marginBottom: 6 }}>{result.sensor}</div>
+        <TimelapsePlayer frames={result.frames} valueLabel={result.value_label} units={result.units} jobId={jobId} apiUrl={apiUrl} />
         <SparkChart
-          points={result.frames.filter(f => f.mean_ndvi != null).map(f => ({ date: f.period_start, value: f.mean_ndvi }))} height={130}
-          formatX={(d) => (result.frequency === 'yearly' ? String(new Date(d).getFullYear()) : new Date(d).toLocaleDateString(undefined, { month: 'short', year: '2-digit' }))} formatY={(v) => v.toFixed(2)} emptyLabel="No NDVI values."
+          points={result.frames.filter(f => f.mean_value != null).map(f => ({ date: f.period_start, value: f.mean_value }))} height={130}
+          formatX={(d) => (result.frequency === 'yearly' ? String(new Date(d).getFullYear()) : new Date(d).toLocaleDateString(undefined, { month: 'short', year: '2-digit' }))}
+          formatY={(v) => Number(v.toPrecision(3)).toString()} emptyLabel="No values."
         />
-        <div style={{ fontSize: 10, color: S.text3, margin: '4px 0 8px' }}>AOI-mean NDVI per {result.frequency === 'yearly' ? 'year' : result.frequency === 'quarterly' ? 'quarter' : 'month'} (not harmonised across Landsat sensors)</div>
-        {ta?.status === 'ok' && <StatRow label="NDVI trend (Mann-Kendall)" value={`${ta.trend} · p=${ta.p_value} ${ta.significant ? '(significant)' : '(not significant)'}`} />}
-        {ta?.status === 'ok' && ta.sens_slope_per_year != null && <StatRow label="Sen's slope" value={`${ta.sens_slope_per_year > 0 ? '+' : ''}${ta.sens_slope_per_year} NDVI / year`} />}
+        <div style={{ fontSize: 10, color: S.text3, margin: '4px 0 8px' }}>{result.value_label} per {per} ({result.units})</div>
+        {ta?.status === 'ok' && <StatRow label="Trend (Mann-Kendall)" value={`${ta.trend} · p=${ta.p_value} ${ta.significant ? '(significant)' : '(not significant)'}`} />}
+        {ta?.status === 'ok' && ta.sens_slope_per_year != null && <StatRow label="Sen's slope" value={`${ta.sens_slope_per_year > 0 ? '+' : ''}${ta.sens_slope_per_year} ${result.units} / year`} />}
         {(ta?.status === 'insufficient_data' || ta?.status === 'not_computed') && <div style={{ fontSize: 10.5, color: S.text3 }}>{ta.note}</div>}
-        {result.skipped_periods?.length > 0 && <div style={{ fontSize: 10.5, color: '#e0c23c', marginTop: 4 }}>Skipped (no clear coverage): {result.skipped_periods.join(', ')}</div>}
-        {result.gif_url && (
-          <div style={{ fontSize: 10.5, marginTop: 6 }}>
-            <a href={result.gif_url} target="_blank" rel="noreferrer" style={{ color: S.gold }}>Open animated GIF (experimental)</a>
-            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2 }}>{result.gif_note}</div>
-          </div>
-        )}
+        {result.skipped_periods?.length > 0 && <div style={{ fontSize: 10.5, color: '#e0c23c', marginTop: 4 }}>Skipped (no usable data): {result.skipped_periods.join(', ')}</div>}
         {['first', 'last'].map(k => (
           <RasterControls key={k} mapLayer={result.map_layers[k].map_layer} downloadUrl={k === 'last' ? result.download_url : null}
-            label={`${result.map_layers[k].year} composite`} onShowOverlay={onShowOverlay}
+            label={`${result.map_layers[k].year} frame`} onShowOverlay={onShowOverlay}
             active={activeLayerId === `timelapse_${k}`} onActivate={() => setActiveLayerId?.(`timelapse_${k}`)} />
         ))}
         <div style={{ fontSize: 9.5, color: S.text3, marginTop: 4 }}>Stretch: {result.display_stretch}</div>
@@ -669,6 +704,7 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
       </div>
     );
   }
+
   if (tool === 'water_quality') {
     return (
       <div>
@@ -885,6 +921,9 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
   const [refPtClass, setRefPtClass] = useState('');
   const [polarization, setPolarization] = useState('VH'); // flood_mapping
   const [frequency, setFrequency] = useState('yearly'); // timelapse
+  const [timelapseLayer, setTimelapseLayer] = useState('natural_color'); // timelapse
+  const [jobId, setJobId] = useState(null); // id of the job whose result is shown (needed for the video download)
+  const [autoRun, setAutoRun] = useState(false); // set by the 'view as timelapse' shortcut
   const [loading, setLoading] = useState(false);
   const dateInputStyle = { flex: 1, background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 };
   const [error, setError] = useState(null);
@@ -1028,7 +1067,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
 
   const run = useCallback(async () => {
     if (!drawnAOI) { setError('Draw an Area of Interest on the map first (top-right draw tools).'); return; }
-    setLoading(true); setError(null); setResult(null);
+    setLoading(true); setError(null); setResult(null); setJobId(null);
     const meta = TOOL_META[tool];
     const body = { tool, aoi_geojson: drawnAOI };
     if (meta.needsDates) { body.start_date = startDate; body.end_date = endDate; }
@@ -1044,6 +1083,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
     }
     if (meta.needsFrequency) {
       body.frequency = frequency;
+      body.layer = timelapseLayer;
     }
     if (meta.needsPolarization) {
       body.polarization = polarization;
@@ -1086,7 +1126,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
           const d = await r.json();
           if (d.status === 'done') {
             clearInterval(pollRef.current);
-            setResult(d.result); setLoading(false); setActiveLayerId(null);
+            setResult(d.result); setJobId(data.request_id); setLoading(false); setActiveLayerId(null);
           }
         } catch (e) {
           clearInterval(pollRef.current); setError(`Polling error: ${e.message}`); setLoading(false);
@@ -1095,7 +1135,10 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
     } catch (e) {
       setError(`Failed to submit: ${e.message}`); setLoading(false);
     }
-  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices, changeIndex, period1Start, period1End, period2Start, period2End, preStart, preEnd, postStart, postEnd, trainingSamples, numTrees, assessTool, referencePoints, polarization, frequency]);
+  }, [apiUrl, drawnAOI, tool, startDate, endDate, selectedIndices, changeIndex, period1Start, period1End, period2Start, period2End, preStart, preEnd, postStart, postEnd, trainingSamples, numTrees, assessTool, referencePoints, polarization, frequency, timelapseLayer]);
+
+  // Fired by the 'View as ... timelapse' shortcut: state is set first, then run() (rebuilt with it) is called once.
+  useEffect(() => { if (autoRun) { setAutoRun(false); run(); } }, [autoRun, run]);
 
   const meta = TOOL_META[tool];
 
@@ -1111,7 +1154,7 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
       <Field label="Tool">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {Object.entries(TOOL_META).map(([id, m]) => (
-            <button key={id} onClick={() => { setTool(id); setResult(null); setError(null); setActiveLayerId(null); onClearOverlay?.(); }} style={{
+            <button key={id} onClick={() => { setTool(id); setResult(null); setError(null); setJobId(null); setActiveLayerId(null); onClearOverlay?.(); if (id === 'timelapse' && (new Date(endDate) - new Date(startDate)) / 864e5 < 700) setStartDate(todayMinus(1825)); }} style={{
               background: tool === id ? 'rgba(126,184,212,0.12)' : S.surface2,
               border: `1px solid ${tool === id ? S.accent : S.border}`,
               color: tool === id ? S.accent : S.text2, fontFamily: S.mono, fontSize: 11,
@@ -1206,6 +1249,14 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
         </>
       )}
 
+      {meta.needsFrequency && (
+        <Field label="Timelapse layer">
+          <select value={timelapseLayer} onChange={e => setTimelapseLayer(e.target.value)}
+            style={{ width: '100%', background: S.surface2, border: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '6px 8px', borderRadius: 3 }}>
+            {TIMELAPSE_LAYER_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+        </Field>
+      )}
       {meta.needsFrequency && (
         <Field label="Frame frequency">
           <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.4, marginBottom: 6 }}>
@@ -1437,7 +1488,22 @@ export default function SpectraPanel({ apiUrl, drawnAOI, onShowOverlay, onClearO
               ⬇ Download CSV
             </button>
           </div>
-          <ResultView tool={tool} result={result} onShowOverlay={onShowOverlay} activeLayerId={activeLayerId} setActiveLayerId={setActiveLayerId} />
+          <ResultView tool={tool} result={result} onShowOverlay={onShowOverlay} activeLayerId={activeLayerId} setActiveLayerId={setActiveLayerId} jobId={jobId} apiUrl={apiUrl} />
+          {TIMELAPSE_SHORTCUTS[tool] && (
+            <button
+              onClick={() => {
+                const [layer] = TIMELAPSE_SHORTCUTS[tool];
+                const months = (new Date(endDate) - new Date(startDate)) / (864e5 * 30.4);
+                setTimelapseLayer(layer); setFrequency(months < 24 ? 'monthly' : 'yearly');
+                setTool('timelapse'); setResult(null); setError(null); setJobId(null); setActiveLayerId(null); onClearOverlay?.();
+                setAutoRun(true);
+              }}
+              title="Replays this layer over the same area and dates as a frame-by-frame timelapse you can play and download as a video"
+              style={{ marginTop: 10, width: '100%', fontSize: 11, fontFamily: S.mono, background: 'rgba(126,184,212,0.08)', border: `1px solid ${S.border2}`, color: S.gold, padding: '6px 8px', borderRadius: 3, cursor: 'pointer' }}
+            >
+              ▶ View as {TIMELAPSE_SHORTCUTS[tool][1]} timelapse
+            </button>
+          )}
         </div>
       )}
     </div>

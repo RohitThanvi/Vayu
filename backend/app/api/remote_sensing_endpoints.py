@@ -18,13 +18,15 @@ import logging
 import uuid
 from typing import Dict, Any, Optional, List
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from ..core.rate_limit import limiter
 from ..core.job_store import job_store
 from ..services import gee_remote_sensing as rs
 from ..services import gee_cache
+from ..services import timelapse_media
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/remote-sensing", tags=["Remote Sensing"])
@@ -112,7 +114,7 @@ TOOLS = {
     },
     "timelapse": {
         "label": "Timelapse (Landsat)", "needs_dates": True,
-        "description": "Natural-colour Landsat 5/7/8/9 timelapse — yearly, quarterly or monthly frames (up to 60) with per-frame scene count, valid-pixel fraction and NDVI, plus an experimental animated GIF.",
+        "description": "Timelapse of natural colour, NDVI, night lights, NO2, SAR or soil moisture — yearly, quarterly or monthly frames (up to 60) with per-frame statistics, a downloadable GIF/MP4 video and a full-frame PDF report.",
     },
     "water_quality": {
         "label": "Water Quality (indicative)", "needs_dates": True,
@@ -144,6 +146,7 @@ class RemoteSensingRequest(BaseModel):
     polarization: Optional[str] = None  # flood_mapping: 'VH' (default) or 'VV'
     composites: Optional[List[str]] = None  # spectral_composites: subset of rs.SPECTRAL_COMPOSITES keys; omitted = all
     frequency: Optional[str] = None  # timelapse: 'yearly' (default) | 'quarterly' | 'monthly'
+    layer: Optional[str] = None  # timelapse: 'natural_color' (default) | 'ndvi' | 'night_lights' | 'no2' | 'sar_vv' | 'soil_moisture'
 
 
 def _dispatch_tool(req: RemoteSensingRequest):
@@ -240,7 +243,7 @@ def _dispatch_tool(req: RemoteSensingRequest):
     elif req.tool == "timelapse":
         if not req.start_date or not req.end_date:
             raise ValueError("timelapse requires start_date and end_date (at least 2 and at most 30 calendar years).")
-        return rs.compute_timelapse(req.aoi_geojson, req.start_date, req.end_date, req.frequency or "yearly")
+        return rs.compute_timelapse(req.aoi_geojson, req.start_date, req.end_date, req.frequency or "yearly", req.layer or "natural_color")
     elif req.tool == "water_quality":
         if not req.start_date or not req.end_date:
             raise ValueError("water_quality requires start_date and end_date.")
@@ -302,3 +305,30 @@ async def get_result(request_id: uuid.UUID):
     if status != "done":
         return {"status": status, "progress_pct": result.get("progress_pct", 0)}
     return {"status": "done", "tool": result.get("tool"), "result": result.get("result")}
+
+
+@router.get("/analyze/{request_id}/video", summary="Download a finished timelapse as an animated GIF or MP4")
+@limiter.limit("6/minute")
+async def timelapse_video(request: Request, request_id: uuid.UUID, format: str = "gif", fps: int = timelapse_media.DEFAULT_FPS):
+    job = job_store.get(request_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Request ID not found (results are kept only for a limited time) — re-run the timelapse.")
+    if job.get("status") != "done" or job.get("tool") != "timelapse":
+        raise HTTPException(status_code=422, detail="This request is not a finished timelapse.")
+    if format not in timelapse_media.VIDEO_FORMATS:
+        raise HTTPException(status_code=422, detail=f"Unknown format '{format}'. Use one of: {', '.join(timelapse_media.VIDEO_FORMATS)}.")
+    result = job.get("result") or {}
+    frames = result.get("frames") or []
+    if len(frames) < 2:
+        raise HTTPException(status_code=422, detail="This timelapse has fewer than 2 frames.")
+
+    def _build():
+        images = timelapse_media.fetch_frame_images(frames)
+        return timelapse_media.build_video(frames, images, format, fps, result.get("value_label"), result.get("units"))
+
+    try:
+        data, mime, ext = await run_in_threadpool(_build)
+    except timelapse_media.VideoBuildError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    name = f"vayu-timelapse-{result.get('layer', 'timelapse')}-{result.get('frequency', 'yearly')}.{ext}"
+    return Response(content=data, media_type=mime, headers={"Content-Disposition": f'attachment; filename="{name}"'})
