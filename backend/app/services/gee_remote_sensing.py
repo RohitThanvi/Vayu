@@ -2199,6 +2199,153 @@ def compute_night_lights(aoi: Dict, start_date: str, end_date: str) -> Dict[str,
     }
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# GEDI forest structure — canopy height (rh98) and aboveground biomass
+# density (AGBD) from spaceborne lidar footprints (carbon / forest story).
+#
+# Verified against the Earth Engine catalog (GEDI is sampled along orbit
+# tracks: ~25 m footprints every ~60 m along-track, NOT wall-to-wall, and only
+# between 51.6 N and 51.6 S):
+#   LARSE/GEDI/GEDI02_A_002_MONTHLY — rh98 (m); catalog quality mask:
+#       quality_flag == 1 AND degrade_flag == 0; catalog sample stretch 1-60 m.
+#   LARSE/GEDI/GEDI04_A_002_MONTHLY — agbd (Mg/ha), agbd_se (Mg/ha);
+#       catalog quality mask: l4_quality_flag == 1 AND degrade_flag == 0.
+# Monthly rasters are composites of individual orbits; availability starts
+# 2019-03-25.
+# What this deliberately does NOT do: multiply a footprint mean by the AOI area
+# to claim a total biomass or carbon stock. GEDI's footprint sample is not a
+# probability sample of the AOI; the gridded L4B product (LARSE/GEDI/
+# GEDI04_B_002) is the product built for area-level estimates and was not
+# integrated here (its bands were not verified).
+# ═════════════════════════════════════════════════════════════════════════════
+
+GEDI_L2A_MONTHLY = "LARSE/GEDI/GEDI02_A_002_MONTHLY"
+GEDI_L4A_MONTHLY = "LARSE/GEDI/GEDI04_A_002_MONTHLY"
+GEDI_FIRST_DATE = "2019-03-25"
+GEDI_SCALE_M = 25
+GEDI_RH_DISPLAY_MIN, GEDI_RH_DISPLAY_MAX = 1, 60  # catalog sample stretch for rh98 (display only)
+GEDI_HEIGHT_PALETTE = ["#8b0000", "#ff0000", "#ffa500", "#008000", "#006400"]  # darkred,red,orange,green,darkgreen (catalog sample)
+GEDI_AGBD_PALETTE = ["#f7fcb9", "#addd8e", "#31a354", "#006837"]
+
+
+def _gedi_collection(col_id, qa_band, bands, region, start_date, end_date):
+    """Quality-masked monthly GEDI rasters for the window, using the catalog's own mask."""
+    def _mask(im):
+        return im.updateMask(im.select(qa_band).eq(1)).updateMask(im.select("degrade_flag").eq(0))
+    return (
+        ee.ImageCollection(col_id).filterBounds(region)
+        .filterDate(ee.Date(start_date), _cap_end_date(end_date).advance(1, "day"))
+        .map(_mask).select(bands)
+    )
+
+
+def _gedi_stats(img, band, region):
+    """Footprint statistics for one band of a masked composite."""
+    reducer = (ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True)
+               .combine(ee.Reducer.count(), sharedInputs=True)
+               .combine(ee.Reducer.percentile([10, 50, 90]), sharedInputs=True))
+    return img.select(band).reduceRegion(
+        reducer=reducer, geometry=region, scale=GEDI_SCALE_M, maxPixels=1e10, bestEffort=True, tileScale=4,
+    ).getInfo()
+
+
+def _r(v, nd=2):
+    return None if v is None else round(v, nd)
+
+
+def compute_gedi_forest_structure(aoi: Dict, start_date: str, end_date: str) -> Dict[str, Any]:
+    """GEDI canopy height (rh98) and aboveground biomass density for footprints
+    inside the AOI over the window, quality-filtered with the catalog's masks.
+    Reports footprint statistics, footprint counts and density (how much data
+    backs the numbers), the biomass model's own standard error, and pixel-level
+    layers. Footprint-level statistics only: no area totals (see module note)."""
+    logger.info(f"GEE (remote sensing): gedi_forest_structure {start_date} -> {end_date}")
+    _validate_date_range(start_date, end_date)
+    _require_start_after(start_date, GEDI_FIRST_DATE, "GEDI")
+    region = _polygon_geometry(aoi)
+    area_km2 = round(_region_area_km2(region), 3)
+
+    h_col = _gedi_collection(GEDI_L2A_MONTHLY, "quality_flag", ["rh98"], region, start_date, end_date)
+    b_col = _gedi_collection(GEDI_L4A_MONTHLY, "l4_quality_flag", ["agbd", "agbd_se"], region, start_date, end_date)
+    n_h, n_b = h_col.size().getInfo(), b_col.size().getInfo()
+    if n_h == 0 and n_b == 0:
+        raise ValueError(
+            f"No GEDI monthly rasters intersect this AOI for {start_date} - {end_date}. GEDI covers 51.6°N–51.6°S, "
+            f"started {GEDI_FIRST_DATE}, and the catalog's coverage ends around 2025; try a wider window."
+        )
+
+    # Per-pixel mean over the window: a pixel is one 25 m footprint (where footprints from different orbits fall
+    # on the same pixel they are averaged).
+    out: Dict[str, Any] = {"canopy_height": None, "biomass": None}
+    layers_for_download = []
+
+    if n_h:
+        h_img = h_col.mean()
+        st = _gedi_stats(h_img, "rh98", region)
+        n = int(st.get("rh98_count") or 0)
+        if n:
+            out["canopy_height"] = {
+                "metric": "rh98 (relative height at 98% of the GEDI waveform; the catalog titles this product 'Canopy Top Height')",
+                "units": "m", "footprints": n, "footprints_per_km2": _r(n / area_km2, 2) if area_km2 else None,
+                "mean": _r(st.get("rh98_mean")), "std_dev": _r(st.get("rh98_stdDev")),
+                "p10": _r(st.get("rh98_p10")), "p50": _r(st.get("rh98_p50")), "p90": _r(st.get("rh98_p90")),
+                "monthly_rasters_used": n_h,
+                "display_stretch": f"{GEDI_RH_DISPLAY_MIN}–{GEDI_RH_DISPLAY_MAX} m (catalog sample stretch, display only)",
+                "map_layer": _tile_layer(h_img, {"bands": ["rh98"], "min": GEDI_RH_DISPLAY_MIN, "max": GEDI_RH_DISPLAY_MAX, "palette": GEDI_HEIGHT_PALETTE}),
+                "citation": "GEDI L2A Geolocated Elevation and Height Metrics, Version 2 (NASA LP DAAC), via LARSE/Google monthly rasters; quality mask per Earth Engine catalog.",
+            }
+            layers_for_download.append(h_img)
+
+    if n_b:
+        b_img = b_col.mean()
+        st = _gedi_stats(b_img, "agbd", region)
+        n = int(st.get("agbd_count") or 0)
+        if n:
+            se = b_img.select("agbd_se").reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=GEDI_SCALE_M,
+                                                     maxPixels=1e10, bestEffort=True, tileScale=4).getInfo()
+            p10, p90 = st.get("agbd_p10"), st.get("agbd_p90")
+            sd = st.get("agbd_stdDev")
+            out["biomass"] = {
+                "metric": "agbd (predicted aboveground biomass density, per footprint)",
+                "units": "Mg/ha", "footprints": n, "footprints_per_km2": _r(n / area_km2, 2) if area_km2 else None,
+                "mean": _r(st.get("agbd_mean")), "std_dev": _r(sd),
+                "p10": _r(p10), "p50": _r(st.get("agbd_p50")), "p90": _r(p90),
+                "mean_prediction_se": _r(se.get("agbd_se")),
+                "naive_standard_error_of_mean": _r(sd / (n ** 0.5)) if (sd is not None and n > 1) else None,
+                "monthly_rasters_used": n_b,
+                "display_stretch": f"{_r(p10, 1)}–{_r(p90, 1)} Mg/ha (AOI 10th–90th percentile of footprints, display only)",
+                "map_layer": _tile_layer(b_img, {"bands": ["agbd"], "min": p10 if p10 is not None else 0, "max": p90 if p90 else 1, "palette": GEDI_AGBD_PALETTE}),
+                "citation": "GEDI L4A Footprint Level Aboveground Biomass Density, Version 2.1 (Dubayah et al., ORNL DAAC), via LARSE/Google monthly rasters; quality mask per Earth Engine catalog.",
+            }
+            layers_for_download.append(b_img)
+
+    if not out["canopy_height"] and not out["biomass"]:
+        raise ValueError(f"GEDI rasters exist near this AOI but no quality-passing footprints fall inside it for {start_date} - {end_date}. Try a wider window or a larger AOI.")
+
+    stack = layers_for_download[0]
+    for extra in layers_for_download[1:]:
+        stack = stack.addBands(extra)
+    return {
+        **out,
+        "quality_filter": "Catalog masks: L2A quality_flag = 1 and degrade_flag = 0; L4A l4_quality_flag = 1 and degrade_flag = 0.",
+        "download_url": _download_url(stack, region, scale=GEDI_SCALE_M),
+        "download_note": "Window-mean footprint pixels (25 m): rh98 (m), agbd and agbd_se (Mg/ha), sparse along orbit tracks.",
+        "caveats": [
+            "GEDI samples along orbit tracks (~25 m footprints), not the whole AOI — read the footprint count and density before trusting a mean.",
+            "Statistics describe the sampled footprints only. No area total or carbon stock is computed: footprints are not a probability sample of the AOI.",
+            "AGBD is a model prediction (per-footprint standard error reported); it is not a field measurement and is least reliable outside the forest types the model was calibrated on.",
+            "The naive standard error of the mean assumes independent footprints; neighbouring footprints are spatially correlated, so it understates true uncertainty.",
+            "No leaf-on / leaf-off or sensitivity filtering beyond the catalog's quality masks is applied.",
+        ],
+        "method": (
+            "GEDI LiDAR footprints from the LARSE/Google monthly rasters of L2A (rh98 canopy height) and L4A (agbd, agbd_se), "
+            "filtered with the Earth Engine catalog's own quality masks, averaged per pixel over the window, and summarised "
+            "over the AOI at 25 m (mean, std dev, 10th/50th/90th percentile, footprint count)."
+        ),
+        "aoi_area_km2": area_km2,
+    }
+
+
 
 def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
     """Static PNG thumbnail for a Spectra PDF report — reconstructs the
@@ -2346,6 +2493,11 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
             if col.size().getInfo() == 0:
                 return None
             return _fetch_thumb_bytes(col.mean(), region, {"min": VIIRS_DISPLAY_MIN, "max": VIIRS_DISPLAY_MAX, "palette": NIGHT_LIGHTS_PALETTE})
+        if tool == "gedi_forest_structure":
+            col = _gedi_collection(GEDI_L2A_MONTHLY, "quality_flag", ["rh98"], region, params["start_date"], params["end_date"])
+            if col.size().getInfo() == 0:
+                return None
+            return _fetch_thumb_bytes(col.mean(), region, {"bands": ["rh98"], "min": GEDI_RH_DISPLAY_MIN, "max": GEDI_RH_DISPLAY_MAX, "palette": GEDI_HEIGHT_PALETTE})
         return None  # atmospheric_composition, index_time_series, accuracy_assessment (not single-raster thumbnails)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")

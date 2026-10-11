@@ -79,6 +79,7 @@ const TOOL_META = {
   spectral_composites: { label: 'Spectral Composites', needsDates: true, icon: '◐' },
   vegetation_drought_index: { label: 'Drought Index (VHI)', needsDates: true, icon: '☼' },
   night_lights: { label: 'Night Lights (VIIRS)', needsDates: true, icon: '✦' },
+  gedi_forest_structure: { label: 'Forest Structure (GEDI)', needsDates: true, icon: '♣' },
 };
 
 // Client-side mirror of gee_remote_sensing.py's WORLDCOVER_CLASSES /
@@ -562,6 +563,41 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         <RasterControls mapLayer={result.map_layer} downloadUrl={result.download_url} label="mean radiance" onShowOverlay={onShowOverlay}
           active={activeLayerId === 'night_lights'} onActivate={() => setActiveLayerId?.('night_lights')} />
         <div style={{ fontSize: 9.5, color: S.text3, marginTop: 4 }}>Map stretch: {result.display_stretch}</div>
+        {result.caveats.map((c, i) => <div key={i} style={{ fontSize: 10, color: S.text3, marginTop: 4, lineHeight: 1.4 }}>• {c}</div>)}
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'gedi_forest_structure') {
+    const cards = [
+      { id: 'gedi_height', d: result.canopy_height, title: 'Canopy height (rh98)', stats: ['mean', 'std_dev', 'p10', 'p50', 'p90'] },
+      { id: 'gedi_agbd', d: result.biomass, title: 'Aboveground biomass (AGBD)', stats: ['mean', 'std_dev', 'p10', 'p50', 'p90'] },
+    ].filter(c => c.d);
+    return (
+      <div>
+        {cards.map(({ id, d, title, stats }) => (
+          <div key={id} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '8px 10px', marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+              <span style={{ fontSize: 12, color: S.gold }}>{title}</span>
+              <span style={{ fontFamily: S.mono, fontSize: 15, color: S.text, fontWeight: 700 }}>{d.mean} <span style={{ fontSize: 10, color: S.text3 }}>{d.units}</span></span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, fontSize: 10, color: S.text3, fontFamily: S.mono, marginBottom: 4 }}>
+              {stats.filter(k => k !== 'mean').map(k => <span key={k}>{k === 'std_dev' ? 'σ' : k} {d[k]}</span>)}
+            </div>
+            <div style={{ fontSize: 10.5, color: S.text2, marginBottom: 3 }}>
+              {d.footprints} footprints · {d.footprints_per_km2}/km² · {d.monthly_rasters_used} monthly raster(s)
+            </div>
+            {d.mean_prediction_se != null && (
+              <div style={{ fontSize: 10.5, color: S.text2, marginBottom: 3 }}>Model standard error (mean per footprint): ±{d.mean_prediction_se} Mg/ha · naive SE of mean ±{d.naive_standard_error_of_mean}</div>
+            )}
+            <RasterControls mapLayer={d.map_layer} downloadUrl={null} label={title} onShowOverlay={onShowOverlay}
+              active={activeLayerId === id} onActivate={() => setActiveLayerId?.(id)} />
+            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 4, lineHeight: 1.4 }}>Stretch: {d.display_stretch}</div>
+            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2, lineHeight: 1.4 }}>Source: {d.citation}</div>
+          </div>
+        ))}
+        <RasterControls mapLayer={null} downloadUrl={result.download_url} label="GEDI footprints" onShowOverlay={onShowOverlay} />
+        <div style={{ fontSize: 10, color: S.text3, marginTop: 6 }}>{result.quality_filter}</div>
         {result.caveats.map((c, i) => <div key={i} style={{ fontSize: 10, color: S.text3, marginTop: 4, lineHeight: 1.4 }}>• {c}</div>)}
         <MethodNote text={result.method} />
       </div>

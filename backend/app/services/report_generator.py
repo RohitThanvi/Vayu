@@ -2309,6 +2309,7 @@ RS_TOOL_LABELS = {
     "spectral_composites": "Spectral Composites (X-ray views)",
     "vegetation_drought_index": "Vegetation Drought Index (VCI/TCI/VHI)",
     "night_lights": "Night Lights (VIIRS)",
+    "gedi_forest_structure": "Forest Structure (GEDI)",
 }
 
 RS_GLOSSARY = [
@@ -2334,6 +2335,8 @@ RS_GLOSSARY = [
     ("VCI / TCI / VHI", "Kogan's Vegetation Condition, Temperature Condition and Vegetation Health Indices (0\u2013100). Each pixel's NDVI (VCI) or land-surface temperature (TCI, inverted) is scaled between that pixel's own minimum and maximum for the same season in earlier years; VHI = 0.5\u00d7VCI + 0.5\u00d7TCI. Low values indicate vegetation/thermal stress relative to that pixel's history, not an absolute drought measure."),
     ("VIIRS DNB radiance", "Night-time radiance from the Visible Infrared Imaging Radiometer Suite Day/Night Band, in nW/sr/cm\u00b2. A proxy for lit human activity, not a direct measure of economic output; this product version also includes fires, boats and aurora."),
     ("cf_cvg", "Number of cloud-free observations behind a monthly VIIRS composite pixel. Zero means no information for that month, not darkness."),
+    ("GEDI footprint", "A ~25 m spot sampled by the GEDI spaceborne lidar on the ISS; footprints lie along orbit tracks (about every 60 m along-track), so GEDI samples an area rather than mapping it wall-to-wall. Coverage is limited to 51.6\u00b0N\u201351.6\u00b0S."),
+    ("rh98 / AGBD", "rh98 is the GEDI relative height at 98% of the waveform, used here as canopy top height (m). AGBD is the model-predicted aboveground biomass density (Mg/ha) per footprint, reported with its own standard error \u2014 a model estimate, not a field measurement."),
 ]
 
 
@@ -2494,6 +2497,16 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
                 rows.append(("Sen's slope", _fmt_num(ta.get("sens_slope_per_year"), 4), "nW/sr/cm\u00b2 per year"))
             elif ta.get("note"):
                 rows.append(("Trend", str(ta["note"]), ""))
+        elif tool == "gedi_forest_structure":
+            ch, bm = result.get("canopy_height"), result.get("biomass")
+            if ch:
+                rows.append(("Canopy height rh98 \u2014 mean / \u03c3", f"{_fmt_num(ch.get('mean'), 1)} / {_fmt_num(ch.get('std_dev'), 1)}", "m"))
+                rows.append(("Canopy height rh98 \u2014 p10 / p50 / p90", f"{_fmt_num(ch.get('p10'), 1)} / {_fmt_num(ch.get('p50'), 1)} / {_fmt_num(ch.get('p90'), 1)}", "m"))
+                rows.append(("Canopy height footprints (per km\u00b2)", f"{ch.get('footprints')} ({_fmt_num(ch.get('footprints_per_km2'), 2)})", ""))
+            if bm:
+                rows.append(("Biomass AGBD \u2014 mean / \u03c3", f"{_fmt_num(bm.get('mean'), 1)} / {_fmt_num(bm.get('std_dev'), 1)}", "Mg/ha"))
+                rows.append(("Biomass model standard error (mean per footprint)", _fmt_num(bm.get("mean_prediction_se"), 1), "Mg/ha"))
+                rows.append(("Biomass footprints (per km\u00b2)", f"{bm.get('footprints')} ({_fmt_num(bm.get('footprints_per_km2'), 2)})", ""))
     except Exception as e:
         logger.warning(f"_rs_metric_rows failed for tool={tool}: {type(e).__name__}: {e}")
     return rows
