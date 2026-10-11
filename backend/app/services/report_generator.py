@@ -2311,6 +2311,7 @@ RS_TOOL_LABELS = {
     "night_lights": "Night Lights (VIIRS)",
     "gedi_forest_structure": "Forest Structure (GEDI)",
     "timelapse": "Timelapse (Landsat)",
+    "water_quality": "Water Quality (indicative)",
 }
 
 RS_GLOSSARY = [
@@ -2339,6 +2340,7 @@ RS_GLOSSARY = [
     ("GEDI footprint", "A ~25 m spot sampled by the GEDI spaceborne lidar on the ISS; footprints lie along orbit tracks (about every 60 m along-track), so GEDI samples an area rather than mapping it wall-to-wall. Coverage is limited to 51.6\u00b0N\u201351.6\u00b0S."),
     ("rh98 / AGBD", "rh98 is the GEDI relative height at 98% of the waveform, used here as canopy top height (m). AGBD is the model-predicted aboveground biomass density (Mg/ha) per footprint, reported with its own standard error \u2014 a model estimate, not a field measurement."),
     ("Annual median composite", "For each calendar year, the per-pixel median of all cloud-masked scenes, so transient clouds and shadows drop out. Seasons are not controlled, so frames from wetter or drier years can differ in colour without any land change."),
+    ("NDTI / NDCI", "Normalized Difference Turbidity Index (Lacaux et al. 2007; (red\u2212green)/(red+green)) and Normalized Difference Chlorophyll Index (Mishra & Mishra 2012; (red edge\u2212red)/(red edge+red)). Uncalibrated relative proxies for turbidity and chlorophyll-a: useful for comparing places or dates within one waterbody, not concentrations."),
 ]
 
 
@@ -2522,6 +2524,15 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
             if ta.get("status") == "ok":
                 rows.append(("NDVI trend (Mann-Kendall)", f"{ta.get('trend')} (p = {_fmt_num(ta.get('p_value'), 4)})", ""))
                 rows.append(("Sen's slope", _fmt_num(ta.get("sens_slope_per_year"), 4), "NDVI per year"))
+        elif tool == "water_quality":
+            rows.append(("Status", "INDICATIVE ONLY \u2014 uncalibrated proxies, not concentrations", ""))
+            for d in (result.get("indices") or {}).values():
+                rows.append((f"{d.get('label')} \u2014 mean / \u03c3", f"{_fmt_num(d.get('mean'), 3)} / {_fmt_num(d.get('std_dev'), 3)}", "(relative index)"))
+                rows.append((f"{d.get('label')} \u2014 p10 / p50 / p90", f"{_fmt_num(d.get('p10'), 3)} / {_fmt_num(d.get('p50'), 3)} / {_fmt_num(d.get('p90'), 3)}", ""))
+            rows.append(("Valid water area", _fmt_num(result.get("valid_water_area_km2"), 2), "km\u00b2"))
+            rows.append(("Valid water pixels", str(result.get("valid_water_pixels", "N/A")), "20 m pixels"))
+            if result.get("scene_count") is not None:
+                rows.append(("Sentinel-2 scenes used", str(result["scene_count"]), ""))
     except Exception as e:
         logger.warning(f"_rs_metric_rows failed for tool={tool}: {type(e).__name__}: {e}")
     return rows

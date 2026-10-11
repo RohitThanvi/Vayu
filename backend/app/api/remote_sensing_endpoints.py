@@ -114,6 +114,10 @@ TOOLS = {
         "label": "Timelapse (Landsat)", "needs_dates": True,
         "description": "Annual natural-colour timelapse from Landsat 5/7/8/9 (one cloud-masked median frame per year, up to 30 years) with per-frame scene count, valid-pixel fraction and NDVI.",
     },
+    "water_quality": {
+        "label": "Water Quality (indicative)", "needs_dates": True,
+        "description": "INDICATIVE turbidity (NDTI) and chlorophyll (NDCI) proxies over permanent lakes/reservoirs from Sentinel-2 — uncalibrated relative indices, no concentrations.",
+    },
 }
 
 
@@ -236,6 +240,10 @@ def _dispatch_tool(req: RemoteSensingRequest):
         if not req.start_date or not req.end_date:
             raise ValueError("timelapse requires start_date and end_date (at least 2 and at most 30 calendar years).")
         return rs.compute_timelapse(req.aoi_geojson, req.start_date, req.end_date)
+    elif req.tool == "water_quality":
+        if not req.start_date or not req.end_date:
+            raise ValueError("water_quality requires start_date and end_date.")
+        return rs.compute_water_quality_indicators(req.aoi_geojson, req.start_date, req.end_date)
     else:
         raise ValueError(f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}")
 
