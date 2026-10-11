@@ -2492,6 +2492,111 @@ def compute_timelapse(aoi: Dict, start_date: str, end_date: str) -> Dict[str, An
     }
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Water quality — INDICATIVE turbidity and chlorophyll PROXIES for lakes and
+# reservoirs. Relative, uncalibrated indices over permanent water. This tool
+# deliberately returns NO concentrations (no NTU, no mg/L, no ug/L chlorophyll-a):
+# turning these indices into concentrations needs a locally calibrated model
+# with in-situ matchups, which this tool does not have.
+#
+# Formulas verified against secondary sources (USGS water-quality web app,
+# Digital Earth Africa/Australia notebooks, NASA ARSET material, Sentinel Hub
+# custom scripts); primary papers were not retrieved:
+#   NDTI = (B4 - B3) / (B4 + B3)  (Lacaux et al. 2007)   [red, green]
+#   NDCI = (B5 - B4) / (B5 + B4)  (Mishra & Mishra 2012) [red edge 1, red]
+# USGS calls both "uncalibrated" indices for relative comparison; Digital Earth
+# Africa treats NDCI as experimental and notes that not every NDCI increase is
+# an algal bloom. A published regional Chl-a regression exists for NDCI but is
+# empirical to its study waters, so it is NOT applied here.
+# Water mask: JRC Global Surface Water v1.4 occurrence >= 90% (the same
+# permanent-water convention surface_water_dynamics and flood_mapping use).
+# That product ends in 2021, so water bodies created since are not masked in.
+# ═════════════════════════════════════════════════════════════════════════════
+
+WQ_INDEX_DEFS = {
+    "ndti": {
+        "label": "NDTI — Normalized Difference Turbidity Index", "formula": "(B4 − B3) / (B4 + B3)", "bands": ("B4", "B3"),
+        "citation": "Lacaux et al. 2007",
+        "interpretation": "Relative turbidity proxy (suspended inorganic sediment): higher = relatively more turbid than other water pixels in this AOI/window.",
+    },
+    "ndci": {
+        "label": "NDCI — Normalized Difference Chlorophyll Index", "formula": "(B5 − B4) / (B5 + B4)", "bands": ("B5", "B4"),
+        "citation": "Mishra & Mishra 2012",
+        "interpretation": "Relative chlorophyll-a proxy: higher = relatively more chlorophyll-bearing biomass. Experimental; not every increase is an algal bloom.",
+    },
+}
+WQ_PERMANENT_OCCURRENCE = 90  # JRC GSW v1.4 occurrence threshold, same as surface_water_dynamics
+WQ_SCALE_M = 20  # B5 native resolution is the coarsest input
+WQ_PALETTE = ["#2c7bb6", "#abd9e9", "#ffffbf", "#fdae61", "#d7191c"]
+
+
+def compute_water_quality_indicators(aoi: Dict, start_date: str, end_date: str) -> Dict[str, Any]:
+    """Indicative NDTI (turbidity proxy) and NDCI (chlorophyll proxy) over the
+    permanent water inside the AOI, from a cloud-masked Sentinel-2 median
+    composite. Reports distribution statistics, the amount of valid water the
+    numbers rest on, and pixel-level layers. INDICATIVE ONLY: uncalibrated
+    relative indices, never concentrations."""
+    logger.info(f"GEE (remote sensing): water_quality {start_date} -> {end_date}")
+    _validate_date_range(start_date, end_date)
+    region = _polygon_geometry(aoi)
+    composite, scene_count = _s2_composite(region, start_date, end_date)
+
+    permanent = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(WQ_PERMANENT_OCCURRENCE)
+    water = permanent.selfMask()
+    kw = dict(geometry=region, scale=WQ_SCALE_M, maxPixels=1e10, bestEffort=True, tileScale=4)
+    reducer = (ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True)
+               .combine(ee.Reducer.count(), sharedInputs=True)
+               .combine(ee.Reducer.percentile([10, 50, 90]), sharedInputs=True))
+
+    imgs = {k: composite.normalizedDifference(list(d["bands"])).rename(k.upper()).updateMask(water) for k, d in WQ_INDEX_DEFS.items()}
+    stack = imgs["ndti"].addBands(imgs["ndci"])
+    st = stack.reduceRegion(reducer=reducer, **kw).getInfo()
+    n_water = int(st.get("NDTI_count") or 0)
+    if n_water == 0:
+        raise ValueError(
+            "No cloud-free permanent surface water (JRC occurrence ≥ 90%) found in this AOI for the window. "
+            "Draw the AOI over a lake or reservoir, widen the date range, or note that JRC's water mask ends in 2021."
+        )
+    frac = permanent.reduceRegion(reducer=ee.Reducer.mean(), geometry=region, scale=30, maxPixels=1e10, bestEffort=True, tileScale=4).getInfo()
+
+    indices = {}
+    for key, d in WQ_INDEX_DEFS.items():
+        k = key.upper()
+        p10, p90 = st.get(f"{k}_p10"), st.get(f"{k}_p90")
+        indices[key] = {
+            "label": d["label"], "formula": d["formula"], "citation": d["citation"], "interpretation": d["interpretation"],
+            "mean": round(st.get(f"{k}_mean", 0) or 0, 4), "std_dev": round(st.get(f"{k}_stdDev", 0) or 0, 4),
+            "p10": round(p10, 4) if p10 is not None else None, "p50": round(st.get(f"{k}_p50"), 4) if st.get(f"{k}_p50") is not None else None,
+            "p90": round(p90, 4) if p90 is not None else None,
+            "display_stretch": (f"{round(p10, 3)} to {round(p90, 3)} (AOI water-pixel 10th–90th percentile, display only)" if p10 is not None and p90 is not None else "n/a"),
+            "map_layer": _tile_layer(imgs[key], {"min": p10 if p10 is not None else -0.2, "max": p90 if p90 is not None else 0.2, "palette": WQ_PALETTE}),
+        }
+    return {
+        "indicative_only": True,
+        "indices": indices,
+        "valid_water_pixels": n_water,
+        "valid_water_area_km2": round(n_water * (WQ_SCALE_M ** 2) / 1e6, 3),
+        "permanent_water_fraction_of_aoi": round((frac.get("occurrence", 0) or 0), 4),
+        "scene_count": scene_count,
+        "scene_provenance": _scene_provenance(region, start_date, end_date),
+        "download_url": _download_url(stack, region, scale=WQ_SCALE_M),
+        "download_note": "2-band GeoTIFF (NDTI, NDCI) over permanent water at 20 m; land is masked.",
+        "caveats": [
+            "INDICATIVE ONLY: NDTI and NDCI are uncalibrated relative indices. They are not turbidity (NTU), suspended-sediment or chlorophyll-a concentrations, and no concentration is reported.",
+            "Use them to compare places or dates within one waterbody and sensor; they are not comparable across different waterbodies without local calibration against in-situ samples.",
+            "Confounders: bottom reflectance in shallow water, floating or emergent vegetation, sun glint, thin cloud and shadow, and bright cloud-masked-edge pixels can all move these indices without any change in water quality.",
+            "The Sentinel-2 cloud mask (SCL) can mis-flag very turbid or glinting water as cloud, which would bias a composite towards clearer water.",
+            "The permanent-water mask (JRC v1.4, occurrence ≥ 90%) ends in 2021: newer reservoirs are excluded and seasonally exposed shoreline is not analysed.",
+        ],
+        "method": (
+            f"Sentinel-2 SR Harmonized cloud-masked (SCL) median composite ({scene_count} scene(s)); NDTI = (B4−B3)/(B4+B3) and "
+            "NDCI = (B5−B4)/(B5+B4) computed on the composite and restricted to JRC Global Surface Water v1.4 permanent water "
+            f"(occurrence ≥ {WQ_PERMANENT_OCCURRENCE}%), summarised at {WQ_SCALE_M} m. Indicative relative proxies only — no concentrations."
+        ),
+        "aoi_area_km2": round(_region_area_km2(region), 3),
+    }
+
+
 
 def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
     """Static PNG thumbnail for a Spectra PDF report — reconstructs the
@@ -2649,6 +2754,10 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
             y1 = _dt.date.fromisoformat(params["end_date"]).year
             merged = _landsat_merged(region, y1, y1)
             return _fetch_thumb_bytes(_year_composite(merged, y1), region, {"bands": ["red", "green", "blue"], "min": TIMELAPSE_DISPLAY_MIN, "max": TIMELAPSE_DISPLAY_MAX})
+        if tool == "water_quality":
+            # Reference picture only (natural colour): the indices are uncalibrated, so no index image goes in the PDF.
+            composite, _ = _s2_composite(region, params["start_date"], params["end_date"])
+            return _fetch_thumb_bytes(composite, region, {"bands": ["B4", "B3", "B2"], "min": 0, "max": 0.3})
         return None  # atmospheric_composition, index_time_series, accuracy_assessment (not single-raster thumbnails)
     except Exception as e:
         logger.warning(f"get_report_thumbnail failed for tool={tool}: {type(e).__name__}: {e}")

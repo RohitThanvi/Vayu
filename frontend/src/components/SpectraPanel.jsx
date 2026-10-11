@@ -81,6 +81,7 @@ const TOOL_META = {
   night_lights: { label: 'Night Lights (VIIRS)', needsDates: true, icon: '✦' },
   gedi_forest_structure: { label: 'Forest Structure (GEDI)', needsDates: true, icon: '♣' },
   timelapse: { label: 'Timelapse (Landsat)', needsDates: true, icon: '▶' },
+  water_quality: { label: 'Water Quality (indicative)', needsDates: true, icon: '≈' },
 };
 
 // Client-side mirror of gee_remote_sensing.py's WORLDCOVER_CLASSES /
@@ -657,6 +658,38 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
             active={activeLayerId === `timelapse_${k}`} onActivate={() => setActiveLayerId?.(`timelapse_${k}`)} />
         ))}
         <div style={{ fontSize: 9.5, color: S.text3, marginTop: 4 }}>Stretch: {result.display_stretch}</div>
+        {result.caveats.map((c, i) => <div key={i} style={{ fontSize: 10, color: S.text3, marginTop: 4, lineHeight: 1.4 }}>• {c}</div>)}
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'water_quality') {
+    return (
+      <div>
+        <div style={{ fontSize: 10.5, color: '#e0c23c', background: 'rgba(224,194,60,0.08)', border: '1px solid rgba(224,194,60,0.3)', borderRadius: 4, padding: '6px 8px', marginBottom: 8, lineHeight: 1.4 }}>
+          <b>INDICATIVE ONLY.</b> Uncalibrated relative proxies — not turbidity (NTU) or chlorophyll-a concentrations.
+        </div>
+        {Object.entries(result.indices).map(([id, d]) => (
+          <div key={id} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '8px 10px', marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+              <span style={{ fontSize: 12, color: S.gold }}>{d.label}</span>
+              <span style={{ fontFamily: S.mono, fontSize: 15, color: S.text, fontWeight: 700 }}>{d.mean}</span>
+            </div>
+            <div style={{ fontSize: 10, color: S.text3, marginBottom: 3 }}>{d.formula} &middot; {d.citation}</div>
+            <div style={{ fontSize: 10.5, color: S.text2, lineHeight: 1.4, marginBottom: 4 }}>{d.interpretation}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, fontSize: 10, color: S.text3, fontFamily: S.mono }}>
+              <span>σ {d.std_dev}</span><span>p10 {d.p10}</span><span>p50 {d.p50}</span><span>p90 {d.p90}</span>
+            </div>
+            <RasterControls mapLayer={d.map_layer} downloadUrl={null} label={id.toUpperCase()} onShowOverlay={onShowOverlay}
+              active={activeLayerId === `wq_${id}`} onActivate={() => setActiveLayerId?.(`wq_${id}`)} />
+            <div style={{ fontSize: 9.5, color: S.text3, marginTop: 4 }}>Stretch: {d.display_stretch}</div>
+          </div>
+        ))}
+        <StatRow label="Valid water area" value={`${result.valid_water_area_km2} km² (${result.valid_water_pixels} px)`} />
+        <StatRow label="Permanent water share of AOI" value={`${Math.round(result.permanent_water_fraction_of_aoi * 100)}%`} />
+        <StatRow label="Sentinel-2 scenes" value={result.scene_count} />
+        <RasterControls mapLayer={null} downloadUrl={result.download_url} label="NDTI + NDCI" onShowOverlay={onShowOverlay} />
+        <SceneProvenance scenes={result.scene_provenance} label="Sentinel-2 scenes" />
         {result.caveats.map((c, i) => <div key={i} style={{ fontSize: 10, color: S.text3, marginTop: 4, lineHeight: 1.4 }}>• {c}</div>)}
         <MethodNote text={result.method} />
       </div>
