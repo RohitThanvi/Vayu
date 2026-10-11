@@ -110,6 +110,10 @@ TOOLS = {
         "label": "Forest Structure (GEDI)", "needs_dates": True,
         "description": "Canopy height (rh98) and aboveground biomass density from GEDI spaceborne-lidar footprints, with footprint counts. Sampled along orbit tracks, 51.6N-51.6S, from 2019.",
     },
+    "timelapse": {
+        "label": "Timelapse (Landsat)", "needs_dates": True,
+        "description": "Annual natural-colour timelapse from Landsat 5/7/8/9 (one cloud-masked median frame per year, up to 30 years) with per-frame scene count, valid-pixel fraction and NDVI.",
+    },
 }
 
 
@@ -228,6 +232,10 @@ def _dispatch_tool(req: RemoteSensingRequest):
         if not req.start_date or not req.end_date:
             raise ValueError("gedi_forest_structure requires start_date and end_date.")
         return rs.compute_gedi_forest_structure(req.aoi_geojson, req.start_date, req.end_date)
+    elif req.tool == "timelapse":
+        if not req.start_date or not req.end_date:
+            raise ValueError("timelapse requires start_date and end_date (at least 2 and at most 30 calendar years).")
+        return rs.compute_timelapse(req.aoi_geojson, req.start_date, req.end_date)
     else:
         raise ValueError(f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}")
 

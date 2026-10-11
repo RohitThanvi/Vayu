@@ -80,6 +80,7 @@ const TOOL_META = {
   vegetation_drought_index: { label: 'Drought Index (VHI)', needsDates: true, icon: '☼' },
   night_lights: { label: 'Night Lights (VIIRS)', needsDates: true, icon: '✦' },
   gedi_forest_structure: { label: 'Forest Structure (GEDI)', needsDates: true, icon: '♣' },
+  timelapse: { label: 'Timelapse (Landsat)', needsDates: true, icon: '▶' },
 };
 
 // Client-side mirror of gee_remote_sensing.py's WORLDCOVER_CLASSES /
@@ -204,6 +205,39 @@ function RasterControls({ mapLayer, downloadUrl, label, onShowOverlay, active, o
           ⬇ GeoTIFF
         </a>
       )}
+    </div>
+  );
+}
+
+function TimelapsePlayer({ frames }) {
+  const [idx, setIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [failed, setFailed] = useState({});
+  useEffect(() => {
+    // Warm the browser cache so playback does not stutter on first loop.
+    frames.forEach(f => { if (f.thumb_url) { const im = new Image(); im.src = f.thumb_url; } });
+  }, [frames]);
+  useEffect(() => {
+    if (!playing) return undefined;
+    const t = setInterval(() => setIdx(i => (i + 1) % frames.length), 700);
+    return () => clearInterval(t);
+  }, [playing, frames.length]);
+  const f = frames[idx];
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ position: 'relative', background: '#000', borderRadius: 4, overflow: 'hidden', minHeight: 120 }}>
+        {f.thumb_url && !failed[idx]
+          ? <img src={f.thumb_url} alt={`Landsat ${f.year}`} style={{ width: '100%', display: 'block' }} onError={() => setFailed(s => ({ ...s, [idx]: true }))} />
+          : <div style={{ padding: 24, fontSize: 11, color: S.text3, textAlign: 'center' }}>Frame {f.year} unavailable — reload the result.</div>}
+        <div style={{ position: 'absolute', top: 6, left: 8, fontFamily: S.mono, fontSize: 14, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px #000' }}>{f.year}</div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+        <button onClick={() => setPlaying(p => !p)} style={{ background: 'none', border: `1px solid ${S.border}`, color: S.gold, borderRadius: 4, padding: '2px 10px', cursor: 'pointer', fontSize: 11 }}>{playing ? 'Pause' : 'Play'}</button>
+        <input type="range" min={0} max={frames.length - 1} value={idx} onChange={e => { setPlaying(false); setIdx(Number(e.target.value)); }} style={{ flex: 1 }} />
+      </div>
+      <div style={{ fontSize: 10, color: S.text3, fontFamily: S.mono, marginTop: 4 }}>
+        {f.scene_count} scene(s) · valid {Math.round(f.valid_pixel_fraction * 100)}% · NDVI {f.mean_ndvi ?? '—'}
+      </div>
     </div>
   );
 }
@@ -598,6 +632,31 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         ))}
         <RasterControls mapLayer={null} downloadUrl={result.download_url} label="GEDI footprints" onShowOverlay={onShowOverlay} />
         <div style={{ fontSize: 10, color: S.text3, marginTop: 6 }}>{result.quality_filter}</div>
+        {result.caveats.map((c, i) => <div key={i} style={{ fontSize: 10, color: S.text3, marginTop: 4, lineHeight: 1.4 }}>• {c}</div>)}
+        <MethodNote text={result.method} />
+      </div>
+    );
+  }
+  if (tool === 'timelapse') {
+    const ta = result.ndvi_trend;
+    return (
+      <div>
+        <TimelapsePlayer frames={result.frames} />
+        <SparkChart
+          points={result.frames.filter(f => f.mean_ndvi != null).map(f => ({ date: `${f.year}-07-01`, value: f.mean_ndvi }))} height={130}
+          formatX={(d) => new Date(d).getFullYear()} formatY={(v) => v.toFixed(2)} emptyLabel="No NDVI values."
+        />
+        <div style={{ fontSize: 10, color: S.text3, margin: '4px 0 8px' }}>AOI-mean NDVI per year (not harmonised across Landsat sensors)</div>
+        {ta?.status === 'ok' && <StatRow label="NDVI trend (Mann-Kendall)" value={`${ta.trend} · p=${ta.p_value} ${ta.significant ? '(significant)' : '(not significant)'}`} />}
+        {ta?.status === 'ok' && ta.sens_slope_per_year != null && <StatRow label="Sen's slope" value={`${ta.sens_slope_per_year > 0 ? '+' : ''}${ta.sens_slope_per_year} NDVI / year`} />}
+        {ta?.status === 'insufficient_data' && <div style={{ fontSize: 10.5, color: S.text3 }}>{ta.note}</div>}
+        {result.skipped_years?.length > 0 && <div style={{ fontSize: 10.5, color: '#e0c23c', marginTop: 4 }}>Skipped (no clear coverage): {result.skipped_years.join(', ')}</div>}
+        {['first', 'last'].map(k => (
+          <RasterControls key={k} mapLayer={result.map_layers[k].map_layer} downloadUrl={k === 'last' ? result.download_url : null}
+            label={`${result.map_layers[k].year} composite`} onShowOverlay={onShowOverlay}
+            active={activeLayerId === `timelapse_${k}`} onActivate={() => setActiveLayerId?.(`timelapse_${k}`)} />
+        ))}
+        <div style={{ fontSize: 9.5, color: S.text3, marginTop: 4 }}>Stretch: {result.display_stretch}</div>
         {result.caveats.map((c, i) => <div key={i} style={{ fontSize: 10, color: S.text3, marginTop: 4, lineHeight: 1.4 }}>• {c}</div>)}
         <MethodNote text={result.method} />
       </div>

@@ -2310,6 +2310,7 @@ RS_TOOL_LABELS = {
     "vegetation_drought_index": "Vegetation Drought Index (VCI/TCI/VHI)",
     "night_lights": "Night Lights (VIIRS)",
     "gedi_forest_structure": "Forest Structure (GEDI)",
+    "timelapse": "Timelapse (Landsat)",
 }
 
 RS_GLOSSARY = [
@@ -2337,6 +2338,7 @@ RS_GLOSSARY = [
     ("cf_cvg", "Number of cloud-free observations behind a monthly VIIRS composite pixel. Zero means no information for that month, not darkness."),
     ("GEDI footprint", "A ~25 m spot sampled by the GEDI spaceborne lidar on the ISS; footprints lie along orbit tracks (about every 60 m along-track), so GEDI samples an area rather than mapping it wall-to-wall. Coverage is limited to 51.6\u00b0N\u201351.6\u00b0S."),
     ("rh98 / AGBD", "rh98 is the GEDI relative height at 98% of the waveform, used here as canopy top height (m). AGBD is the model-predicted aboveground biomass density (Mg/ha) per footprint, reported with its own standard error \u2014 a model estimate, not a field measurement."),
+    ("Annual median composite", "For each calendar year, the per-pixel median of all cloud-masked scenes, so transient clouds and shadows drop out. Seasons are not controlled, so frames from wetter or drier years can differ in colour without any land change."),
 ]
 
 
@@ -2507,6 +2509,19 @@ def _rs_metric_rows(tool: str, result: Dict[str, Any]) -> List[Tuple[str, str, s
                 rows.append(("Biomass AGBD \u2014 mean / \u03c3", f"{_fmt_num(bm.get('mean'), 1)} / {_fmt_num(bm.get('std_dev'), 1)}", "Mg/ha"))
                 rows.append(("Biomass model standard error (mean per footprint)", _fmt_num(bm.get("mean_prediction_se"), 1), "Mg/ha"))
                 rows.append(("Biomass footprints (per km\u00b2)", f"{bm.get('footprints')} ({_fmt_num(bm.get('footprints_per_km2'), 2)})", ""))
+        elif tool == "timelapse":
+            frames = result.get("frames") or []
+            if frames:
+                rows.append(("Frames (years)", f"{len(frames)} ({result.get('years', ['N/A', 'N/A'])[0]}\u2013{result.get('years', ['N/A', 'N/A'])[1]})", ""))
+                first, last = frames[0], frames[-1]
+                rows.append((f"Mean NDVI \u2014 {first.get('year')} / {last.get('year')}", f"{_fmt_num(first.get('mean_ndvi'), 3)} / {_fmt_num(last.get('mean_ndvi'), 3)}", ""))
+                rows.append((f"Scenes \u2014 {first.get('year')} / {last.get('year')}", f"{first.get('scene_count')} / {last.get('scene_count')}", ""))
+            if result.get("skipped_years"):
+                rows.append(("Years skipped (no clear coverage)", ", ".join(str(y) for y in result["skipped_years"]), ""))
+            ta = result.get("ndvi_trend") or {}
+            if ta.get("status") == "ok":
+                rows.append(("NDVI trend (Mann-Kendall)", f"{ta.get('trend')} (p = {_fmt_num(ta.get('p_value'), 4)})", ""))
+                rows.append(("Sen's slope", _fmt_num(ta.get("sens_slope_per_year"), 4), "NDVI per year"))
     except Exception as e:
         logger.warning(f"_rs_metric_rows failed for tool={tool}: {type(e).__name__}: {e}")
     return rows
