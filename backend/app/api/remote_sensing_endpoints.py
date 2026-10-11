@@ -106,6 +106,10 @@ TOOLS = {
         "label": "Night Lights (VIIRS)", "needs_dates": True,
         "description": "Monthly night-time light radiance trend (an economic-activity proxy) — VIIRS Day/Night Band, ~464m, from 2014.",
     },
+    "gedi_forest_structure": {
+        "label": "Forest Structure (GEDI)", "needs_dates": True,
+        "description": "Canopy height (rh98) and aboveground biomass density from GEDI spaceborne-lidar footprints, with footprint counts. Sampled along orbit tracks, 51.6N-51.6S, from 2019.",
+    },
 }
 
 
@@ -220,6 +224,10 @@ def _dispatch_tool(req: RemoteSensingRequest):
         if not req.start_date or not req.end_date:
             raise ValueError("night_lights requires start_date and end_date.")
         return rs.compute_night_lights(req.aoi_geojson, req.start_date, req.end_date)
+    elif req.tool == "gedi_forest_structure":
+        if not req.start_date or not req.end_date:
+            raise ValueError("gedi_forest_structure requires start_date and end_date.")
+        return rs.compute_gedi_forest_structure(req.aoi_geojson, req.start_date, req.end_date)
     else:
         raise ValueError(f"Unknown tool: {req.tool}. Valid: {list(TOOLS)}")
 
