@@ -12,13 +12,20 @@ Each fetcher returns a list of IntelEvent dicts ready to broadcast.
 
 import asyncio
 import logging
+import hashlib
+import re
 import httpx
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 # ── Shared schema ─────────────────────────────────────────────────────────────
+def _iso_z(dt: datetime) -> str:
+    """Naive-UTC ISO string with a trailing Z — the format every consumer of event['ts'] already expects."""
+    return dt.replace(tzinfo=None).isoformat() + "Z"
+
+
 def _event(
     source: str,
     tag: str,
@@ -28,9 +35,21 @@ def _event(
     lon: float,
     severity: str = "info",   # info | warn | critical
     meta: dict = None,
+    ts: Optional[str] = None,      # the event's REAL time when the source provides one; defaults to "now"
+    uid: Optional[str] = None,     # stable identity of the underlying real-world event, same on every poll
+    dedup: str = "spatial",        # "spatial": also collapse near-duplicates (11 km cell / 30 min); "uid": exact identity only
 ) -> dict:
-    return {
-        "id": f"{source}-{lat:.3f}-{lon:.3f}-{datetime.utcnow().timestamp():.0f}",
+    """Shared event schema.
+
+    `uid`/`ts` matter for a consistent feed: previously `id` and `ts` were both minted from the moment of FETCH, so the
+    same earthquake got a new id and a new timestamp on every poll and re-entered the feed once the 30-minute spatial
+    dedup window lapsed, and a freshly restarted server stamped its whole backfill as "now". With a source-derived uid
+    the id is stable across polls and restarts, and with the real event time the feed has the same order whenever it is built.
+    """
+    event_id = (f"{source}-{hashlib.sha1(uid.encode()).hexdigest()[:12]}" if uid
+                else f"{source}-{lat:.3f}-{lon:.3f}-{datetime.utcnow().timestamp():.0f}")
+    out = {
+        "id": event_id,
         "source": source,
         "tag": tag,
         "title": title,
@@ -38,9 +57,13 @@ def _event(
         "lat": lat,
         "lon": lon,
         "severity": severity,
-        "ts": datetime.utcnow().isoformat() + "Z",
+        "ts": ts or (datetime.utcnow().isoformat() + "Z"),
         "meta": meta or {},
     }
+    if uid:
+        out["uid"] = uid
+        out["dedup"] = dedup
+    return out
 
 
 # ── USGS Earthquake Feed ──────────────────────────────────────────────────────
@@ -69,8 +92,12 @@ async def fetch_usgs(client: httpx.AsyncClient, since_minutes: int = 60) -> list
             mag = props.get("mag", 0) or 0
             place = props.get("place", "Unknown location")
             severity = "critical" if mag >= 6.0 else "warn" if mag >= 5.0 else "info"
+            t_ms = props.get("time")
             events.append(_event(
                 source="USGS",
+                ts=_iso_z(datetime.fromtimestamp(t_ms / 1000, timezone.utc)) if isinstance(t_ms, (int, float)) else None,
+                uid=f"USGS:{f['id']}",
+                dedup="uid",
                 tag="SEISMIC",
                 title=f"M{mag:.1f} — {place}",
                 detail=f"Magnitude {mag:.1f} event at depth {depth:.0f}km. {place}.",
@@ -154,8 +181,15 @@ def _parse_firms_csv(text: str, source_id: str, max_events: int = 80) -> list[di
                 )
 
             severity = "critical" if frp > 500 else "warn" if frp > 100 else "info"
+            try:  # acq_time is HHMM UTC and may arrive without leading zeros
+                acq_dt = datetime.strptime(f"{acq_date} {acq_time.strip().zfill(4)}", "%Y-%m-%d %H%M")
+                acq_ts = _iso_z(acq_dt)
+            except ValueError:
+                acq_ts = None
             events.append(_event(
                 source="NASA FIRMS",
+                ts=acq_ts,
+                uid=f"FIRMS:{source_id}:{lat:.4f}:{lon:.4f}:{acq_date}:{acq_time}",
                 tag=f"ACTIVE FIRE · {source_id}",
                 title=f"Fire hotspot — FRP {frp:.0f} MW",
                 detail=(
@@ -271,6 +305,11 @@ async def fetch_gdelt(client: httpx.AsyncClient) -> list[dict]:
             return []
 
         _gdelt_last_url = gkg_url  # only mark as seen once the fetch actually succeeded
+        m_ts = re.search(r"(\d{14})\.gkg\.csv\.zip", gkg_url)
+        try:  # the GKG file name is its publish time (YYYYMMDDHHMMSS, UTC)
+            gkg_ts = _iso_z(datetime.strptime(m_ts.group(1), "%Y%m%d%H%M%S")) if m_ts else None
+        except ValueError:
+            gkg_ts = None
 
         import zipfile, io, csv
         zf = zipfile.ZipFile(io.BytesIO(zresp.content))
@@ -395,6 +434,8 @@ async def fetch_gdelt(client: httpx.AsyncClient) -> list[dict]:
                 severity = "critical" if tone < -5 else "warn" if tone < -2 else "info"
                 events.append(_event(
                     source="GDELT",
+                    ts=gkg_ts,
+                    uid=f"GDELT:{row[0]}" if row and row[0] else None,
                     tag=f"NEWS · {matched_theme.split('_')[0][:18].upper()}",
                     title=f"{clean_theme} — {loc_name}",
                     detail=(
@@ -602,6 +643,7 @@ async def fetch_acled(
                 severity = "info"
             events.append(_event(
                 source="ACLED",
+                uid="ACLED:" + hashlib.sha1(f"{date}|{location}|{event_type}|{actor}|{lat:.4f}|{lon:.4f}|{notes[:60]}".encode()).hexdigest()[:16],
                 tag=f"CONFLICT · {event_type.upper()}",
                 title=f"{event_type} — {location}",
                 detail=f"{actor}{f' ({actor_type})' if actor_type else ''}"

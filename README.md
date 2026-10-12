@@ -236,7 +236,14 @@ Every satellite analysis (the 9 Analyze-tab metrics, the agricultural risk score
 
 ## Real-Time Intelligence Feeds
 
-An asynchronous scheduler maintains persistent polling loops, deduplicating and broadcasting events to connected clients via WebSocket.
+An asynchronous scheduler maintains persistent polling loops, deduplicating events into one server-side store and broadcasting them to connected clients via WebSocket.
+
+**One shared feed for every visitor.** The server owns a single canonical feed; every device mirrors it rather than building its own from "whatever arrived since I opened the page":
+* **Same list for everyone** — `GET /api/v1/intel/feed` and the WebSocket snapshot return the identical, deterministically ordered list (newest first by event time, capped at 500, with each source's newest 40 events always included so a high-volume source cannot crowd a quiet one out). A new visitor, a device that has been open for hours, and a reconnecting phone all show the same events.
+* **Never stale, never obstructed** — there is deliberately no fixed "refresh every hour" cache, which would hide new events for up to an hour. Instead the serialized feed is cached *per version*: it is rebuilt the instant any event is ingested or expires, so a cache can never hide new data, while concurrent visitors between changes share one pre-serialized copy. The response carries an `ETag` (the feed's identity) and `Cache-Control: no-cache`, so clients revalidate and receive a tiny `304` until something actually changes.
+* **Devices converge** — events are identified by a stable id and de-duplicated, a reconnect *replaces* the list instead of prepending a second snapshot, counters come from the server, and a device re-syncs when the server reports it fell behind, when a background tab becomes visible, and on a slow conditional check (a `304` while nothing changed).
+* **Real event identity and time** — each event carries a stable `uid` (the source's own id where one exists) and, for USGS, FIRMS and GDELT, the event's real time rather than the moment it was fetched. The same earthquake no longer re-enters the feed on every poll, nearby *distinct* earthquakes (aftershocks) are no longer dropped by the spatial de-duplication, and a freshly started server rebuilds the same ordering. ACLED keeps its ingestion time because its dates are day-level.
+* **Survives restarts** — a cold start backfills the full 24-hour window (previously 6 hours). If `REDIS_URL` is set, the newest events are also persisted (compressed, written when the feed changes and on shutdown) and restored on start, so a server that spun down on a free tier comes back with the feed it had. Without Redis it simply rebuilds from the sources; GDELT only exposes its latest 15-minute file, so its history after a cold start is thinner than on a long-running server.
 
 | Source | Interval | Feeds |
 | --- | --- | --- |
@@ -290,6 +297,8 @@ Credibility is the stated priority, so this section separates what *is* tested f
 **Engine tests.** `backend/tests/` holds a sanity and invariant suite for the crop-suitability engine (schema validity of every crop profile, paired irrigation tests, constraint/explanation invariants, endpoint fuzzing) and a regression report. These run on approximate regional fixtures and are a **behavioural check, not accuracy evidence**.
 
 **Statistics modules** (`trend_stats.py`, `accuracy_stats.py`) are pure Python and unit-tested against known/hand-worked cases.
+
+**Intel-feed tests** (`tests/test_intel_feed.py`) check that two visitors get the identical feed over REST and WebSocket, that the per-version cache can never hide a new event, `ETag`/`304` behaviour, identity-based de-duplication (and that aftershocks survive it), order-independence, per-source fairness, expiry, restore-after-restart without replaying history to clients, and failure-silent persistence.
 
 **Timelapse and video tests** (`tests/test_timelapse_media.py`, `tests/test_spectra_timelapse.py`) encode real GIF and MP4 files from synthetic frames, check the Earth-Engine-host-only URL guard, period/label maths and error paths, and include a regression guard for a bug that only appears on live Earth Engine (arithmetic on images drops `system:time_start`, which silently emptied the drought index's date filters).
 
@@ -353,7 +362,7 @@ Vayu/
 │   │   ├── trend_stats.py             # Mann-Kendall + Sen's slope
 │   │   ├── accuracy_stats.py          # confusion matrix, OA/kappa, producer's/user's accuracy
 │   │   ├── report_generator.py        # source-cited PDF reports (Analyze, Agri, Spectra)
-│   │   ├── intel/                     # Vessel/aircraft tracking, GDELT/USGS/FIRMS/ACLED ingestion, ACLED CAST forecast,
+│   │   ├── intel/                     # Shared intel-feed store (versioned, cached, optionally persisted), vessel/aircraft tracking, GDELT/USGS/FIRMS/ACLED ingestion, ACLED CAST forecast,
 │   │   │                             #   dark-vessel detection, sanctions, EDGAR exposure, macro, market indices,
 │   │   │                             #   chokepoint-market correlation, economic blocs, strategic sites,
 │   │   │                             #   supply-chain/business-risk scoring, commodity prices
@@ -407,7 +416,8 @@ FRED_API_KEY=your-fred-key
 ADMIN_API_KEY=your-chosen-admin-key
 ADMIN_EMAIL=you@example.com
 
-# Spectra result cache -- optional; falls back to an in-memory cache (and silently falls back again if Redis is unreachable)
+# Optional Redis: caches Spectra results and persists the intel feed across restarts; both fall back to in-memory (and silently
+# fall back again if Redis is unreachable)
 REDIS_URL=rediss://...
 
 # Historical mandi price trend (CEDA) -- optional
@@ -495,7 +505,8 @@ Spectra `tool` values: `spectral_indices`, `spectral_composites`, `terrain`, `lu
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/events` &middot; `/events/aoi` &middot; `WS /ws` &middot; `/sources` &middot; `/stats` | Historical / live multi-source intel feed |
+| `GET` | `/feed` | The shared intel feed: one identical, versioned copy for every visitor (`ETag` / `304`; rebuilt the moment an event arrives) |
+| `GET` | `/events` &middot; `/events/aoi` &middot; `WS /ws` &middot; `/sources` &middot; `/stats` | Filtered/paginated events; live WebSocket (snapshot = the shared feed, then events, each carrying the feed version and server counters); sources and store statistics |
 | `GET` | `/vessels` &middot; `/vessels/chokepoints` &middot; `/vessels/stats` &middot; `/aircraft` &middot; `/aircraft/stats` &middot; `/satellites/tle` | Live vessel / aircraft / satellite tracking |
 | `GET` | `/business-risk` &middot; `/dark-vessels` &middot; `/sanctions-screen` &middot; `/seismic-disruption` | Chokepoint risk score and its components |
 | `GET` | `/edgar-exposure/{chokepoint}` &middot; `/geo-tone` | SEC filings; GDELT regional sentiment |

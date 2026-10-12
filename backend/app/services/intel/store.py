@@ -5,8 +5,10 @@ No Redis needed for V1 — fits comfortably in memory for 10k events.
 """
 
 import asyncio
+import json
 import logging
 import hashlib
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 from collections import deque
@@ -17,6 +19,10 @@ logger = logging.getLogger(__name__)
 MAX_EVENTS = 2000          # max events held in memory
 EVENT_TTL_HOURS = 24       # events older than this are purged
 DEDUP_WINDOW_MINUTES = 30  # suppress duplicate events within this window
+
+# The ONE feed every visitor is served (REST /intel/feed and the WebSocket snapshot are the same list).
+FEED_LIMIT = 500           # events in the canonical feed (the client keeps at most this many too)
+FEED_PER_SOURCE_MIN = 40   # newest events of EACH source are always included, so a noisy source can't crowd a quiet one out
 
 
 class IntelStore:
@@ -34,6 +40,13 @@ class IntelStore:
     def __init__(self):
         self._events: deque = deque(maxlen=MAX_EVENTS)
         self._seen_hashes: dict[str, datetime] = {}  # hash -> first seen
+        self._seen_uids: dict[str, datetime] = {}    # stable source identity -> first seen (exact-duplicate guard)
+        # Feed versioning: every change to the stored events bumps the version, which invalidates the cached serialized
+        # feed (so a cache can NEVER hide new data) and lets clients detect "my copy is stale" by comparing one string.
+        self._boot_id = secrets.token_hex(3)   # distinguishes processes: version numbers restart from 0 on every boot
+        self._version = 0
+        self._updated_at = datetime.utcnow()
+        self._feed_cache: dict = {}
         self._lock = asyncio.Lock()
         self._subscribers: set = set()   # WebSocket queues
         self._stats = {
@@ -57,6 +70,11 @@ class IntelStore:
         return hashlib.md5(key.encode()).hexdigest()[:12]
 
     def _is_duplicate(self, event: dict) -> bool:
+        uid = event.get("uid")
+        if uid and uid in self._seen_uids:
+            return True            # exact same real-world event we already hold
+        if uid and event.get("dedup") == "uid":
+            return False           # identity-only sources (e.g. USGS): near-by distinct events are NOT duplicates
         h = self._dedup_hash(event)
         if h not in self._seen_hashes:
             self._seen_hashes[h] = datetime.utcnow()
@@ -79,6 +97,8 @@ class IntelStore:
                     self._stats["total_deduplicated"] += 1
                     continue
                 self._events.appendleft(event)
+                if event.get("uid"):
+                    self._seen_uids[event["uid"]] = datetime.utcnow()
                 accepted.append(event)
 
             # Purge expired seen hashes to prevent memory leak
@@ -86,6 +106,10 @@ class IntelStore:
             self._seen_hashes = {
                 k: v for k, v in self._seen_hashes.items() if v > cutoff
             }
+            uid_cutoff = datetime.utcnow() - timedelta(hours=EVENT_TTL_HOURS + 1)
+            self._seen_uids = {k: v for k, v in self._seen_uids.items() if v > uid_cutoff}
+            if accepted:
+                self._bump()
 
         # Broadcast new events to all WebSocket subscribers
         if accepted:
@@ -108,6 +132,7 @@ class IntelStore:
             expired = before - len(self._events)
             self._stats["total_expired"] += expired
             if expired:
+                self._bump()
                 logger.info(f"Store: purged {expired} expired events")
 
     # ── Query ─────────────────────────────────────────────────────────────────
@@ -169,6 +194,97 @@ class IntelStore:
         merged.sort(key=lambda e: e.get("ts", ""), reverse=True)
         return merged[:total_limit]
 
+    # ── Canonical shared feed ─────────────────────────────────────────────────
+    def _bump(self):
+        """Call (under the lock) whenever the stored events change."""
+        self._version += 1
+        self._updated_at = datetime.utcnow()
+        self._feed_cache.clear()
+
+    @property
+    def feed_id(self) -> str:
+        """Identity of the current feed contents: changes whenever they do. Same string on every device."""
+        return f"{self._boot_id}.{self._version}"
+
+    def get_feed(self, limit: int = FEED_LIMIT, per_source_min: int = FEED_PER_SOURCE_MIN) -> list[dict]:
+        """THE feed: deterministic, so every caller at the same moment gets the identical list.
+
+        Newest-first by event time (id as tie-break), cut to `limit`, but each source's newest `per_source_min` events are
+        always kept — otherwise a high-volume source (FIRMS) would crowd a low-volume one (GDELT) out of the top N.
+        """
+        order = sorted(self._events, key=lambda e: (e.get("ts", ""), e.get("id", "")), reverse=True)
+        keep_ids: set = set()
+        per_source: dict[str, int] = {}
+        for e in order:
+            src = e.get("source", "unknown")
+            if per_source.get(src, 0) < per_source_min:
+                per_source[src] = per_source.get(src, 0) + 1
+                keep_ids.add(e["id"])
+        chosen = list(keep_ids)
+        for e in order:
+            if len(chosen) >= limit:
+                break
+            if e["id"] not in keep_ids:
+                keep_ids.add(e["id"])
+                chosen.append(e["id"])
+        chosen_set = set(chosen)
+        return [e for e in order if e["id"] in chosen_set]   # newest-first; can exceed `limit` only by the per-source guarantee
+
+    def stats_snapshot(self) -> dict:
+        """Server-side counters over the WHOLE store (identical for everyone), cached per version."""
+        cached = self._feed_cache.get("stats")
+        if cached is None:
+            s = self.get_stats()
+            cached = {"total": s["current_events"], "by_source": s["by_source"], "by_severity": s["by_severity"]}
+            self._feed_cache["stats"] = cached
+        return cached
+
+    def feed_response(self, limit: int = FEED_LIMIT) -> dict:
+        """{feed_id, etag, body(bytes)} for the canonical feed, serialized ONCE per (version, limit) and reused by every
+        request until the next change — so N concurrent visitors cost one serialization, yet can never be served stale data."""
+        key = ("feed", limit)
+        hit = self._feed_cache.get(key)
+        if hit is None:
+            events = self.get_feed(limit)
+            payload = {
+                "feed_id": self.feed_id,
+                "generated_at": self._updated_at.isoformat() + "Z",   # when the CONTENT last changed (not per request)
+                "count": len(events),
+                "stats": self.stats_snapshot(),
+                "events": events,
+            }
+            body = json.dumps(payload, separators=(",", ":"), default=str).encode()
+            hit = {"feed_id": self.feed_id, "etag": f'W/"{self.feed_id}-{limit}"', "body": body, "events": events}
+            self._feed_cache[key] = hit
+        return hit
+
+    def newest_events(self, n: int) -> list[dict]:
+        """Newest-by-time events, for persistence."""
+        return sorted(self._events, key=lambda e: (e.get("ts", ""), e.get("id", "")), reverse=True)[:n]
+
+    async def restore(self, events: list[dict]) -> int:
+        """Reload previously persisted events (e.g. after a restart/spin-down) WITHOUT broadcasting them. Returns count loaded."""
+        cutoff = datetime.utcnow() - timedelta(hours=EVENT_TTL_HOURS)
+        loaded = 0
+        async with self._lock:
+            for e in sorted(events, key=lambda x: x.get("ts", "")):   # oldest first so the newest ends up leftmost
+                try:
+                    if datetime.fromisoformat(e["ts"].rstrip("Z")) <= cutoff:
+                        continue
+                    if e.get("uid") and e["uid"] in self._seen_uids:
+                        continue
+                    self._events.appendleft(e)
+                    if e.get("uid"):
+                        self._seen_uids[e["uid"]] = datetime.utcnow()
+                    self._seen_hashes.setdefault(self._dedup_hash(e), datetime.utcnow())
+                    loaded += 1
+                except (KeyError, ValueError, TypeError):
+                    continue
+            if loaded:
+                self._bump()
+        logger.info(f"Store: restored {loaded} persisted events")
+        return loaded
+
     def get_stats(self) -> dict:
         source_counts = {}
         severity_counts = {"info": 0, "warn": 0, "critical": 0}
@@ -187,6 +303,9 @@ class IntelStore:
     def subscribe(self, queue: asyncio.Queue):
         self._subscribers.add(queue)
         logger.info(f"Store: +subscriber (total={len(self._subscribers)})")
+
+    def is_subscribed(self, queue: asyncio.Queue) -> bool:
+        return queue in self._subscribers
 
     def unsubscribe(self, queue: asyncio.Queue):
         self._subscribers.discard(queue)
