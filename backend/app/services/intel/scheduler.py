@@ -26,6 +26,7 @@ from datetime import datetime
 
 from .fetchers import fetch_all_intel, fetch_usgs, fetch_firms, fetch_gdelt, fetch_acled, fetch_opensky
 from .store import intel_store
+from . import feed_persistence
 from .vessel_store import vessel_store, CHOKEPOINTS
 from .aircraft_store import aircraft_store
 from . import satellite_tle
@@ -62,6 +63,8 @@ INTERVAL_AQI    = 60 * 60   # matches air_quality.CACHE_TTL_SECONDS — CPCB sta
 INTERVAL_CHOKEPOINT_SNAPSHOT = 15 * 60   # matches timeseries_store's baseline sampling assumption
                              # themselves only report hourly, no benefit polling tighter
 INTERVAL_PURGE  = 30 * 60
+INTERVAL_FEED_PERSIST = 60           # write the feed to Redis (if configured) when it has changed
+INITIAL_BACKFILL_MINUTES = 24 * 60   # cold-start backfill = the full 24 h feed window (was 6 h)
 
 
 class IntelScheduler:
@@ -91,13 +94,22 @@ class IntelScheduler:
             return
         self._running = True
 
+        # Restore the feed persisted before the last shutdown (no-op without Redis), so a restarted server
+        # comes back with the same feed it had instead of rebuilding a thinner one from scratch.
+        try:
+            persisted = await asyncio.to_thread(feed_persistence.load)
+            if persisted:
+                await intel_store.restore(persisted)
+        except Exception as e:
+            logger.warning(f"Intel scheduler: feed restore skipped: {e}")
+
         # Initial fetch — populate store immediately on startup
         logger.info("Intel scheduler: initial fetch starting...")
         try:
             events = await fetch_all_intel(
                 acled_email=self.acled_email,
                 acled_password=self.acled_password,
-                since_minutes=360,   # last 6h on first boot
+                since_minutes=INITIAL_BACKFILL_MINUTES,   # the full feed window, so a cold start matches steady state
             )
             await intel_store.ingest(events)
             logger.info(f"Intel scheduler: initial fetch complete — {len(events)} events loaded")
@@ -106,6 +118,7 @@ class IntelScheduler:
 
         # Launch per-source polling loops
         self._tasks = [
+            asyncio.create_task(self._persist_feed_loop(), name="persist-feed"),
             asyncio.create_task(self._poll_usgs(),   name="poll-usgs"),
             asyncio.create_task(self._poll_firms(),  name="poll-firms"),
             asyncio.create_task(self._poll_gdelt(),  name="poll-gdelt"),
@@ -123,8 +136,26 @@ class IntelScheduler:
         ]
         logger.info(f"Intel scheduler: {len(self._tasks)} polling tasks started")
 
+    async def _persist_feed_loop(self):
+        """Write the newest events to Redis whenever the feed has changed (no-op without Redis)."""
+        last = None
+        while self._running:
+            try:
+                await asyncio.sleep(INTERVAL_FEED_PERSIST)
+                if intel_store.feed_id != last:
+                    last = intel_store.feed_id
+                    await asyncio.to_thread(feed_persistence.save, intel_store.newest_events(feed_persistence.MAX_PERSISTED_EVENTS))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"Intel scheduler: feed persist failed: {e}")
+
     async def stop(self):
         """Gracefully cancel all polling tasks."""
+        try:  # last write on the way down, so the next start has everything up to now
+            await asyncio.to_thread(feed_persistence.save, intel_store.newest_events(feed_persistence.MAX_PERSISTED_EVENTS))
+        except Exception:
+            pass
         self._running = False
         for task in self._tasks:
             task.cancel()

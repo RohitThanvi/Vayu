@@ -42,9 +42,9 @@ from datetime import datetime
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, Query, Request, Response, WebSocket, WebSocketDisconnect, HTTPException
 
-from ..services.intel.store import intel_store
+from ..services.intel.store import intel_store, FEED_LIMIT
 from ..services.intel.scheduler import get_scheduler
 from ..services.intel.vessel_store import vessel_store, CATEGORY_LABELS, CHOKEPOINTS
 from ..services.intel.aircraft_store import aircraft_store
@@ -74,6 +74,22 @@ router = APIRouter(prefix="/intel", tags=["intelligence"])
 
 
 # ── REST endpoints ─────────────────────────────────────────────────────────────
+
+@router.get("/feed", summary="The shared intel feed — one identical, versioned copy for every visitor")
+async def get_feed(request: Request, limit: int = Query(FEED_LIMIT, ge=1, le=FEED_LIMIT)):
+    """The canonical feed, the same list the WebSocket snapshot sends.
+
+    Not a time-based cache: the serialized copy is rebuilt the moment any new event is ingested (or one expires), so it can
+    never hide fresh data, but between changes every visitor is served the same pre-serialized bytes. `ETag` = feed identity,
+    so a client polling with If-None-Match gets a tiny 304 until something actually changes. `no-cache` means "revalidate
+    every time" — browsers and CDNs may store the copy but never reuse it without asking us first.
+    """
+    cached = intel_store.feed_response(limit)
+    headers = {"ETag": cached["etag"], "Cache-Control": "no-cache"}
+    if request.headers.get("if-none-match") == cached["etag"]:
+        return Response(status_code=304, headers=headers)
+    return Response(content=cached["body"], media_type="application/json", headers=headers)
+
 
 @router.get("/events", summary="Get paginated intelligence events")
 async def get_events(
@@ -186,11 +202,13 @@ async def intel_websocket(websocket: WebSocket):
         # share, not a plain "last 50 overall" that a noisy source can
         # dominate (see get_snapshot()'s docstring for the confirmed
         # real-world case this fixes: GDELT events being crowded out).
-        snapshot = intel_store.get_snapshot()
+        feed = intel_store.feed_response()
         await websocket.send_json({
             "type": "snapshot",
-            "count": len(snapshot),
-            "data": snapshot,
+            "feed_id": feed["feed_id"],
+            "count": len(feed["events"]),
+            "data": feed["events"],           # the SAME list GET /intel/feed serves — every visitor starts identical
+            "stats": intel_store.stats_snapshot(),
         })
 
         # Ping task — keep connection alive
@@ -201,7 +219,10 @@ async def intel_websocket(websocket: WebSocket):
                     await websocket.send_json({
                         "type": "ping",
                         "ts": datetime.utcnow().isoformat() + "Z",
-                        "store_size": intel_store.get_stats()["current_events"],
+                        "store_size": intel_store.stats_snapshot()["total"],
+                        # lets a device whose copy has drifted (dropped message, slow connection, sleeping tab) notice and resync
+                        "feed_id": intel_store.feed_id,
+                        "stats": intel_store.stats_snapshot(),
                     })
                 except Exception:
                     break
@@ -210,6 +231,13 @@ async def intel_websocket(websocket: WebSocket):
         async def send_events():
             while True:
                 try:
+                    # The store drops a subscriber whose queue overflowed (slow device). Previously that device then went
+                    # silently deaf; now it is told to resync from the canonical feed and re-subscribed.
+                    if not intel_store.is_subscribed(queue):
+                        while not queue.empty():
+                            queue.get_nowait()
+                        intel_store.subscribe(queue)
+                        await websocket.send_json({"type": "resync", "feed_id": intel_store.feed_id})
                     event = await asyncio.wait_for(queue.get(), timeout=1.0)
                     # Apply client-side filter
                     src_ok = (active_filters["sources"] is None or
@@ -217,7 +245,8 @@ async def intel_websocket(websocket: WebSocket):
                     sev_ok = (active_filters["severities"] is None or
                               event["severity"] in active_filters["severities"])
                     if src_ok and sev_ok:
-                        await websocket.send_json({"type": "event", "data": event})
+                        await websocket.send_json({"type": "event", "data": event, "feed_id": intel_store.feed_id,
+                                                   "stats": intel_store.stats_snapshot()})
                 except asyncio.TimeoutError:
                     continue
                 except Exception:
