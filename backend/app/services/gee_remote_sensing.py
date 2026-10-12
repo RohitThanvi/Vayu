@@ -781,7 +781,10 @@ def compute_atmospheric_composition(aoi: Dict, start_date: str, end_date: str) -
             reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
             geometry=region, scale=1113, maxPixels=1e9, bestEffort=True, tileScale=4,
         ).getInfo()
-        return {"mean": stats.get(band), "std_dev": stats.get(f"{band}_stdDev"), "scene_count": n}
+        # .combine() suffixes each sub-reducer's output with its name, so the keys are
+        # "<band>_mean" / "<band>_stdDev" — a bare "<band>" key never exists (that mismatch
+        # made every gas report "No data" even when scenes were found).
+        return {"mean": stats.get(f"{band}_mean"), "std_dev": stats.get(f"{band}_stdDev"), "scene_count": n}
 
     no2 = _mean_band("COPERNICUS/S5P/OFFL/L3_NO2", "tropospheric_NO2_column_number_density")
     so2 = _mean_band("COPERNICUS/S5P/OFFL/L3_SO2", "SO2_column_number_density")
