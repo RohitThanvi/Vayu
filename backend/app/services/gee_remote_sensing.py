@@ -1527,7 +1527,10 @@ def compute_flood_mapping(aoi: Dict, pre_start: str, pre_end: str, post_start: s
     ratio = post_composite.divide(pre_composite)
     flood_raw = ratio.gt(FLOOD_RATIO_THRESHOLD)
 
-    permanent_water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(90)
+    # .unmask(0): JRC occurrence is MASKED wherever water was never observed (i.e. most
+    # dry land). Without it, permanent_water.Not() is masked there too, and the .And()
+    # below silently drops every previously-dry pixel — exactly where new floods occur.
+    permanent_water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").unmask(0).gte(90)
     flood_mask = flood_raw.And(permanent_water.Not()).rename("flood")
 
     flood_km2 = _calc_area_km2(flood_mask, region, scale=20)
@@ -2868,7 +2871,7 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
                 .focal_mean(FLOOD_SPECKLE_SMOOTHING_RADIUS_M, "circle", "meters")
             post = _s1_col(params["post_start"], params["post_end"]).filter(ee.Filter.eq("orbitProperties_pass", orbit)) \
                 .select(polarization).mean().focal_mean(FLOOD_SPECKLE_SMOOTHING_RADIUS_M, "circle", "meters")
-            permanent_water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gte(90)
+            permanent_water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").unmask(0).gte(90)
             flood_mask = post.divide(pre).gt(FLOOD_RATIO_THRESHOLD).And(permanent_water.Not()).selfMask()
             return _fetch_thumb_bytes(flood_mask, region, {"palette": ["#2166ac"]})
         if tool == "soil_moisture":
