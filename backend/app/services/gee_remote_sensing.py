@@ -29,6 +29,7 @@ import ee
 from .gee_client import (
     _polygon_geometry, _validate_date_range, _require_start_after,
     _cap_end_date, _mask_s2_clouds, _region_area_km2, _calc_area_km2, copernicus_dem,
+    _mask_landsat_clouds, _landsat89_collection,
 )
 from .satellite_imagery import _fetch_thumb_bytes
 from . import trend_stats
@@ -912,20 +913,11 @@ def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) 
     region = _polygon_geometry(aoi)
     end_ee = _cap_end_date(end_date)
 
-    def _collection(coll_id):
-        return (
-            ee.ImageCollection(coll_id)
-            .filterBounds(region).filterDate(ee.Date(start_date), end_ee)
-            .filter(ee.Filter.lt("CLOUD_COVER", 20))
-        )
-
-    col = _collection("LANDSAT/LC08/C02/T1_L2")
+    # Merge Landsat 8 + 9 (same helper as the Analyze tab) instead of "9 only if 8 has zero
+    # scenes", which discarded every Landsat 9 observation whenever Landsat 8 had even one.
+    col = _landsat89_collection(region, ee.Date(start_date), end_ee)
     scene_count = col.size().getInfo()
-    source = "Landsat 8"
-    if scene_count == 0:
-        col = _collection("LANDSAT/LC09/C02/T1_L2")
-        scene_count = col.size().getInfo()
-        source = "Landsat 9"
+    source = "Landsat 8 + 9"
     if scene_count == 0:
         return {
             "lst_celsius": None, "scene_count": 0, "source": None,
@@ -936,7 +928,10 @@ def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) 
             ),
         }
 
-    lst = col.map(
+    # Pixel-level QA_PIXEL cloud/shadow mask: scene-level CLOUD_COVER<20 still lets localized
+    # cloud through, and cloud-top temperatures drag the mean/min far too cold.
+    masked_col = col.map(_mask_landsat_clouds)
+    lst = masked_col.map(
         lambda img: img.select("ST_B10").multiply(0.00341802).add(149.0).subtract(273.15).rename("LST_C")
     ).mean().clip(region)
 
@@ -945,17 +940,26 @@ def compute_land_surface_temperature(aoi: Dict, start_date: str, end_date: str) 
         geometry=region, scale=30, maxPixels=1e9, bestEffort=True, tileScale=4,
     ).getInfo()
 
-    valid_px = col.select("ST_B10").mosaic().mask().reduceRegion(
+    if stats.get("LST_C_mean") is None:
+        return {
+            "lst_celsius": None, "scene_count": scene_count, "source": source,
+            "method": (
+                f"{scene_count} Landsat scene(s) overlapped the AOI, but every pixel was cloud/shadow-masked "
+                "(or had no thermal data). Try a longer date window or a different season."
+            ),
+        }
+
+    valid_px = lst.mask().reduceRegion(
         reducer=ee.Reducer.mean(), geometry=region, scale=30, maxPixels=1e9, bestEffort=True, tileScale=4,
     ).getInfo()
-    valid_pixel_fraction = round((valid_px.get("ST_B10", 0) or 0), 4)
+    valid_pixel_fraction = round((valid_px.get("LST_C", 0) or 0), 4)
 
     return {
         "lst_celsius": {
-            "mean": round(stats.get("LST_C_mean", 0) or 0, 2),
-            "min": round(stats.get("LST_C_min", 0) or 0, 2),
-            "max": round(stats.get("LST_C_max", 0) or 0, 2),
-            "std_dev": round(stats.get("LST_C_stdDev", 0) or 0, 2),
+            "mean": round(stats["LST_C_mean"], 2),
+            "min": round(stats["LST_C_min"], 2),
+            "max": round(stats["LST_C_max"], 2),
+            "std_dev": round(stats.get("LST_C_stdDev") or 0, 2),
         },
         "scene_count": scene_count,
         "source": source,
@@ -2831,15 +2835,10 @@ def get_report_thumbnail(tool: str, aoi: Dict, **params) -> Optional[bytes]:
             start_date, end_date = params["start_date"], params["end_date"]
             end_ee = _cap_end_date(end_date)
 
-            def _lst_collection(coll_id):
-                return (ee.ImageCollection(coll_id).filterBounds(region)
-                        .filterDate(ee.Date(start_date), end_ee).filter(ee.Filter.lt("CLOUD_COVER", 20)))
-            col = _lst_collection("LANDSAT/LC08/C02/T1_L2")
-            if col.size().getInfo() == 0:
-                col = _lst_collection("LANDSAT/LC09/C02/T1_L2")
+            col = _landsat89_collection(region, ee.Date(start_date), end_ee)
             if col.size().getInfo() == 0:
                 return None
-            lst = col.map(lambda img: img.select("ST_B10").multiply(0.00341802).add(149.0).subtract(273.15).rename("LST_C")).mean().clip(region)
+            lst = col.map(_mask_landsat_clouds).map(lambda img: img.select("ST_B10").multiply(0.00341802).add(149.0).subtract(273.15).rename("LST_C")).mean().clip(region)
             return _fetch_thumb_bytes(lst, region, {"min": 0, "max": 45, "palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"]})
         if tool == "surface_water_dynamics":
             occurrence = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").clip(region)
