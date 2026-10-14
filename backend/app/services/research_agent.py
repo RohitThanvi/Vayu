@@ -51,6 +51,7 @@ from .llm_client import _get_client, _extract_json
 from . import data_router
 from . import geocode_util
 from . import siting_agent
+from . import marine_agent
 
 logger = logging.getLogger(__name__)
 
@@ -725,7 +726,8 @@ def _merge_siting(result: Dict[str, Any], siting: Dict[str, Any]) -> Dict[str, A
 
 
 async def _ask_inner(question: str, region_context: Optional[str], aoi_geojson: Optional[dict],
-                     diag: dict, state: dict, progress) -> Dict[str, Any]:
+                     diag: dict, state: dict, progress, history: Optional[List[dict]] = None,
+                     user_position: Optional[dict] = None) -> Dict[str, Any]:
     live = await data_router.try_answer_from_live_data(question)
     if live is not None:
         live.setdefault("answer", live.get("reasoning"))
@@ -734,6 +736,16 @@ async def _ask_inner(question: str, region_context: Optional[str], aoi_geojson: 
         live["search_results_used"] = 0
         live["diagnostics"] = diag
         return live
+
+    # Sea questions ("is it safe to fish near Porbandar tomorrow?") go to the marine agent: live
+    # forecast data + a deterministic safety screen, in the user's language. It returns None if
+    # its planner decides the question isn't actually about the sea, and we carry on normally.
+    if marine_agent.looks_marine(question, history):
+        marine = await marine_agent.answer(question, history=history, region_hint=region_context, aoi=aoi_geojson,
+                                           user_position=user_position, llm=_llm_json, progress=progress)
+        if marine is not None:
+            marine["diagnostics"] = {**diag, **(marine.get("diagnostics") or {})}
+            return marine
 
     timed_out = False
     try:
@@ -783,7 +795,8 @@ async def _ask_inner(question: str, region_context: Optional[str], aoi_geojson: 
 
 
 async def ask(question: str, region_context: Optional[str] = None, aoi_geojson: Optional[dict] = None,
-              progress: Optional[Callable[[str, int], None]] = None) -> Dict[str, Any]:
+              progress: Optional[Callable[[str, int], None]] = None, history: Optional[List[dict]] = None,
+              user_position: Optional[dict] = None) -> Dict[str, Any]:
     """Never raises. Always returns an answer dict (possibly low-confidence, with
     `gaps` and `diagnostics` explaining what was and wasn't found). `progress(label, pct)`
     is called as stages complete so the UI can show what the agent is doing."""
@@ -793,7 +806,7 @@ async def ask(question: str, region_context: Optional[str] = None, aoi_geojson: 
     state: Dict[str, Any] = {"best": None}
     try:
         result = await asyncio.wait_for(
-            _ask_inner(question, region_context, aoi_geojson, diag, state, progress),
+            _ask_inner(question, region_context, aoi_geojson, diag, state, progress, history, user_position),
             TOTAL_BUDGET_S + SITING_BUDGET_S + 10)
     except asyncio.TimeoutError:
         diag["notes"].append("overall time budget exceeded")
