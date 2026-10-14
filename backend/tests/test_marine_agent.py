@@ -404,3 +404,134 @@ def test_ask_routes_sea_questions_to_marine_and_others_to_web(monkeypatch):
     monkeypatch.setattr(ra, "search_web", fake_search)
     res = run(ra.ask("is it safe to sail, any boats near Kochi", None, None, None, [], None))
     assert "marine" not in res or not res.get("marine")                         # fell through to normal research
+
+
+# ── resilience: 429 back-off, stale cache, MET Norway fallback ────────────────
+import httpx
+
+
+_REAL_CLIENT = httpx.AsyncClient          # captured once, so repeated mocks never wrap each other
+
+
+def _mock_client(monkeypatch, handler):
+    real = _REAL_CLIENT
+    monkeypatch.setattr(marine_data.httpx, "AsyncClient",
+                        lambda **kw: real(transport=httpx.MockTransport(handler), **{k: v for k, v in kw.items() if k != "transport"}))
+
+    async def no_sleep(*a, **k):
+        return None
+    monkeypatch.setattr(marine_data.asyncio, "sleep", no_sleep)
+
+
+def test_429_is_retried_then_succeeds(monkeypatch):
+    seq = iter([429, 429, 200])
+    waits = []
+
+    def handler(request):
+        code = next(seq)
+        return httpx.Response(code, json={"ok": 1}, headers={"retry-after": "1"} if code == 429 else {})
+    _mock_client(monkeypatch, handler)
+
+    async def rec(d, *a, **k):
+        waits.append(d)
+    monkeypatch.setattr(marine_data.asyncio, "sleep", rec)
+    data, err = run(marine_data._get_json("https://api.open-meteo.com/v1/forecast", {"latitude": 1}))
+    assert data == {"ok": 1} and err is None and waits == [1.0, 1.0]            # honoured Retry-After
+
+
+def test_429_exhaustion_gives_plain_words_without_urls(monkeypatch):
+    _mock_client(monkeypatch, lambda request: httpx.Response(429, json={}))
+    data, err = run(marine_data._get_json("https://api.open-meteo.com/v1/forecast?secret=1", {"latitude": 21.65}))
+    assert data is None and "rate-limited" in err and "http" not in err.lower().replace("(http 429)", "")
+    assert "open-meteo.com" not in err and "latitude" not in err
+
+
+def test_timeouts_and_5xx_are_classified(monkeypatch):
+    def boom(request):
+        raise httpx.ConnectTimeout("slow")
+    _mock_client(monkeypatch, boom)
+    assert "timed out" in run(marine_data._get_json("https://x.test", {}))[1]
+    _mock_client(monkeypatch, lambda request: httpx.Response(503))
+    assert "HTTP 503" in run(marine_data._get_json("https://x.test", {}))[1]
+
+
+def _age_cache(seconds):
+    for k, (ts, v) in list(marine_data._cache.items()):
+        marine_data._cache[k] = (ts - seconds, v)
+
+
+def test_stale_weather_copy_used_when_live_call_fails(monkeypatch):
+    state = {"weather_down": False}
+
+    async def fake_get(url, params, headers=None):
+        if "marine" in url:
+            return _om_marine([1.0] * 48), None
+        if state["weather_down"]:
+            return None, "rate-limited by the weather service (HTTP 429)"
+        return _om_weather(), None
+    monkeypatch.setattr(marine_data, "_get_json", fake_get)
+    first = run(marine_data.fetch_forecast(21.65, 69.66, days=2))
+    assert first["ok"] and first["hours"][3]["gust_kmh"] == 25.0
+
+    _age_cache(31 * 60)                                  # fresh window (30 min) has passed
+    state["weather_down"] = True
+    second = run(marine_data.fetch_forecast(21.65, 69.66, days=2))
+    assert second["ok"] and second["hours"][3]["gust_kmh"] == 25.0              # stale copy, not a hole
+    assert any("copy fetched 31 min ago" in n for n in second["notes"])
+
+    _age_cache(4 * 3600)                                 # now too old to trust
+    third = run(marine_data.fetch_forecast(21.65, 69.66, days=2))
+    assert third["hours"][3]["gust_kmh"] is None and any("Weather forecast unavailable" in n for n in third["notes"])
+    assert not any("https://" in n for n in third["notes"])
+
+
+def test_met_norway_fallback_gives_wind_but_never_a_go(monkeypatch):
+    monkeypatch.setattr(marine_data, "MET_UA", "VayuTest/1.0 test@example.com")
+    t0 = dt.datetime(2026, 10, 13, 18, 30)               # UTC; local = +05:30
+    ts = [{"time": (t0 + dt.timedelta(hours=i)).strftime("%Y-%m-%dT%H:00:00Z"),
+           "data": {"instant": {"details": {"wind_speed": 6.0}},                     # 6 m/s = 21.6 km/h mean
+                    "next_1_hours": {"summary": {"symbol_code": "partlycloudy_day"}, "details": {"precipitation_amount": 0.0}}}}
+          for i in range(60)]
+
+    async def fake_get(url, params, headers=None):
+        if "marine" in url:
+            return _om_marine([0.8] * 48), None
+        if "api.met.no" in url or "met.no" in url:
+            assert headers and "VayuTest" in headers["User-Agent"]
+            return {"properties": {"timeseries": ts}}, None
+        return None, "rate-limited by the weather service (HTTP 429)"
+    monkeypatch.setattr(marine_data, "_get_json", fake_get)
+    fc = run(marine_data.fetch_forecast(21.65, 69.66, days=2))
+    assert fc["ok"] and fc["gust_estimated"] and "MET Norway" in fc["attribution"]
+    h = fc["hours"][10]
+    assert h["wind_kmh"] == pytest.approx(21.6) and h["gust_kmh"] is None and h["gust_est_kmh"] == pytest.approx(32.4)
+    assert any("ESTIMATED" in n for n in fc["notes"])
+
+    now = sea_safety.now_local(fc, NOW_UTC)
+    start, end, _ = sea_safety.resolve_window("tomorrow", now)
+    a = sea_safety.assess(fc, start, end, "large", now=now)                         # large boat: mild conditions would be GO
+    assert a["verdict"] == "CAUTION" and "cannot be issued" in a["reasons"][0] and a["context"]["gust_estimated"]
+    assert all(p["state"] != "GO" for p in a["series"] if p["state"] != "UNKNOWN") and not a["go_windows"]
+    assert any("ESTIMATED" in hz["label"] for hz in a["hazards"])
+
+
+def test_met_norway_fallback_is_off_without_a_user_agent(monkeypatch):
+    monkeypatch.setattr(marine_data, "MET_UA", "")
+    calls = []
+
+    async def fake_get(url, params, headers=None):
+        calls.append(url)
+        if "marine" in url:
+            return _om_marine([0.8] * 48), None
+        return None, "rate-limited by the weather service (HTTP 429)"
+    monkeypatch.setattr(marine_data, "_get_json", fake_get)
+    fc = run(marine_data.fetch_forecast(21.65, 69.66, days=2))
+    assert not any("met.no" in c for c in calls) and not fc.get("gust_estimated")
+    now = sea_safety.now_local(fc, NOW_UTC)
+    start, end, _ = sea_safety.resolve_window("tomorrow", now)
+    assert sea_safety.assess(fc, start, end, "small", now=now)["verdict"] == "UNKNOWN"      # fail-safe preserved
+
+
+def test_measured_gust_beats_the_estimate():
+    fc = make_forecast(overrides=lambda i, t: {"gust_est_kmh": 99.0})                          # estimate present but a real gust exists
+    assert _assess(fc)["verdict"] == "GO"
