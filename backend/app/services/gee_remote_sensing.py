@@ -286,6 +286,10 @@ def compute_terrain_analysis(aoi: Dict) -> Dict[str, Any]:
         geometry=region, scale=30, maxPixels=1e9, bestEffort=True, tileScale=4,
     ).getInfo()
 
+    if slope_stats.get("slope_mean") is None or elev_stats.get("DEM_mean") is None:
+        # Previously this fell through to `or 0` and reported a perfectly flat, sea-level AOI.
+        raise ValueError("No DEM data for this AOI (terrain statistics came back empty).")
+
     # Aspect is circular (0deg == 360deg) — a plain mean is meaningless
     # (mean of 350 and 10 should be ~0/360, not 180). Compute the
     # circular mean via unit vectors instead.

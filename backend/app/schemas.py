@@ -75,6 +75,19 @@ class FinalQueryResponse(BaseModel):
     places: Optional[List[Dict[str, Any]]] = None   # 0+ candidate spots — see research_agent.py
     source_urls: Optional[List[str]] = None
     search_results_used: Optional[int] = None
+    answer: Optional[str] = None                     # research agent: direct text answer (always present, even with no places)
+    key_points: Optional[List[Dict[str, Any]]] = None   # [{point, urls}] — claims with their sources
+    gaps: Optional[List[str]] = None                 # what the research could NOT establish
+    diagnostics: Optional[Dict[str, Any]] = None     # rounds, queries, search provider, pages fetched/failed — for debugging "why did it fail"
+    # Combined (web + satellite + OpenStreetMap) siting agent — see services/siting_agent.py
+    ranking: Optional[List[Dict[str, Any]]] = None   # candidates ranked by a deterministic, auditable screening score
+    use_case: Optional[str] = None
+    web_summary: Optional[str] = None                # the web-research-only answer, kept alongside the data-backed recommendation
+    tradeoffs: Optional[List[str]] = None
+    conflicts: Optional[List[str]] = None            # web claims that disagree with measurements
+    next_steps: Optional[List[str]] = None
+    siting_caveats: Optional[List[str]] = None
+    methodology: Optional[str] = None
     live_data_source: Optional[str] = None   # set when answered from Vayu's own live feeds (AIS/ADS-B/USGS/FIRMS), not web search
 
 

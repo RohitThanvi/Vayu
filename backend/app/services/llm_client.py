@@ -164,7 +164,7 @@ def parse_natural_language_query(text: str) -> StructuredQuery:
                 {"role": "user", "content": f"<user_query>{text}</user_query>"},
             ],
             temperature=0.0,
-            max_tokens=500,
+            max_tokens=1000,   # gpt-oss reasoning tokens share this budget; 500 risked truncated JSON
             reasoning_effort="low",
         )
         raw = resp.choices[0].message.content
