@@ -26,6 +26,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 _HEADERS = {"User-Agent": "VAYU-Geocode/1.0"}
 
 # Matches the "2km" convention already used elsewhere in this project
@@ -88,3 +89,26 @@ async def geocode_to_aoi(query: str, fallback_radius_km: float = DEFAULT_FALLBAC
 
     logger.warning(f"geocode_to_aoi: unexpected geometry type {geom.get('type')!r} for '{query}'")
     return None
+
+
+async def reverse_geocode_name(lat: float, lon: float) -> Optional[str]:
+    """Human-readable place name for a point ("Mansarovar, Jaipur, Rajasthan, India"),
+    used so questions like "near this area" about a drawn AOI have a location the
+    research agent can actually search for."""
+    try:
+        async with httpx.AsyncClient(timeout=10, headers=_HEADERS) as client:
+            resp = await client.get(
+                NOMINATIM_REVERSE_URL,
+                params={"lat": lat, "lon": lon, "format": "jsonv2", "zoom": 12, "addressdetails": 1},
+            )
+            resp.raise_for_status()
+            addr = (resp.json() or {}).get("address", {}) or {}
+    except Exception as e:
+        logger.warning(f"reverse_geocode_name failed for ({lat}, {lon}): {e}")
+        return None
+    parts = []
+    for k in ("suburb", "city_district", "city", "town", "village", "county", "state_district", "state", "country"):
+        v = addr.get(k)
+        if v and v not in parts:
+            parts.append(v)
+    return ", ".join(parts[:4]) or None

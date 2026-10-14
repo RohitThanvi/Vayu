@@ -1254,6 +1254,9 @@ function ResearchResultPanel({ result }) {
       <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, textTransform:'uppercase' }}>
         Research Agent
       </div>
+      {result.answer && result.place_name && (
+        <div style={{ fontSize:13, color:S.text2, lineHeight:1.6 }}>{result.answer}</div>
+      )}
       {result.place_name ? (
         <>
           <div style={{ fontSize:18, fontWeight:700, color:'#c9a86a' }}>{result.place_name}</div>
@@ -1266,6 +1269,78 @@ function ResearchResultPanel({ result }) {
       ) : (
         <div style={{ fontSize:13, color:S.text2, lineHeight:1.6 }}>
           {result.reasoning || "Couldn't find a specific answer grounded in web search results for this question."}
+        </div>
+      )}
+      {Array.isArray(result.ranking) && result.ranking.length > 0 && (
+        <div>
+          <div style={{ fontSize:11, color:S.text3, fontFamily:S.mono, letterSpacing:1, textTransform:'uppercase', marginBottom:6 }}>
+            Evidence-based ranking{result.use_case ? ` — ${result.use_case}` : ''}
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {result.ranking.map((r, i) => (
+              <details key={i} style={{ background:S.surface2, border:`1px solid ${S.border}`, borderRadius:4, padding:'8px 10px' }}>
+                <summary style={{ cursor:'pointer', fontSize:13, color:S.text2, display:'flex', justifyContent:'space-between', gap:8 }}>
+                  <span>{r.rank ? `#${r.rank} ` : ''}{r.name}</span>
+                  <span style={{ fontFamily:S.mono, color: r.score == null ? S.text3 : '#c9a86a' }}>
+                    {r.score == null ? 'not scored' : `${r.score}/100`} · {r.evidence_level} evidence
+                  </span>
+                </summary>
+                {(r.flags || []).length > 0 && (
+                  <div style={{ fontSize:11, color:'#e8746b', marginTop:6 }}>⚠ {r.flags.join(' · ')}</div>
+                )}
+                <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:3 }}>
+                  {(r.criteria || []).map((c, j) => (
+                    <div key={j} style={{ display:'flex', justifyContent:'space-between', gap:8, fontSize:11, fontFamily:S.mono, color:S.text3 }}>
+                      <span>{c.label}</span>
+                      <span>{c.value == null ? 'no data' : `${c.value} ${c.unit}`}{c.utility != null ? ` · ${Math.round(c.utility * 100)}%` : ''} · w{Math.round(c.weight * 100)}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ))}
+          </div>
+          {Array.isArray(result.tradeoffs) && result.tradeoffs.length > 0 && (
+            <ul style={{ margin:'8px 0 0', paddingLeft:18, fontSize:12, color:S.text2, lineHeight:1.5 }}>
+              {result.tradeoffs.map((t, i) => <li key={i}>{t}</li>)}
+            </ul>
+          )}
+          {Array.isArray(result.conflicts) && result.conflicts.length > 0 && (
+            <div style={{ fontSize:12, color:'#e8c15c', marginTop:8, lineHeight:1.5 }}>
+              <b>Web vs measurements:</b> {result.conflicts.join(' · ')}
+            </div>
+          )}
+          {Array.isArray(result.next_steps) && result.next_steps.length > 0 && (
+            <div style={{ fontSize:12, color:S.text2, marginTop:8, lineHeight:1.5 }}>
+              <b>Next steps:</b> {result.next_steps.join(' · ')}
+            </div>
+          )}
+          {Array.isArray(result.siting_caveats) && result.siting_caveats.length > 0 && (
+            <div style={{ fontSize:11, color:S.text3, marginTop:8, lineHeight:1.5 }}>{result.siting_caveats.join(' ')}</div>
+          )}
+          {result.methodology && (
+            <div style={{ fontSize:10.5, color:S.text3, marginTop:8, lineHeight:1.5 }}>{result.methodology}</div>
+          )}
+        </div>
+      )}
+      {Array.isArray(result.key_points) && result.key_points.length > 0 && (
+        <div>
+          <div style={{ fontSize:11, color:S.text3, fontFamily:S.mono, letterSpacing:1, textTransform:'uppercase', marginBottom:6 }}>Key findings</div>
+          <ul style={{ margin:0, paddingLeft:18, display:'flex', flexDirection:'column', gap:4 }}>
+            {result.key_points.map((kp, i) => (
+              <li key={i} style={{ fontSize:12, color:S.text2, lineHeight:1.5 }}>
+                {kp.point}
+                {(kp.urls || []).map((u, j) => (
+                  <a key={j} href={u} target="_blank" rel="noreferrer" style={{ color:S.accent, marginLeft:6, textDecoration:'none' }}>[{j + 1}]</a>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {Array.isArray(result.gaps) && result.gaps.length > 0 && (
+        <div style={{ fontSize:12, color:S.text3, lineHeight:1.5 }}>
+          <span style={{ fontFamily:S.mono, letterSpacing:1, textTransform:'uppercase', fontSize:11 }}>Not established: </span>
+          {result.gaps.join(' · ')}
         </div>
       )}
       {result.source_urls && result.source_urls.length > 0 && (
@@ -2546,9 +2621,14 @@ export default function App({ tier = 'full', onChangeTier }) {
       let remaining = candidatePlaces.length;
       candidatePlaces.forEach(place => {
         const geocodeQuery = result.region ? `${place.place_name}, ${result.region}` : place.place_name;
-        fetch(`https://nominatim.openstreetmap.org/search?` + new URLSearchParams({
-          q: geocodeQuery, format: 'jsonv2', limit: '1',
-        })).then(r => r.json()).then(matches => {
+        // The siting agent already geocoded + measured these candidates server-side;
+        // reuse its coordinates so the circle sits exactly where the evidence was measured.
+        const matchesPromise = (place.lat != null && place.lon != null)
+          ? Promise.resolve([{ lat: place.lat, lon: place.lon }])
+          : fetch(`https://nominatim.openstreetmap.org/search?` + new URLSearchParams({
+              q: geocodeQuery, format: 'jsonv2', limit: '1',
+            })).then(r => r.json());
+        matchesPromise.then(matches => {
           remaining -= 1;
           if (!matches || matches.length === 0 || !mapRef.current) return;
           const { lat, lon } = matches[0];
@@ -2557,7 +2637,8 @@ export default function App({ tier = 'full', onChangeTier }) {
           const circle = L.circle([latNum, lonNum], {
             radius: radiusM, color:'#c9a86a', weight:2, fillColor:'#c9a86a', fillOpacity:0.15,
           }).addTo(mapRef.current);
-          circle.bindPopup(`<b>${escapeHtml(place.place_name)}</b><br/>${escapeHtml(place.reasoning)}`);
+          const scoreLine = place.score != null ? `<br/>Screening score: <b>${place.score}/100</b> (#${place.rank})` : '';
+          circle.bindPopup(`<b>${escapeHtml(place.place_name)}</b>${scoreLine}<br/>${escapeHtml(place.reasoning)}`);
           layersRef.current.push(circle);
           // Center-point marker — the circle alone doesn't mark the exact
           // suggested spot, only the general radius around it. A small
@@ -2573,7 +2654,7 @@ export default function App({ tier = 'full', onChangeTier }) {
             iconSize: [26, 26], iconAnchor: [13, 13],
           });
           const centerMarker = L.marker([latNum, lonNum], { icon: centerIcon }).addTo(mapRef.current);
-          centerMarker.bindPopup(`<b>${escapeHtml(place.place_name)}</b><br/>${escapeHtml(place.reasoning)}`);
+          centerMarker.bindPopup(`<b>${escapeHtml(place.place_name)}</b>${scoreLine}<br/>${escapeHtml(place.reasoning)}`);
           layersRef.current.push(centerMarker);
           allBounds.push(circle.getBounds());
           // Fit to every successfully-geocoded circle once all requests

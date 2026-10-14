@@ -43,6 +43,22 @@ as before.
 
 from typing import Any, Dict, Optional
 
+import re
+from functools import lru_cache
+
+
+@lru_cache(maxsize=None)
+def _word_re(words: tuple) -> "re.Pattern":
+    # Whole-word/phrase match. Plain `w in q` made "ship" fire on "relationship",
+    # "count" on "country", "plane" on "planet", "macro" on "macroeconomic"...
+    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(w) for w in words) + r")(?![a-z0-9])")
+
+
+def _has(q: str, words) -> bool:
+    return bool(_word_re(tuple(words)).search(q))
+
+
+
 from .intel.vessel_store import vessel_store, CHOKEPOINTS, CATEGORY_LABELS
 from .intel.aircraft_store import aircraft_store
 from .intel.store import intel_store
@@ -84,7 +100,7 @@ RISK_SCORE_WORDS  = ["risk score", "how risky", "business risk"]
 
 def _match_chokepoint(text: str) -> Optional[str]:
     for key, aliases in CHOKEPOINT_ALIASES.items():
-        if any(alias in text for alias in aliases):
+        if _has(text, aliases):
             return key
     return None
 
@@ -103,7 +119,7 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
     choke_key_hint = _match_chokepoint(q)  # computed once, reused by several blocks below
 
     # ── EDGAR exposure — which public companies disclosed exposure to a chokepoint ──
-    if any(w in q for w in EDGAR_WORDS) and choke_key_hint:
+    if _has(q, EDGAR_WORDS) and choke_key_hint:
         data = await edgar_exposure.exposure_for_chokepoint(choke_key_hint)
         display_name = CHOKEPOINT_DISPLAY[choke_key_hint]
         filings = data["filings"]
@@ -126,7 +142,7 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
         }
 
     # ── Dark vessels / AIS gaps ─────────────────────────────────────────────
-    if any(w in q for w in DARK_VESSEL_WORDS):
+    if _has(q, DARK_VESSEL_WORDS):
         flags = dark_vessels.list_flags(limit=10)
         if flags:
             bits = "; ".join(f["note"] for f in flags[:5])
@@ -143,7 +159,7 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
         }
 
     # ── Sanctions screening ──────────────────────────────────────────────────
-    if any(w in q for w in SANCTIONS_WORDS):
+    if _has(q, SANCTIONS_WORDS):
         hits = await sanctions.screen_vessels(vessel_store.query(limit=5000))
         status = sanctions.get_list_status()
         if not status["loaded"]:
@@ -162,7 +178,7 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
         }
 
     # ── Geopolitical tone (GDELT, aggregated) ───────────────────────────────
-    if any(w in q for w in TONE_WORDS):
+    if _has(q, TONE_WORDS):
         events = intel_store.query(sources=["GDELT"], limit=1000)
         regions = geo_tone_mod.compute_tone_regions(events)
         if regions:
@@ -177,7 +193,7 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
         }
 
     # ── Macro context (FRED + World Bank, including India) ─────────────────
-    if any(w in q for w in MACRO_WORDS):
+    if _has(q, MACRO_WORDS):
         snap = await macro_mod.get_macro_snapshot()
         bits = []
         for label, v in snap.get("us", {}).items():
@@ -193,7 +209,7 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
         }
 
     # ── Unified business risk score for a named chokepoint ──────────────────
-    if any(w in q for w in RISK_SCORE_WORDS) and choke_key_hint:
+    if _has(q, RISK_SCORE_WORDS) and choke_key_hint:
         bbox_pair = CHOKEPOINTS[choke_key_hint]
         (min_lat, min_lon), (max_lat, max_lon) = bbox_pair
         vessels_in_area = vessel_store.query(bbox=(min_lat, min_lon, max_lat, max_lon))
@@ -215,7 +231,7 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
         }
 
     # ── Maritime (AIS) — only for the 7 named chokepoints already monitored ──
-    if any(w in q for w in MARITIME_WORDS):
+    if _has(q, MARITIME_WORDS):
         choke_key = choke_key_hint
         if not choke_key:
             return None   # don't guess a bbox for an untracked region
@@ -250,7 +266,7 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
         }
 
     # ── Aviation (ADS-B) — global count only ──────────────────────────────
-    if any(w in q for w in AVIATION_WORDS) and any(k in q for k in COUNT_WORDS):
+    if _has(q, AVIATION_WORDS) and _has(q, COUNT_WORDS):
         stats = aircraft_store.get_stats()
         return {
             "places": [],
@@ -269,7 +285,7 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
 
     # ── Earthquake near a specific chokepoint (more specific than the ────────
     # generic global USGS count below — checked first when both apply) ──────
-    if any(w in q for w in EARTHQUAKE_WORDS) and choke_key_hint:
+    if _has(q, EARTHQUAKE_WORDS) and choke_key_hint:
         events = intel_store.query(sources=["USGS"], limit=500)
         disruptions = [d for d in seismic_disruption.find_disruptions(events, min_magnitude=4.5) if d["chokepoint"] == choke_key_hint]
         display_name = CHOKEPOINT_DISPLAY[choke_key_hint]
@@ -286,7 +302,7 @@ async def try_answer_from_live_data(question: str) -> Optional[Dict[str, Any]]:
 
     # ── USGS earthquakes / NASA FIRMS fires — global recency count ────────
     for source_name, words in (("USGS", EARTHQUAKE_WORDS), ("NASA FIRMS", FIRE_WORDS)):
-        if any(w in q for w in words) and any(k in q for k in COUNT_WORDS):
+        if _has(q, words) and _has(q, COUNT_WORDS):
             events = intel_store.query(sources=[source_name], limit=500)
             return {
                 "places": [],

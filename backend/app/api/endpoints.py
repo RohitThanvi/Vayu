@@ -78,9 +78,13 @@ def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict
     # entirely and finalizes the job here.
     if not structured_query.in_scope:
         try:
-            _update_stage(request_id, "generating_summary", {"stage_label": "Researching (web search)"})
+            _update_stage(request_id, "generating_summary", {"stage_label": "Researching (web search)", "progress_pct": 30})
             import asyncio
-            answer = asyncio.run(research_agent.ask(text, structured_query.region))
+
+            def _research_progress(label: str, pct: int):
+                _update_stage(request_id, "generating_summary", {"stage_label": label, "progress_pct": pct})
+
+            answer = asyncio.run(research_agent.ask(text, structured_query.region, aoi_geojson, _research_progress))
         except Exception as e:
             logger.error(f"[{request_id}] Research agent error: {e}", exc_info=True)
             job_store.update(request_id, {"status": "failed", "error": f"Research agent failed: {str(e)}"})
@@ -100,6 +104,18 @@ def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict
             "source_urls": answer.get("source_urls", []),
             "search_results_used": answer.get("search_results_used", 0),
             "live_data_source": answer.get("live_data_source"),
+            "answer": answer.get("answer"),
+            "key_points": answer.get("key_points", []),
+            "gaps": answer.get("gaps", []),
+            "diagnostics": answer.get("diagnostics"),
+            "ranking": answer.get("ranking"),
+            "use_case": answer.get("use_case"),
+            "web_summary": answer.get("web_summary"),
+            "tradeoffs": answer.get("tradeoffs"),
+            "conflicts": answer.get("conflicts"),
+            "next_steps": answer.get("next_steps"),
+            "siting_caveats": answer.get("siting_caveats"),
+            "methodology": answer.get("methodology"),
         })
         logger.info(f"[{request_id}] Research agent complete: place_name={answer.get('place_name')!r}")
         return
