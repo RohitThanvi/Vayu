@@ -88,6 +88,7 @@ class FinalQueryResponse(BaseModel):
     next_steps: Optional[List[str]] = None
     siting_caveats: Optional[List[str]] = None
     methodology: Optional[str] = None
+    marine: Optional[Dict[str, Any]] = None          # marine agent: verdict card, hazards, forecast strip, geofence, trace, memory
     live_data_source: Optional[str] = None   # set when answered from Vayu's own live feeds (AIS/ADS-B/USGS/FIRMS), not web search
 
 

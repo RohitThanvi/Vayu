@@ -1,6 +1,6 @@
 import logging
 import uuid
-from typing import Dict, Any
+from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
@@ -13,7 +13,7 @@ from ..schemas import (
     JobStatusResponse,
     FinalQueryResponse,
 )
-from ..services import llm_client, gee_client, geoprocess, research_agent, geocode_util
+from ..services import llm_client, gee_client, geoprocess, research_agent, geocode_util, marine_agent
 from ..core.job_store import job_store
 
 logger = logging.getLogger(__name__)
@@ -42,20 +42,34 @@ def _update_stage(request_id: uuid.UUID, stage: str, extra: Dict[str, Any] = Non
     logger.info(f"[{request_id}] Stage: {stage} ({pct}%)")
 
 
-def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict):
+def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict, options: Optional[dict] = None):
     logger.info(f"[{request_id}] Background processing started")
     job_store.set(request_id, {"status": "processing", "stage": "queued", "progress_pct": 0})
 
+    options = options if isinstance(options, dict) else {}
+    convo = options.get("history") if isinstance(options.get("history"), list) else None
+    user_position = options.get("user_position") if isinstance(options.get("user_position"), dict) else None
+
     # ── 1. Parse NL query ──────────────────────────────────────────────────────
-    try:
-        _update_stage(request_id, "llm_parsing")
-        structured_query = llm_client.parse_natural_language_query(text)
-        _update_stage(request_id, "llm_parsed")
-        logger.info(f"[{request_id}] in_scope={structured_query.in_scope}, Metric={structured_query.metric}, Region={structured_query.region}")
-    except Exception as e:
-        logger.error(f"[{request_id}] LLM parse error: {e}", exc_info=True)
-        job_store.update(request_id, {"status": "failed", "error": f"Query parsing failed: {str(e)}"})
-        return
+    # Sea-safety / sea-conditions questions ("is it safe to fish near Porbandar tomorrow?",
+    # also follow-ups to one) skip the metric parser: they are not a change-detection query, and
+    # the parser would otherwise try to force them through the satellite pipeline. They are
+    # handled by the marine agent inside research_agent.ask(). An explicit "[Metric: ...]"
+    # selection from the UI always wins.
+    marine_first = marine_agent.looks_marine(text, convo) and not text.lstrip().startswith("[Metric:")
+    if marine_first:
+        from types import SimpleNamespace
+        structured_query = SimpleNamespace(in_scope=False, domain_relevant=True, region=None, metric=None, aoi_geojson=None)
+    else:
+        try:
+            _update_stage(request_id, "llm_parsing")
+            structured_query = llm_client.parse_natural_language_query(text)
+            _update_stage(request_id, "llm_parsed")
+            logger.info(f"[{request_id}] in_scope={structured_query.in_scope}, Metric={structured_query.metric}, Region={structured_query.region}")
+        except Exception as e:
+            logger.error(f"[{request_id}] LLM parse error: {e}", exc_info=True)
+            job_store.update(request_id, {"status": "failed", "error": f"Query parsing failed: {str(e)}"})
+            return
 
     # ── 1a. Off-topic / prompt-injection rejection ────────────────────────────
     # Not even a geospatial question at all — general chit-chat, an
@@ -78,13 +92,14 @@ def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict
     # entirely and finalizes the job here.
     if not structured_query.in_scope:
         try:
-            _update_stage(request_id, "generating_summary", {"stage_label": "Researching (web search)", "progress_pct": 30})
+            _update_stage(request_id, "generating_summary",
+                          {"stage_label": "Checking sea conditions" if marine_first else "Researching (web search)", "progress_pct": 30})
             import asyncio
 
             def _research_progress(label: str, pct: int):
                 _update_stage(request_id, "generating_summary", {"stage_label": label, "progress_pct": pct})
 
-            answer = asyncio.run(research_agent.ask(text, structured_query.region, aoi_geojson, _research_progress))
+            answer = asyncio.run(research_agent.ask(text, structured_query.region, aoi_geojson, _research_progress, convo, user_position))
         except Exception as e:
             logger.error(f"[{request_id}] Research agent error: {e}", exc_info=True)
             job_store.update(request_id, {"status": "failed", "error": f"Research agent failed: {str(e)}"})
@@ -116,6 +131,7 @@ def process_geospatial_query(request_id: uuid.UUID, text: str, aoi_geojson: dict
             "next_steps": answer.get("next_steps"),
             "siting_caveats": answer.get("siting_caveats"),
             "methodology": answer.get("methodology"),
+            "marine": answer.get("marine"),
         })
         logger.info(f"[{request_id}] Research agent complete: place_name={answer.get('place_name')!r}")
         return
@@ -234,7 +250,7 @@ async def create_query(query: QueryRequest, background_tasks: BackgroundTasks, r
     request_id = uuid.uuid4()
     job_store.set(request_id, {"status": "processing", "stage": "queued", "progress_pct": 0})
     background_tasks.add_task(
-        process_geospatial_query, request_id, query.text, query.aoi_geojson
+        process_geospatial_query, request_id, query.text, query.aoi_geojson, query.options
     )
     logger.info(f"[{request_id}] Query submitted: '{query.text[:80]}'")
     return QueryInitiatedResponse(request_id=request_id)

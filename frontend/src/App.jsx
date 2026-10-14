@@ -1247,7 +1247,93 @@ function MetricSelector({ selected, onChange }) {
 // genuinely different shape from a measured-metric result, so it gets
 // its own small panel rather than being squeezed into ResultsPanel's
 // metrics-table layout. ─────────────────────────────────────────────────────
+const MARINE_COLORS = { 'GO':'#7ec88f', 'CAUTION':'#e8c15c', 'NO-GO':'#e8746b', 'UNKNOWN':'#8a8f98' };
+const fmtLocal = (iso) => { try { const d = new Date(iso); return d.toLocaleString('en-GB', { weekday:'short', hour:'2-digit', minute:'2-digit' }); } catch { return iso; } };
+
+function MarineResultPanel({ result }) {
+  const m = result.marine || {};
+  const a = m.assessment;
+  const color = MARINE_COLORS[a?.verdict] || S.text3;
+  const label = (k, v) => v == null ? null : (
+    <div style={{ display:'flex', justifyContent:'space-between', gap:8, fontSize:11, fontFamily:S.mono, color:S.text3 }}><span>{k}</span><span>{v}</span></div>
+  );
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+      <div style={{ fontSize:13, color:S.text3, fontFamily:S.mono, letterSpacing:1.5, textTransform:'uppercase' }}>
+        Sea Safety Agent{m.language?.name && m.language.code !== 'en' ? ` · ${m.language.name}` : ''}
+      </div>
+      {a && (
+        <div style={{ border:`1px solid ${color}`, borderRadius:6, padding:'10px 12px', background:S.surface2 }}>
+          <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:8 }}>
+            <span style={{ fontSize:24, fontWeight:800, color, letterSpacing:1 }}>{a.verdict}</span>
+            <span style={{ fontSize:11, color:S.text3, fontFamily:S.mono }}>{m.location?.name} · {m.window_text} · {a.boat_label}</span>
+          </div>
+          <ul style={{ margin:'8px 0 0', paddingLeft:18, fontSize:12, color:S.text2, lineHeight:1.5 }}>
+            {(a.reasons || []).map((r, i) => <li key={i}>{r}</li>)}
+          </ul>
+        </div>
+      )}
+      <div style={{ fontSize:13, color:S.text2, lineHeight:1.7 }}>{result.answer}</div>
+      {m.geofence?.alerts?.length > 0 && (
+        <div style={{ border:'1px solid #e8746b', borderRadius:6, padding:'8px 10px', fontSize:12, color:'#e8746b', lineHeight:1.5 }}>
+          {m.geofence.alerts.map((al, i) => (
+            <div key={i}><b>{al.level}</b> — {al.message}{al.note ? ` ${al.note}` : ''} <span style={{ color:S.text3 }}>({al.source})</span></div>
+          ))}
+        </div>
+      )}
+      {a?.series?.length > 0 && (
+        <div>
+          <div style={{ fontSize:11, color:S.text3, fontFamily:S.mono, letterSpacing:1, textTransform:'uppercase', marginBottom:6 }}>Next 48 hours (local time)</div>
+          <div style={{ display:'flex', gap:1 }}>
+            {a.series.map((h, i) => (
+              <div key={i} title={`${fmtLocal(h.t)} · ${h.state}${h.wave_h != null ? ` · waves ${h.wave_h} m` : ''}${h.gust_kmh != null ? ` · gusts ${Math.round(h.gust_kmh)} km/h` : ''}`}
+                   style={{ flex:1, height:16, background: MARINE_COLORS[h.state] || S.text3, opacity:0.85, borderRadius:1 }} />
+            ))}
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, color:S.text3, fontFamily:S.mono, marginTop:3 }}>
+            <span>{fmtLocal(a.series[0].t)}</span><span>{fmtLocal(a.series[a.series.length - 1].t)}</span>
+          </div>
+        </div>
+      )}
+      {a?.go_windows?.length > 0 && a.verdict !== 'GO' && (
+        <div style={{ fontSize:12, color:S.text2, lineHeight:1.5 }}>
+          <b>Safer windows:</b> {a.go_windows.map(w => `${fmtLocal(w.start)} – ${fmtLocal(w.end)} (${w.hours} h)`).join(' · ')}
+        </div>
+      )}
+      {a?.hazards?.length > 0 && (
+        <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
+          {a.hazards.map((h, i) => (
+            <div key={i} style={{ display:'flex', justifyContent:'space-between', gap:8, fontSize:11, fontFamily:S.mono, color:S.text3 }}>
+              <span>{h.label}</span>
+              <span style={{ color: MARINE_COLORS[h.level] }}>{h.key === 'thunder' ? (h.peak ? 'forecast' : 'none') : `${h.peak} ${h.unit}`} · {h.level}</span>
+            </div>
+          ))}
+          {label('Swell (peak)', a.context?.swell_peak_m != null ? `${a.context.swell_peak_m} m` : null)}
+          {label('Sea temperature', a.context?.sst_c != null ? `${a.context.sst_c} °C` : null)}
+          {label('Current (peak)', a.context?.current_peak_kmh != null ? `${a.context.current_peak_kmh} km/h` : null)}
+          {label('Tide range', a.context?.tide_range_m != null ? `${a.context.tide_range_m} m` : null)}
+        </div>
+      )}
+      {m.limitations?.length > 0 && (
+        <div style={{ fontSize:11, color:S.text3, lineHeight:1.5 }}><b>Not available / caveats:</b> {m.limitations.join(' ')}</div>
+      )}
+      {m.trace?.length > 0 && (
+        <details style={{ fontSize:11, color:S.text3, fontFamily:S.mono }}>
+          <summary style={{ cursor:'pointer' }}>Agent trace ({m.trace.length} steps)</summary>
+          <div style={{ marginTop:6, display:'flex', flexDirection:'column', gap:3 }}>
+            {m.trace.map((t, i) => (
+              <div key={i}><span style={{ color: t.ok ? '#7ec88f' : '#e8c15c' }}>{t.ok ? '✓' : '!'}</span> {t.agent} · {t.action} · {t.ms} ms — {t.detail}</div>
+            ))}
+          </div>
+        </details>
+      )}
+      <div style={{ fontSize:10.5, color:S.text3, lineHeight:1.5 }}>{m.attribution} {m.disclaimer}</div>
+    </div>
+  );
+}
+
 function ResearchResultPanel({ result }) {
+  if (result.marine) return <MarineResultPanel result={result} />;
   const confColor = { high:'#7ec88f', medium:'#e8c15c', low:'#e8746b' }[result.confidence] || S.text3;
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
@@ -1913,6 +1999,7 @@ export default function App({ tier = 'full', onChangeTier }) {
   const spectraOverlayRef = useRef(null);
   const aqiLayerRef     = useRef(null);   // LayerGroup for CPCB AQI station markers
   const pollRef         = useRef(null);
+  const convoRef        = useRef([]);   // recent Q/A turns, echoed to the server so follow-ups ("and in the afternoon?") keep context
   const aoiBoundsRef    = useRef(null);
   const intelLayerRef   = useRef(null);   // LayerGroup for intel markers
   const intelMarkersRef = useRef({});     // id -> marker, for dedup
@@ -2532,9 +2619,15 @@ export default function App({ tier = 'full', onChangeTier }) {
     const savedAOI = drawnAOI;
     const text = selMetric ? `[Metric: ${selMetric}] ${queryText}` : queryText;
     try {
+      // "near me" questions need the device position; ask the browser only when the user said so.
+      const wantsPosition = /\bnear me\b|\bmy location\b|\bmy position\b/i.test(text);
+      const userPosition = wantsPosition && navigator.geolocation
+        ? await new Promise(resolve => navigator.geolocation.getCurrentPosition(
+            p => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }), () => resolve(null), { timeout: 4000 }))
+        : null;
       const res = await fetch(`${API_URL}/api/v1/query`, {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ text, aoi_geojson: savedAOI }),
+        body: JSON.stringify({ text, aoi_geojson: savedAOI, options: { history: convoRef.current.slice(-6), ...(userPosition ? { user_position: userPosition } : {}) } }),
       });
       if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.detail||`HTTP ${res.status}`); }
       const data = await res.json();
@@ -2547,6 +2640,10 @@ export default function App({ tier = 'full', onChangeTier }) {
             clearInterval(pollRef.current);
             const d = await r.json();
             setResult(d); setHistory(p => [d,...p.slice(0,19)]); setIsLoading(false); setJobStatus(null);
+            convoRef.current = [...convoRef.current,
+              { role:'user', content: text },
+              { role:'assistant', content: String(d.answer || d.reasoning || '').slice(0, 600), meta: d.marine?.memory || null },
+            ].slice(-8);
             return;
           }
           clearInterval(pollRef.current);
