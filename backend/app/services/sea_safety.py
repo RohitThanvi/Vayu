@@ -89,6 +89,16 @@ def _level(value: Optional[float], caution: Optional[float], nogo: Optional[floa
     return 0
 
 
+def _gust(h: Dict[str, Any]) -> Tuple[Optional[float], bool]:
+    """-> (gust km/h, estimated?). A measured/forecast gust always wins; the estimate (mean wind x 1.5,
+    only produced by the MET Norway fallback) is used so we can still warn, but it is flagged."""
+    g = h.get("gust_kmh")
+    if g is not None:
+        return g, False
+    est = h.get("gust_est_kmh")
+    return (est, True) if est is not None else (None, False)
+
+
 def _hour_levels(h: Dict[str, Any], cls: Dict[str, Any]) -> Dict[str, Optional[int]]:
     wc, ng = cls["wave_m"]
     gc, gn = cls["gust_kmh"]
@@ -96,7 +106,7 @@ def _hour_levels(h: Dict[str, Any], cls: Dict[str, Any]) -> Dict[str, Optional[i
     thunder = None if code is None else (cls["thunder"] if int(code) in THUNDER_CODES else 0)
     return {
         "wave": _level(h.get("wave_h"), wc, ng),
-        "gust": _level(h.get("gust_kmh"), gc, gn),
+        "gust": _level(_gust(h)[0], gc, gn),
         "thunder": thunder,
         "visibility": _level(h.get("vis_m"), *COMMON["visibility_m"], lower_is_worse=True),
         "rain": _level(h.get("precip_mm"), *COMMON["precip_mm_h"]),
@@ -109,11 +119,15 @@ def _overall(levels: Dict[str, Optional[int]]) -> Optional[int]:
     return max(vals) if vals else None
 
 
-def _hour_state(levels: Dict[str, Optional[int]]) -> str:
-    """Per-hour state; UNKNOWN unless both wave and wind are known (required inputs)."""
+def _hour_state(levels: Dict[str, Optional[int]], h: Optional[Dict[str, Any]] = None) -> str:
+    """Per-hour state; UNKNOWN unless both wave and wind are known (required inputs). If the gust is
+    only an estimate, the best this hour can be is CAUTION."""
     if levels["wave"] is None or levels["gust"] is None:
         return "UNKNOWN"
-    return LEVELS[_overall(levels)]
+    state = LEVELS[_overall(levels)]
+    if state == "GO" and h is not None and _gust(h)[1]:
+        return "CAUTION"
+    return state
 
 
 def assess(forecast: Dict[str, Any], start: dt.datetime, end: dt.datetime, boat_class: str = "small",
@@ -133,14 +147,14 @@ def assess(forecast: Dict[str, Any], start: dt.datetime, end: dt.datetime, boat_
 
     # ── whole-forecast per-hour states (for the strip and for "safer windows") ──
     states = [(t, h, _hour_levels(h, cls)) for t, h in hours]
-    series = [{"t": t.isoformat(timespec="minutes"), "state": _hour_state(lv),
-               "wave_h": h.get("wave_h"), "gust_kmh": h.get("gust_kmh")}
+    series = [{"t": t.isoformat(timespec="minutes"), "state": _hour_state(lv, h),
+               "wave_h": h.get("wave_h"), "gust_kmh": _gust(h)[0], "gust_estimated": _gust(h)[1]}
               for t, h, lv in states if now_floor <= t < now_floor + dt.timedelta(hours=48)]
 
     go_windows: List[Dict[str, Any]] = []
     run: List[dt.datetime] = []
     for t, h, lv in states + [(None, None, None)]:
-        if t is not None and t >= now_floor and _hour_state(lv) == "GO":
+        if t is not None and t >= now_floor and _hour_state(lv, h) == "GO":
             run.append(t)
             continue
         if len(run) >= 3:
@@ -164,14 +178,21 @@ def assess(forecast: Dict[str, Any], start: dt.datetime, end: dt.datetime, boat_
     gc, gn = cls["gust_kmh"]
     spec = [
         ("wave", "Wave height", "m", "wave_h", wc, wn, False, max),
-        ("gust", "Wind gusts", "km/h", "gust_kmh", gc, gn, False, max),
+        ("gust", "Wind gusts", "km/h", "_gust_eff", gc, gn, False, max),
         ("visibility", "Visibility", "m", "vis_m", COMMON["visibility_m"][0], COMMON["visibility_m"][1], True, min),
         ("rain", "Rainfall", "mm/h", "precip_mm", COMMON["precip_mm_h"][0], COMMON["precip_mm_h"][1], False, max),
         ("cape", "Storm energy (CAPE)", "J/kg", "cape", COMMON["cape"][0], COMMON["cape"][1], False, max),
     ]
+    est_hours = sum(1 for _, h in in_win if _gust(h)[1])
+    gust_estimated = est_hours > 0
     hazards: List[Dict[str, Any]] = []
     for key, label, unit, field, c_at, n_at, lower, agg in spec:
-        vals = [(h[field], t) for t, h, _ in win_levels if h.get(field) is not None]
+        if field == "_gust_eff":
+            vals = [(g, t) for t, h, _ in win_levels if (g := _gust(h)[0]) is not None]
+            if gust_estimated:
+                label = "Wind gusts (ESTIMATED from mean wind)"
+        else:
+            vals = [(h[field], t) for t, h, _ in win_levels if h.get(field) is not None]
         if not vals:
             continue
         peak_v, peak_t = agg(vals, key=lambda x: x[0])
@@ -208,8 +229,14 @@ def assess(forecast: Dict[str, Any], start: dt.datetime, end: dt.datetime, boat_
             word = "NO-GO" if hz["level"] == "NO-GO" else "caution"
             extreme = "down to" if hz["lower_is_worse"] else "up to"
             reasons.append(f"{hz['label']} {extreme} {hz['peak']:g} {hz['unit']} around {when} ({word} {sym} {thr:g} {hz['unit']} for a {cls['label']}).")
-        if verdict == "GO":
+        if verdict == "GO" and gust_estimated:
+            verdict = "CAUTION"
+            reasons = ["No measured wind-gust forecast was available (gusts were estimated from mean wind), so a GO cannot be issued. "
+                       "Treat conditions as unconfirmed and check official warnings."]
+        elif verdict == "GO":
             reasons = ["All checked hazards stay below the caution thresholds for this boat class throughout the window."]
+        elif gust_estimated:
+            reasons.append("Note: wind gusts here are estimated from mean wind, not forecast directly.")
 
     def vals_of(field):
         return [h[field] for _, h in in_win if h.get(field) is not None]
@@ -222,4 +249,4 @@ def assess(forecast: Dict[str, Any], start: dt.datetime, end: dt.datetime, boat_
         "tide_range_m": round(max(sl) - min(sl), 2) if len(sl) >= 2 else None,
     }
     return {**base, "verdict": verdict, "reasons": reasons, "hazards": hazards, "go_windows": go_windows,
-            "series": series, "context": context, "data_coverage": round(min(cov_wave, cov_gust), 2)}
+            "series": series, "context": {**context, "gust_estimated": gust_estimated}, "data_coverage": round(min(cov_wave, cov_gust), 2)}
