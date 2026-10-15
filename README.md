@@ -145,7 +145,9 @@ Results are cached (exact-match on tool + every parameter, 30-day TTL, Redis if 
 
 ## Business Intelligence
 
-**Tab: Business** — a wide, collapsible bottom panel with three sub-views (Live / Analysis / Economics), built specifically because cramming this much into a narrow sidebar made it unreadable.
+**Tab: Business** — a wide, collapsible bottom panel with five views (Live / Markets / Analysis / Economics / Alerts), built specifically because cramming this much into a narrow sidebar made it unreadable. Press **Ctrl/Cmd+K** anywhere for the command bar, and use **Daily brief (PDF)** in the panel header for a one-document summary.
+
+**What this is and is not.** The Business tab is a risk-and-context monitor for the physical world and for India, not a Bloomberg Terminal replacement. It does not have real-time licensed exchange data, fixed-income pricing, a professional messaging network or trade execution. Prices are reference quotes from Yahoo's unofficial API, typically 15–20 minutes delayed with no service-level guarantee, and **every figure carries its source, age and a STALE flag** (refreshed every 15 minutes; a symbol whose refresh fails keeps its last good quote, labelled stale, instead of vanishing).
 
 ### Live
 
@@ -158,13 +160,27 @@ Results are cached (exact-match on tool + every parameter, 30-day TTL, Redis if 
 * **Markets** — global stock indices (S&amp;P 500, Dow, Nasdaq, Nifty 50, Sensex, FTSE, Nikkei, Shanghai) and a *curated* set of bellwether equities tied to Vayu's own themes — energy majors (Reliance, ExxonMobil, Chevron), shipping/logistics (ZIM, FedEx) and defense (Lockheed, RTX) — rather than a generic ticker list.
 * **Conflict forecast** — ACLED CAST: a monthly political-violence forecast per country, up to six months ahead, shown as observed-vs-forecast bars and explicitly labelled indicative. CAST access is granted by ACLED separately from the event feed, so the UI reports a distinct "no CAST access" status instead of failing silently.
 
+### Markets
+
+* **Watchlist for any symbol** (up to 12; Yahoo symbols such as `RELIANCE.NS`, `TCS.NS`, `AAPL`, `INR=X`), saved in your browser, with interactive charts (1M–5Y). Symbols are validated and fetched through a capped, cached server endpoint, so a watchlist cannot be used to hammer the upstream source.
+* **India sector heatmap** — ten Nifty sector indices coloured by day change, with an honest "n of 10 available" (the sector symbols could not be live-checked from the build sandbox; any that Yahoo does not recognise are omitted rather than faked).
+* **Indices, currencies and the dollar index** (including USD/INR) beside the watchlist.
+* **One-page profiles** for a ticker or a strategic site (click "Open one-page profile" in a site's map tooltip, or use the command bar): live quote and price statistics (1m/3m/1y return, annualised volatility, max drawdown, position in the 52-week range — all descriptive, none a forecast) for tickers; signals, recent news and related bellwether tickers for sites; and linked chokepoints with their current risk band. Links exist only where already explicit in the code: the published chokepoint-bellwether mapping, and sites whose own description names a chokepoint.
+* **CSV exports** for markets and commodities.
+
+### Alerts
+
+Rules you set — a price crossing a level, a day move of at least N%, a chokepoint's risk band reaching elevated/critical, or a signal detected near a strategic site — checked every 5 minutes against one small `/intel/alerts-snapshot`. They fire when a condition *becomes* true (then stay quiet until it clears or 6 hours pass), never fire on stale or missing data, and arm silently if the condition is already true when you create them. **Alerts run in your browser** (any open Vayu tab, whichever tab of the app you are on) with an on-screen notice and optional desktop notifications. Emailed or WhatsApp alerts are deliberately not offered yet: they would need verified addresses (double opt-in), otherwise anyone could point alerts at someone else's inbox.
+
 ### Analysis
 
 Historical charting for everything above that was previously current-value-only — commodities (Yahoo Finance chart API, 1M-5Y), US macro (FRED), Global/India macro (World Bank), and chokepoint vessel-traffic history (accumulated automatically every 15 minutes), and market indices/equities. A **chokepoint–market correlation** view ranks a chokepoint's highest traffic-anomaly days (z-score against the window's own mean/σ) and reports how its bellwether stocks moved on the same and next day — descriptive, with no fabricated correlation coefficient. Rendered with a dependency-free SVG chart: real Y-axis, multiple X-axis date markers, and a hover crosshair/tooltip showing the exact value at any point.
 
 ### Economics
 
-G7 / G20 / BRICS / ASEAN bloc analysis, each with:
+* **India · food & fuel pressure** — Brent crude, USD/INR, wheat, sugar and cotton, each shown against *its own* last 12 months (percentile, 1m/3m change, sparkline), next to the state of the Hormuz, Malacca and Bab-el-Mandeb chokepoints. **There is deliberately no combined index**: weights would have to be invented, so every input is visible instead. The prices are global reference prices, not Indian domestic prices (mandi prices, rainfall and drought are in the Agri tab).
+* **US Treasury yield curve** — today vs one month and one year ago, the 10Y−2Y and 10Y−3M spreads with an `inverted` flag, and the spread's history, from FRED's keyless CSV export of the Federal Reserve's H.15 data. Descriptive only: no recession probability is computed.
+* **Bloc analysis** — G7 / G20 / BRICS / ASEAN, each with:
 * **Macro rollup** — GDP growth + inflation for every member country (World Bank, fetched in parallel).
 * **Regional tone** — GDELT coverage filtered by bloc/member-country name.
 * **Commodity relevance** — which tracked commodities this bloc's members are major producers/exporters of. Explicitly editorial (not API-sourced); every entry carries its reasoning inline so it is reviewable rather than presented as fact.
@@ -282,6 +298,7 @@ Vessels are auto-categorized (Tanker, Cargo/Bulk, Passenger, Fishing, Auxiliary)
 
 ## Platform: Theme, Mobile &amp; Landing Page
 
+* **Command bar (Ctrl/Cmd+K)** — keyboard-first navigation: jump to any tab or Business view, chart or profile any symbol by typing it, or download the daily brief and CSV datasets. Real commands rank above symbol suggestions, and the Business commands only appear in tiers that include the Business tab.
 * **Light/dark theme toggle** (persisted; applied through `--vayu-*` CSS custom properties across the app shell and every panel). The marketing landing page keeps its own dark palette by design.
 * **Mobile** — the horizontal Business/Spectra/Agri tool bars are reachable on phones through a dedicated **Tools** tab in the bottom navigation (they are full-screen overlays there), their sub-tab rows scroll horizontally, and the tier picker scrolls on short viewports. A full mobile audit of every control has *not* been done.
 * **Landing page** — a real-time WebGL Earth in the hero (day/night terminator, ocean specular, independently rotating clouds, atmosphere glow; static-image fallback on mobile or without WebGL), an interactive 3D model of NASA's Landsat 7, and Home / About / Tiers / Developer / Contact sections with scroll choreography.
@@ -297,6 +314,8 @@ Credibility is the stated priority, so this section separates what *is* tested f
 **Engine tests.** `backend/tests/` holds a sanity and invariant suite for the crop-suitability engine (schema validity of every crop profile, paired irrigation tests, constraint/explanation invariants, endpoint fuzzing) and a regression report. These run on approximate regional fixtures and are a **behavioural check, not accuracy evidence**.
 
 **Statistics modules** (`trend_stats.py`, `accuracy_stats.py`) are pure Python and unit-tested against known/hand-worked cases.
+
+**Business-tab tests.** Backend (`tests/test_business_data.py`, `test_business_analytics.py`, `test_business_endpoints.py`): data-quality and stale-retention logic, the watchlist service's validation/caching/capping, price statistics checked against hand calculations, the percentile and yield-curve maths, CSV formula-injection neutralisation, and the HTTP routes with upstream calls replaced. Frontend (`npm run test:ui`, 31 checks in `frontend/ui-tests/`): the real React components are mounted in a simulated DOM with realistic API fixtures and driven like a user — watchlist add/validate/cap/remove/persist and hostile saved data, the full alert lifecycle (arm, fire on a crossing, cooldown, stale data, toggle, persistence), the command bar, and the Business bar's cross-tab command handoff.
 
 **Intel-feed tests** (`tests/test_intel_feed.py`) check that two visitors get the identical feed over REST and WebSocket, that the per-version cache can never hide a new event, `ETag`/`304` behaviour, identity-based de-duplication (and that aftershocks survive it), order-independence, per-source fairness, expiry, restore-after-restart without replaying history to clients, and failure-silent persistence.
 
@@ -484,6 +503,7 @@ All routes are under `/api/v1`. The full, authoritative OpenAPI schema is served
 | `GET` | `/remote-sensing/analyze/{id}/video?format=mp4\|gif&fps=4` | Download a finished **timelapse** as an MP4 or GIF with period labels burned in (assembled from the job's stored frame images; `404` if the result has expired, `422` if the Earth Engine frame links have expired) |
 | `GET` | `/remote-sensing/tools` | List available Spectra tools |
 | `POST` | `/report/analysis` &middot; `/report/agri-risk` &middot; `/report/remote-sensing` | Source-cited PDF generation (Analyze metrics / agri risk / any Spectra result) |
+| `GET` | `/report/business-brief` | One-document PDF of the Business tab (markets, commodities, chokepoint risk, notable events, India indicators, yield curve), each section stating its source, age and staleness |
 | `GET` | `/layers/{layer_key}` | Cached satellite basemap tile URL |
 
 Spectra `tool` values: `spectral_indices`, `spectral_composites`, `terrain`, `lulc`, `dynamic_world`, `snow_cover`, `change_detection`, `burn_severity`, `timelapse` (`frequency`: `yearly` \| `quarterly` \| `monthly`; `layer`: `natural_color` \| `ndvi` \| `night_lights` \| `no2` \| `sar_vv` \| `soil_moisture`), `gedi_forest_structure`, `water_quality`, `sar_backscatter`, `flood_mapping`, `surface_water_dynamics`, `soil_moisture`, `land_surface_temperature`, `vegetation_drought_index`, `night_lights`, `atmospheric_composition`, `index_time_series`, `supervised_classification`, `accuracy_assessment`.
@@ -505,6 +525,11 @@ Spectra `tool` values: `spectral_indices`, `spectral_composites`, `terrain`, `lu
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| `GET` | `/quotes?symbols=` &middot; `/quote-history?symbol=&range=` | Validated, cached, capped quotes and daily closes for any Yahoo symbol (watchlists, charts) |
+| `GET` | `/asset-profile?kind=ticker\|site&id=` | One-page profile of a ticker or a strategic site |
+| `GET` | `/india-risk` &middot; `/yield-curve` | India food-and-fuel indicators + chokepoint state; US Treasury yield curve and spreads |
+| `GET` | `/alerts-snapshot?symbols=` | Everything the in-browser alert engine needs in one small (cached 60 s) response |
+| `GET` | `/export/{markets\|commodities\|chokepoint-risk\|events\|yield-curve}.csv` | CSV downloads, formula-injection safe |
 | `GET` | `/feed` | The shared intel feed: one identical, versioned copy for every visitor (`ETag` / `304`; rebuilt the moment an event arrives) |
 | `GET` | `/events` &middot; `/events/aoi` &middot; `WS /ws` &middot; `/sources` &middot; `/stats` | Filtered/paginated events; live WebSocket (snapshot = the shared feed, then events, each carrying the feed version and server counters); sources and store statistics |
 | `GET` | `/vessels` &middot; `/vessels/chokepoints` &middot; `/vessels/stats` &middot; `/aircraft` &middot; `/aircraft/stats` &middot; `/satellites/tle` | Live vessel / aircraft / satellite tracking |
@@ -554,6 +579,7 @@ Every non-satellite result in the app states its source dataset in a `method` fi
 * **Crop-suitability scores are not yet calibrated or accuracy-validated** — calibration is the identity until fitted, `confidence` is a completeness heuristic, and its validation is district-level against observed crop area (which reflects irrigation, prices and policy as well as suitability); see the harness's stated limitations.
 * **Spectra validation is outstanding** — see [Validation &amp; Testing](#validation--testing). Proxy tools (Water Quality, Night Lights) are labelled as proxies; GEDI results are footprint statistics, not area totals.
 * **Earth Engine dependence and quotas** — all satellite analysis runs on Google Earth Engine, so availability and quotas are Google's; very large AOIs at fine resolution can exceed GeoTIFF export limits (the download link is then omitted).
+* **Business-tab data is reference-grade, not terminal-grade.** Quotes come from Yahoo's unofficial API (delayed, no SLA), the Nifty sector and FX symbols could not be live-checked from the build environment, there is no real-time exchange data, fixed-income pricing beyond the Treasury curve, messaging or execution, and the RBI repo rate is absent because RBI has no official free API. An economic-events calendar is not built (it needs a free FRED API key). Alerts run only while a Vayu tab is open.
 * **Timelapse videos are built on demand** from Earth Engine frame links that may expire, so a very old result may need re-running before its video or PDF contact sheet can be built; encoding runs on the backend (bundled ffmpeg for MP4) and large timelapses add memory and bandwidth load on a free-tier host.
 * **Hosting limits** — the free-tier backend's monthly bandwidth cap can suspend the service; results are cached to reduce repeated Earth Engine work, but a cold start or suspension is visible to users.
 > * **Resolution mismatch in the agri regional-context layer** — groundwater (GRACE, ~300 km grid) and rainfall (CHIRPS, ~5.5 km grid) are coarser/slower than the three scored risk indicators, hence reported separately from the composite score.

@@ -26,6 +26,11 @@
 import { useState, useEffect } from 'react';
 import SparkChart from './SparkChart';
 import EconomicsView from './EconomicsView';
+import MarketsView from './business/MarketsView';
+import AlertsView from './business/AlertsView';
+import AssetProfile from './business/AssetProfile';
+import IndiaRiskPanel from './business/IndiaRiskPanel';
+import YieldCurvePanel from './business/YieldCurvePanel';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
@@ -413,9 +418,27 @@ function ChokepointMarketCorrelation({ apiUrl, chokepoint, days }) {
   );
 }
 
-export default function BusinessIntelBar({ apiUrl, isMobile }) {
+export default function BusinessIntelBar({ apiUrl, isMobile, alerts }) {
   const [open, setOpen] = useState(true);
-  const [view, setView] = useState('live'); // 'live' | 'analysis'
+  const [view, setView] = useState('live'); // 'live' | 'markets' | 'analysis' | 'economics' | 'alerts'
+  const [asset, setAsset] = useState(null);                 // {kind, id} of the open one-page profile
+  const [marketsCommand, setMarketsCommand] = useState(null);
+
+  // Commands from the command bar or a site popup: choose the view, optionally chart a symbol or open a profile.
+  useEffect(() => {
+    const apply = (cmd) => {
+      if (!cmd) return;
+      setOpen(true);
+      if (cmd.view) setView(cmd.view);
+      if (cmd.symbol) setMarketsCommand({ symbol: cmd.symbol, n: Date.now() });
+      if (cmd.asset) setAsset(cmd.asset);
+    };
+    apply(window.__vayuBusinessCommand);   // issued before this bar mounted (e.g. from another tab)
+    window.__vayuBusinessCommand = null;
+    const onCmd = (e) => { window.__vayuBusinessCommand = null; apply(e.detail); };
+    window.addEventListener('vayu:business-command', onCmd);
+    return () => window.removeEventListener('vayu:business-command', onCmd);
+  }, []);
   const risk = useJson(apiUrl, '/api/v1/intel/business-risk');
   const dark = useJson(apiUrl, '/api/v1/intel/dark-vessels');
   const sanc = useJson(apiUrl, '/api/v1/intel/sanctions-screen');
@@ -424,6 +447,7 @@ export default function BusinessIntelBar({ apiUrl, isMobile }) {
   const markets = useJson(apiUrl, '/api/v1/intel/markets', 30 * 60 * 1000);
 
   const worstBand = risk.data?.chokepoints?.[0]?.band; // already sorted worst-first by the API
+  const viewTabs = [['live', 'Live'], ['markets', 'Markets'], ['analysis', 'Analysis'], ['economics', 'Economics'], ['alerts', alerts?.unread ? `Alerts (${alerts.unread})` : 'Alerts']];
 
   return (
     <div style={{ flexShrink: 0, background: S.surface, borderTop: `1px solid ${S.border}`, display: 'flex', flexDirection: 'column' }}>
@@ -444,8 +468,8 @@ export default function BusinessIntelBar({ apiUrl, isMobile }) {
 
       {open && (
         <div style={{ display: 'flex', gap: 2, padding: '6px 16px 0', borderBottom: `1px solid ${S.border}`, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-          {[['live', 'Live'], ['analysis', 'Analysis'], ['economics', 'Economics']].map(([id, label]) => (
-            <button key={id} onClick={() => setView(id)} style={{
+          {viewTabs.map(([id, label]) => (
+            <button key={id} onClick={() => { setView(id); if (id === 'alerts') alerts?.markRead?.(); }} style={{
               background: 'none', border: 'none', borderBottom: view === id ? `2px solid ${S.accent}` : '2px solid transparent',
               color: view === id ? S.accent : S.text3, fontFamily: S.mono, fontSize: 11.5, letterSpacing: 1, textTransform: 'uppercase',
               padding: '6px 12px', cursor: 'pointer', marginBottom: -1, flexShrink: 0, whiteSpace: 'nowrap',
@@ -453,6 +477,10 @@ export default function BusinessIntelBar({ apiUrl, isMobile }) {
               {label}
             </button>
           ))}
+          <a href={`${apiUrl}/api/v1/report/business-brief`} download title="One-document PDF of markets, commodities, chokepoint risk, events, India indicators and the yield curve"
+            style={{ marginLeft: 'auto', alignSelf: 'center', flexShrink: 0, fontSize: 10.5, fontFamily: S.mono, color: S.accent, border: `1px solid ${S.accent}`, borderRadius: 3, padding: '3px 9px', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+            Daily brief (PDF)
+          </a>
         </div>
       )}
 
@@ -615,7 +643,28 @@ export default function BusinessIntelBar({ apiUrl, isMobile }) {
 
       {open && view === 'analysis' && <AnalysisView apiUrl={apiUrl} />}
 
-      {open && view === 'economics' && <EconomicsView apiUrl={apiUrl} />}
+      {open && view === 'markets' && (
+        <div style={{ position: 'relative', height: 340 }}>
+          <MarketsView apiUrl={apiUrl} command={marketsCommand} onOpenAsset={(kind, id) => setAsset({ kind, id })} />
+          {asset && <AssetProfile apiUrl={apiUrl} kind={asset.kind} id={asset.id} onClose={() => setAsset(null)} onOpenAsset={(kind, id) => setAsset({ kind, id })} />}
+        </div>
+      )}
+
+      {open && view === 'economics' && (
+        <div style={{ height: 340, overflowY: 'auto' }}>
+          <IndiaRiskPanel apiUrl={apiUrl} />
+          <YieldCurvePanel apiUrl={apiUrl} />
+          <EconomicsView apiUrl={apiUrl} />
+        </div>
+      )}
+
+      {open && view === 'alerts' && alerts && <div style={{ height: 340 }}><AlertsView apiUrl={apiUrl} alerts={alerts} /></div>}
+
+      {open && view !== 'markets' && asset && (
+        <div style={{ position: 'relative', height: 340 }}>
+          <AssetProfile apiUrl={apiUrl} kind={asset.kind} id={asset.id} onClose={() => setAsset(null)} onOpenAsset={(kind, id) => setAsset({ kind, id })} />
+        </div>
+      )}
     </div>
   );
 }

@@ -25,6 +25,9 @@ import { ESRI_HIGH_RES_URL, ESRI_ATTRIBUTION, attachEsriZoomGuard } from './lib/
 import LiveGoesPanel from './components/LiveGoesPanel';
 import { useVesselTracker } from './hooks/useVesselTracker';
 import { useStrategicSites } from './hooks/useStrategicSites';
+import { useAlerts } from './hooks/useAlerts';
+import CommandBar from './components/CommandBar';
+import AlertToasts from './components/business/AlertToasts';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useSatelliteTracker } from './hooks/useSatelliteTracker';
 import { useAircraftTracker } from './hooks/useAircraftTracker';
@@ -553,6 +556,7 @@ function createSiteMarker(site) {
       <div style="font-size:11px; color:#c7d0da; line-height:1.4;">${_escapeHtml(site.note)}</div>
       ${signalsHtml}
       ${newsHtml}
+      <button data-vayu-open="site:${_escapeHtml(site.id)}" style="margin-top:8px; width:100%; cursor:pointer; background:rgba(126,184,212,0.12); border:1px solid #7eb8d4; color:#7eb8d4; font-size:10.5px; font-family:'JetBrains Mono',monospace; padding:5px 8px; border-radius:3px;">Open one-page profile</button>
     </div>
   `, { permanent: false, direction: 'top', opacity: 1, className: 'vayu-tooltip', maxWidth: 280, interactive: true });
   return marker;
@@ -1953,6 +1957,44 @@ export default function App({ tier = 'full', onChangeTier }) {
   // every tier's allowed list, so it's always a safe default.
   const [tab, setTab] = useState(() => (TIER_TABS[tier] || TIER_TABS.full).includes('Analyze') ? 'Analyze' : (TIER_TABS[tier] || TIER_TABS.full)[0]);
 
+  // ── Business: in-browser alerts, toasts, and the Ctrl/Cmd+K command bar ──────────────────────────
+  const allowedTabs = TIER_TABS[tier] || TIER_TABS.full;
+  const [toasts, setToasts] = useState([]);
+  const alerts = useAlerts(API_URL, useCallback((t) => {
+    setToasts((ts) => [...ts.filter((x) => x.id !== `${t.ruleId}-${t.at}`).slice(-3), { id: `${t.ruleId}-${t.at}`, message: t.message }]);
+  }, []));
+  const dismissToast = useCallback((id) => setToasts((ts) => ts.filter((x) => x.id !== id)), []);
+  const [cmdOpen, setCmdOpen] = useState(false);
+  const handleCommand = useCallback((cmd) => {
+    if (cmd.type === 'tab') {
+      setTab(cmd.tab);
+    } else if (cmd.type === 'business') {
+      if (!allowedTabs.includes('Business')) return;
+      window.__vayuBusinessCommand = cmd;      // picked up when the bar mounts (if we are coming from another tab)…
+      setTab('Business');
+      window.dispatchEvent(new CustomEvent('vayu:business-command', { detail: cmd }));   // …or immediately if it is already open
+    } else if (cmd.type === 'download') {
+      const a = document.createElement('a');
+      a.href = cmd.url; a.download = '';
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+  }, [allowedTabs]);
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setCmdOpen((o) => !o); }
+    };
+    // Buttons inside Leaflet tooltips are plain HTML strings (no React handlers), so they are wired by delegation.
+    const onClick = (e) => {
+      const el = e.target.closest?.('[data-vayu-open]');
+      if (!el) return;
+      const [kind, ...rest] = el.getAttribute('data-vayu-open').split(':');
+      if (kind === 'site') handleCommand({ type: 'business', view: 'markets', asset: { kind: 'site', id: rest.join(':') } });
+    };
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('click', onClick);
+    return () => { window.removeEventListener('keydown', onKey); document.removeEventListener('click', onClick); };
+  }, [handleCommand]);
+
   // The mobile "Tools" panel only exists for tabs that actually have a
   // horizontal IntelBar (Business/Spectra/Agri) — if the user switches
   // to a tab that doesn't (e.g. Orbital) while that panel is open,
@@ -2888,7 +2930,10 @@ export default function App({ tier = 'full', onChangeTier }) {
         {!isMobile && tab !== 'Orbital' && <div style={{ width:290, flexShrink:0, height:'100%', zIndex:10 }}>{rightPanelEl}</div>}
       </div>
 
-      {!isMobile && tab === 'Business' && <BusinessIntelBar apiUrl={API_URL} />}
+      <CommandBar open={cmdOpen} onClose={() => setCmdOpen(false)} tabs={allowedTabs} apiUrl={API_URL} onCommand={handleCommand} />
+      <AlertToasts toasts={toasts} onDismiss={dismissToast} />
+
+      {!isMobile && tab === 'Business' && <BusinessIntelBar apiUrl={API_URL} alerts={alerts} />}
 
       {!isMobile && tab === 'Spectra' && <SpectraIntelBar apiUrl={API_URL} drawnAOI={drawnAOI} />}
 
@@ -2919,7 +2964,7 @@ export default function App({ tier = 'full', onChangeTier }) {
           tab-row scrolling. */}
       {isMobile && mobilePanel === 'tools' && (
         <div style={{ position:'absolute', top:0, left:0, right:0, bottom:56, zIndex:2000, background:'#0a0c0f', overflowY:'auto' }}>
-          {tab === 'Business' && <BusinessIntelBar apiUrl={API_URL} isMobile />}
+          {tab === 'Business' && <BusinessIntelBar apiUrl={API_URL} isMobile alerts={alerts} />}
           {tab === 'Spectra' && <SpectraIntelBar apiUrl={API_URL} drawnAOI={drawnAOI} isMobile />}
           {tab === 'Agri' && (
             <AgriIntelBar apiUrl={API_URL} drawnAOI={drawnAOI} isMobile

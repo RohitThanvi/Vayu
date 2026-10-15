@@ -33,9 +33,11 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from .data_quality import describe as describe_quality, merge_quotes
+
 logger = logging.getLogger(__name__)
 
-CACHE_TTL_SECONDS = 3 * 60 * 60   # refresh every few hours — no hard daily cap here, but still polite/bounded
+CACHE_TTL_SECONDS = 15 * 60   # quotes are ~15-20 min delayed anyway; refreshing faster adds requests but no new information
 
 YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
@@ -186,7 +188,7 @@ async def refresh(force: bool = False) -> int:
 
     with _lock:
         if results:
-            _cache["commodities"] = results
+            _cache["commodities"] = merge_quotes(_cache["commodities"], results, COMMODITIES)
             _cache["cached_at"] = time.time()
             _cache["last_error"] = None if len(results) == len(COMMODITIES) else f"only {len(results)}/{len(COMMODITIES)} commodities refreshed this cycle"
         else:
@@ -202,4 +204,5 @@ def get_commodities() -> Dict[str, Any]:
             "commodities": list(_cache["commodities"]),
             "cached_at": _cache["cached_at"],
             "last_error": _cache["last_error"],
+            "data_quality": describe_quality(_cache["cached_at"], CACHE_TTL_SECONDS, _cache["last_error"]),
         }

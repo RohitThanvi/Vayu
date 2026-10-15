@@ -27,10 +27,11 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from .commodity_prices import _fetch_one, YAHOO_CHART_URL, _HEADERS
+from .data_quality import describe as describe_quality, merge_quotes
 
 logger = logging.getLogger(__name__)
 
-CACHE_TTL_SECONDS = 3 * 60 * 60   # matches commodity_prices — same reasoning, no need for faster than this
+CACHE_TTL_SECONDS = 15 * 60   # the quotes are themselves ~15-20 min delayed, so refreshing faster would add requests but no new information
 
 # (Yahoo symbol, display label, unit, category)
 INDICES = [
@@ -65,9 +66,35 @@ BELLWETHER_STOCKS = [
     ("RTX", "RTX Corp (Raytheon)", "equity", "defense"),
 ]
 
-ALL_SYMBOLS = INDICES + BELLWETHER_STOCKS
+# NSE sector indices (India). NOTE: these Yahoo symbols could not be live-checked from the build sandbox (no Yahoo access).
+# A symbol Yahoo does not recognise simply yields no quote and is omitted from the heatmap — it never breaks a refresh —
+# and the UI reports "n of N sectors available" so a missing tile is visible rather than silent.
+SECTORS = [
+    ("^NSEBANK", "Nifty Bank", "index", "india_sector"),
+    ("^CNXIT", "Nifty IT", "index", "india_sector"),
+    ("^CNXAUTO", "Nifty Auto", "index", "india_sector"),
+    ("^CNXPHARMA", "Nifty Pharma", "index", "india_sector"),
+    ("^CNXFMCG", "Nifty FMCG", "index", "india_sector"),
+    ("^CNXMETAL", "Nifty Metal", "index", "india_sector"),
+    ("^CNXENERGY", "Nifty Energy", "index", "india_sector"),
+    ("^CNXREALTY", "Nifty Realty", "index", "india_sector"),
+    ("^CNXINFRA", "Nifty Infrastructure", "index", "india_sector"),
+    ("^CNXPSUBANK", "Nifty PSU Bank", "index", "india_sector"),
+]
 
-_cache: Dict[str, Any] = {"indices": [], "stocks": [], "cached_at": 0.0, "last_error": None}
+# Currency pairs and the dollar index (Yahoo quotes "INR=X" as USD/INR: rupees per dollar, so higher = weaker rupee).
+FX = [
+    ("INR=X", "USD/INR", "INR per USD", "fx"),
+    ("EURUSD=X", "EUR/USD", "USD per EUR", "fx"),
+    ("GBPUSD=X", "GBP/USD", "USD per GBP", "fx"),
+    ("JPY=X", "USD/JPY", "JPY per USD", "fx"),
+    ("DX-Y.NYB", "US Dollar Index", "index", "fx"),
+]
+
+GROUPS = (("indices", INDICES), ("stocks", BELLWETHER_STOCKS), ("sectors", SECTORS), ("fx", FX))
+ALL_SYMBOLS = [row for _, rows in GROUPS for row in rows]
+
+_cache: Dict[str, Any] = {"cached_at": 0.0, "last_error": None, **{g: [] for g, _ in GROUPS}}
 _lock = threading.Lock()
 
 
@@ -104,50 +131,46 @@ async def get_history(symbol: str, range_: str = "3mo") -> Dict[str, Any]:
 
 
 async def refresh(force: bool = False) -> int:
-    """Fetch all configured indices + bellwether stocks and refresh the
-    cache. A partial failure still caches whatever succeeded, same
-    all-or-nothing-avoidance reasoning as commodity_prices.refresh."""
+    """Fetch every configured symbol and refresh the cache. A symbol that fails this cycle keeps its last good quote
+    (flagged stale) rather than vanishing, and a partial failure still caches whatever succeeded."""
     if not force:
         with _lock:
             cached_at = _cache["cached_at"]
         if cached_at and (time.time() - cached_at) < CACHE_TTL_SECONDS:
             logger.debug("Market refresh skipped — cache is still fresh")
-            return len(_cache["indices"]) + len(_cache["stocks"])
+            return sum(len(_cache[g]) for g, _ in GROUPS)
 
-    index_results, stock_results = [], []
+    fresh: Dict[str, list] = {g: [] for g, _ in GROUPS}
+    first = True
     async with httpx.AsyncClient(headers=_HEADERS) as client:
-        for i, (symbol, label, unit, category) in enumerate(INDICES):
-            if i > 0:
-                await asyncio.sleep(0.5)
-            item = await _fetch_one(client, symbol, label, unit, category)
-            if item:
-                index_results.append(item)
-        for symbol, label, unit, category in BELLWETHER_STOCKS:
-            await asyncio.sleep(0.5)
-            item = await _fetch_one(client, symbol, label, unit, category)
-            if item:
-                stock_results.append(item)
+        for group, rows in GROUPS:
+            for symbol, label, unit, category in rows:
+                if not first:
+                    await asyncio.sleep(0.5)
+                first = False
+                item = await _fetch_one(client, symbol, label, unit, category)
+                if item:
+                    fresh[group].append(item)
 
+    total_ok = sum(len(v) for v in fresh.values())
     with _lock:
-        if index_results or stock_results:
-            _cache["indices"] = index_results
-            _cache["stocks"] = stock_results
+        if total_ok:
+            for group, rows in GROUPS:
+                _cache[group] = merge_quotes(_cache[group], fresh[group], rows)
             _cache["cached_at"] = time.time()
-            total_ok = len(index_results) + len(stock_results)
-            total_expected = len(ALL_SYMBOLS)
-            _cache["last_error"] = None if total_ok == total_expected else f"only {total_ok}/{total_expected} markets refreshed this cycle"
+            expected = len(ALL_SYMBOLS)
+            _cache["last_error"] = None if total_ok == expected else f"only {total_ok}/{expected} markets refreshed this cycle (the rest show their last good quote, flagged stale)"
         else:
             _cache["last_error"] = "all market fetches failed this cycle"
 
-    logger.info(f"Markets: {len(index_results)}/{len(INDICES)} indices, {len(stock_results)}/{len(BELLWETHER_STOCKS)} stocks refreshed")
-    return len(index_results) + len(stock_results)
+    logger.info("Markets: " + ", ".join(f"{len(fresh[g])}/{len(rows)} {g}" for g, rows in GROUPS) + " refreshed")
+    return total_ok
 
 
 def get_markets() -> Dict[str, Any]:
     with _lock:
-        return {
-            "indices": list(_cache["indices"]),
-            "stocks": list(_cache["stocks"]),
-            "cached_at": _cache["cached_at"],
-            "last_error": _cache["last_error"],
-        }
+        out = {g: list(_cache[g]) for g, _ in GROUPS}
+        out["cached_at"] = _cache["cached_at"]
+        out["last_error"] = _cache["last_error"]
+        out["data_quality"] = describe_quality(_cache["cached_at"], CACHE_TTL_SECONDS, _cache["last_error"])
+        return out
