@@ -2,7 +2,8 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from ..core.rate_limit import limiter
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -409,3 +410,33 @@ async def remote_sensing_report(req: RemoteSensingReportRequest):
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="vayu_spectra_{req.tool}_report.pdf"'},
     )
+
+
+@router.get("/business-brief", summary="One-document PDF brief of the Business tab (markets, commodities, risk, events, India, yield curve)")
+@limiter.limit("6/minute")
+async def business_brief(request: Request):
+    """Built from the same cached data the screen shows; a section whose data is unavailable says so rather than failing the brief."""
+    from datetime import datetime, timezone
+    from ..services.intel import market_indices, commodity_prices, india_risk, yield_curve
+    from ..services.intel.store import intel_store
+    from ..services.business_brief import build_business_brief
+    from . import intel_endpoints
+
+    async def safe(coro, default):
+        try:
+            return await coro
+        except Exception as e:  # a failing source degrades one section, not the whole brief
+            logger.warning(f"business brief: section unavailable ({type(e).__name__})")
+            return default
+
+    risk = await safe(intel_endpoints.compute_risk_scores(), [])
+    india = await safe(india_risk.get_india_risk(), None)
+    snap = {
+        "markets": market_indices.get_markets(), "commodities": commodity_prices.get_commodities(), "risk": risk,
+        "events": intel_store.feed_response()["events"],
+        "india": india_risk.attach_chokepoints(india, risk) if india else None,
+        "yield_curve": await safe(yield_curve.get_yield_curve(), None),
+    }
+    pdf = await asyncio.to_thread(build_business_brief, snap)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="vayu-business-brief-{stamp}.pdf"'})

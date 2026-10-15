@@ -38,6 +38,7 @@ Client can send:
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -51,6 +52,9 @@ from ..services.intel.aircraft_store import aircraft_store
 from ..services.intel import satellite_tle
 from ..services.intel import commodity_prices
 from ..services.intel import market_indices
+from ..services.intel import watchlist, asset_profile, india_risk, yield_curve, exports
+from ..services.intel.chokepoint_market_correlation import CHOKEPOINT_BELLWETHERS
+from ..core.rate_limit import limiter
 from ..services.intel import air_quality
 from ..services.intel import supply_chain
 from ..services.intel import dark_vessels
@@ -398,6 +402,120 @@ async def get_market_history(symbol: str, range: str = "3mo"):  # noqa: A002 (ma
     return await market_indices.get_history(symbol, range)
 
 
+# ── Business tab: watchlists, one-pagers, India pressure, yield curve, alerts snapshot, exports ──
+
+@router.get("/quotes", summary="On-demand quotes for a user watchlist (validated, cached, capped)")
+@limiter.limit("30/minute")
+async def get_quotes(request: Request, symbols: str = Query(..., max_length=300, description="Comma-separated Yahoo symbols, e.g. RELIANCE.NS,INR=X")):
+    try:
+        return await watchlist.get_quotes([x for x in symbols.split(",") if x.strip()])
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/quote-history", summary="Daily closes for any symbol, for charting")
+@limiter.limit("30/minute")
+async def get_quote_history(request: Request, symbol: str = Query(..., max_length=20), range: str = "1y"):  # noqa: A002
+    try:
+        return await watchlist.get_history(symbol, range)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/asset-profile", summary="One page on a ticker or a strategic site: signals, statistics, linked chokepoints")
+@limiter.limit("30/minute")
+async def get_asset_profile(request: Request, kind: str = Query(..., pattern="^(ticker|site)$"), id: str = Query(..., max_length=40)):  # noqa: A002
+    if kind == "site":
+        site = next((x for x in strategic_sites.list_sites() if x["id"] == id), None)
+        if site is None:
+            raise HTTPException(status_code=404, detail="Unknown site id.")
+        risk = {r["chokepoint"]: r for r in await compute_risk_scores()}
+        return asset_profile.site_profile(
+            site, intel_store.query(sources=["USGS"], limit=500), intel_store.query(sources=["GDELT"], limit=1000), dark_vessels.list_flags(), risk)
+    sym = watchlist.normalize_symbol(id)
+    if sym is None:
+        raise HTTPException(status_code=422, detail="Invalid symbol.")
+    quote_res, hist = await asyncio.gather(watchlist.get_quotes([sym]), watchlist.get_history(sym, "1y"))
+    linked = any(sym in v for v in CHOKEPOINT_BELLWETHERS.values())
+    risk = {r["chokepoint"]: r for r in await compute_risk_scores()} if linked else {}
+    return asset_profile.ticker_profile(sym, (quote_res["quotes"] or [None])[0], [p["value"] for p in hist.get("points", [])], risk)
+
+
+@router.get("/india-risk", summary="India food-and-fuel pressure indicators (each against its own 12-month range) + chokepoint state")
+async def get_india_risk():
+    return india_risk.attach_chokepoints(await india_risk.get_india_risk(), await compute_risk_scores())
+
+
+@router.get("/yield-curve", summary="US Treasury yield curve, spreads and inversion flags (FRED, keyless)")
+async def get_yield_curve():
+    return await yield_curve.get_yield_curve()
+
+
+_alerts_cache: dict = {}
+
+
+@router.get("/alerts-snapshot", summary="Everything the in-browser alert engine needs, in one small response")
+@limiter.limit("30/minute")
+async def get_alerts_snapshot(request: Request, symbols: str = Query("", max_length=300)):
+    """Quotes (curated caches + any extra watched symbols), chokepoint risk bands, and active site signals. Deliberately tiny
+    (a few KB) and cached for 60 s so many open browsers polling for alerts cost the server almost nothing."""
+    extra = []
+    for raw in symbols.split(","):
+        sym = watchlist.normalize_symbol(raw)
+        if sym and sym not in extra:
+            extra.append(sym)
+    extra = extra[:watchlist.MAX_SYMBOLS_PER_REQUEST]
+    key = tuple(extra)
+    hit = _alerts_cache.get(key)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+
+    quotes = {}
+    mk = market_indices.get_markets()
+    for group in ("indices", "stocks", "sectors", "fx"):
+        for q in mk.get(group, []):
+            quotes[q["symbol"]] = {"value": q.get("value"), "change_pct": q.get("change_pct"), "as_of": q.get("market_time"), "stale": q.get("stale", False)}
+    for q in commodity_prices.get_commodities().get("commodities", []):
+        quotes[q["symbol"]] = {"value": q.get("value"), "change_pct": q.get("change_pct"), "as_of": q.get("market_time"), "stale": q.get("stale", False)}
+    missing = [x for x in extra if x not in quotes]
+    if missing:
+        try:
+            for q in (await watchlist.get_quotes(missing))["quotes"]:
+                quotes[q["symbol"]] = {"value": q.get("value"), "change_pct": q.get("change_pct"), "as_of": q.get("market_time"), "stale": False}
+        except ValueError:
+            pass
+    risk = {r["chokepoint"]: {"score": r["score"], "band": r["band"], "display": r["chokepoint_display"]} for r in await compute_risk_scores()}
+    sites = {}
+    for st in strategic_sites.list_sites_with_signals(intel_store.query(sources=["USGS"], limit=500), intel_store.query(sources=["GDELT"], limit=1000), dark_vessels.list_flags()):
+        if st["signals"]:
+            sites[st["id"]] = {"name": st["name"], "signals": st["signals"]}
+    body = {"as_of": datetime.utcnow().isoformat() + "Z", "feed_id": intel_store.feed_id, "quotes": quotes, "risk": risk, "sites": sites,
+            "data_quality": mk.get("data_quality")}
+    if len(_alerts_cache) > 20:
+        _alerts_cache.clear()
+    _alerts_cache[key] = (time.time(), body)
+    return body
+
+
+@router.get("/export/{dataset}.csv", summary="Download a Business-tab dataset as CSV (formula-injection safe)")
+@limiter.limit("20/minute")
+async def export_csv(request: Request, dataset: str):
+    if dataset not in exports.DATASETS:
+        raise HTTPException(status_code=404, detail=f"Unknown dataset. Valid: {', '.join(exports.DATASETS)}")
+    if dataset == "markets":
+        payload = market_indices.get_markets()
+    elif dataset == "commodities":
+        payload = commodity_prices.get_commodities()
+    elif dataset == "chokepoint-risk":
+        payload = await compute_risk_scores()
+    elif dataset == "events":
+        payload = intel_store.feed_response()["events"]
+    else:
+        payload = await yield_curve.get_yield_curve()
+    name, text = exports.build_csv(dataset, payload)
+    return Response(content=text, media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 # ── Air quality (CPCB, India-only, free data.gov.in key) ───────────────────
 
 @router.get("/air-quality/cpcb-stations", summary="Cached real-time CPCB Air Quality Index stations")
@@ -481,10 +599,9 @@ async def get_macro():
     return await macro_mod.get_macro_snapshot()
 
 
-@router.get("/business-risk", summary="Unified 0-100 risk score per chokepoint, blending traffic/tone/seismic/sanctions")
-async def get_business_risk():
-    """See services/intel/business_risk.py for the exact weights —
-    deliberately simple/auditable rather than an opaque model."""
+async def compute_risk_scores() -> list:
+    """Business-risk score for every chokepoint, worst first. One implementation shared by /business-risk, the asset
+    one-pagers, the India panel, the alerts snapshot and the daily brief, so they can never disagree."""
     gdelt_events = intel_store.query(sources=["GDELT"], limit=1000)
     usgs_events = intel_store.query(sources=["USGS"], limit=500)
     scores = []
@@ -494,7 +611,14 @@ async def get_business_risk():
             cp_id, len(vessels_in_area), gdelt_events, usgs_events, vessels_in_area,
         ))
     scores.sort(key=lambda s: s["score"], reverse=True)
-    return {"chokepoints": scores}
+    return scores
+
+
+@router.get("/business-risk", summary="Unified 0-100 risk score per chokepoint, blending traffic/tone/seismic/sanctions")
+async def get_business_risk():
+    """See services/intel/business_risk.py for the exact weights —
+    deliberately simple/auditable rather than an opaque model."""
+    return {"chokepoints": await compute_risk_scores()}
 
 
 @router.get("/strategic-sites", summary="Major ports/refineries/mines with live nearby-signal updates (earthquakes, dark vessels, news tone, recent headlines)")

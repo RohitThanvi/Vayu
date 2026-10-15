@@ -53,12 +53,12 @@ INTERVAL_AIRCRAFT = 90   # OpenSky anonymous tier is rate-limited; global
                           # to the free, keyless tier
 INTERVAL_WIND   = 45 * 60
 INTERVAL_TLE    = 6 * 60 * 60   # matches satellite_tle.CACHE_TTL_SECONDS
-INTERVAL_COMMODITIES = 3 * 60 * 60   # matches commodity_prices.CACHE_TTL_SECONDS —
+INTERVAL_COMMODITIES = commodity_prices.CACHE_TTL_SECONDS   # matches commodity_prices.CACHE_TTL_SECONDS —
                                        # Yahoo Finance's unofficial API has no hard
                                        # daily cap (unlike the Alpha Vantage source
                                        # this replaced), so this can run more often
                                        # while staying a good citizen about it
-INTERVAL_MARKETS = 3 * 60 * 60       # matches market_indices.CACHE_TTL_SECONDS — same reasoning as commodities (same underlying API)
+INTERVAL_MARKETS = market_indices.CACHE_TTL_SECONDS       # matches market_indices.CACHE_TTL_SECONDS — same reasoning as commodities (same underlying API)
 INTERVAL_AQI    = 60 * 60   # matches air_quality.CACHE_TTL_SECONDS — CPCB stations
 INTERVAL_CHOKEPOINT_SNAPSHOT = 15 * 60   # matches timeseries_store's baseline sampling assumption
                              # themselves only report hourly, no benefit polling tighter
