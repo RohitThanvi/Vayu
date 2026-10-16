@@ -3,6 +3,7 @@ import MarketsView from '../src/components/business/MarketsView.jsx';
 import IndiaRiskPanel from '../src/components/business/IndiaRiskPanel.jsx';
 import YieldCurvePanel from '../src/components/business/YieldCurvePanel.jsx';
 import AssetProfile from '../src/components/business/AssetProfile.jsx';
+import RealEstateView, { toCsv } from '../src/components/business/RealEstateView.jsx';
 
 const Q = (symbol, name, value, change_pct, extra = {}) => ({ symbol, name, value, change_pct, prev_close: value, market_time: 1700000000, ...extra });
 const DQ = { source: 'Yahoo Finance (unofficial chart API)', age_seconds: 300, stale: false, delay_note: 'Typically 15–20 minutes delayed', last_error: null };
@@ -12,6 +13,32 @@ const MARKETS = { indices: [Q('^NSEI', 'Nifty 50', 25000, 0.4), Q('^GSPC', 'S&P 
 const QUOTES = { quotes: [Q('^NSEI', 'Nifty 50', 25000, 0.4), Q('INR=X', 'USD/INR', 88.1, 0.1), Q('^GSPC', 'S&P 500', 6800, -0.2)], errors: { '^BSESN': 'no quote available', 'BZ=F': 'no quote available' }, data_quality: DQ };
 const HISTORY = { symbol: '^NSEI', name: 'Nifty 50', range: '1y', points: Array.from({ length: 60 }, (_, i) => ({ date: 1700000000 + 86400 * i, value: 100 + i })) };
 const wire = () => { route('/intel/markets', MARKETS); route('/intel/quotes', (u) => ({ ...QUOTES, quotes: QUOTES.quotes })); route('/intel/quote-history', HISTORY); };
+
+const RE_CRIT = (metric, label, unit, value, utility, weight, note = '') => ({ metric, label, unit, source: 'test', value, utility, weight, good_at: 1, bad_at: 9, note });
+const RE_RESULT = {
+  profile: 'lender_risk', profile_label: 'Lender / insurer (risk-first)', weights: { liveability: 0.2, growth: 0.2, resilience: 0.6 }, radius_km: 2,
+  locations: [
+    { name: 'Alpha, Jaipur', lat: 26.9, lon: 75.8, radius_km: 2, rank: 1, overall_score: 81.5, overall_coverage: 1,
+      groups: {
+        liveability: { label: 'Liveability & access', score: 90, coverage: 1, evidence_level: 'strong', criteria: [RE_CRIT('hospital_km', 'Nearest hospital / clinic', 'km', 0.8, 1, 0.22)] },
+        growth: { label: 'Growth momentum', score: 70, coverage: 0.7, evidence_level: 'partial', criteria: [RE_CRIT('night_light_level', 'Night-light activity, last 12 months', 'nW/sr/cm²', 12, 1, 0.3), RE_CRIT('night_light_growth_pct', 'Night-light growth over ~4 years', '%', null, null, 0.3)] },
+        resilience: { label: 'Hazard resilience', score: 85, coverage: 1, evidence_level: 'strong', criteria: [RE_CRIT('seasonal_water_pct', 'Seasonal / flood-prone water coverage', '%', 1, 1, 0.28)] },
+      },
+      context: { air_quality: { us_aqi: 160, category: 'Unhealthy' }, amenity_counts: { hospitals_10km: 4, schools_6km: 9 } },
+      flags: ['Air quality is currently unhealthy (US AQI 160).'], strengths: ['nearest hospital / clinic 0.8 km'], weaknesses: [], errors: [] },
+    { name: 'Beta, "Jaipur"', lat: 26.95, lon: 75.85, radius_km: 2, rank: 2, overall_score: 40.2, overall_coverage: 0.8,
+      groups: {
+        liveability: { label: 'Liveability & access', score: null, coverage: 0, evidence_level: 'weak', criteria: [] },
+        growth: { label: 'Growth momentum', score: 30, coverage: 1, evidence_level: 'strong', criteria: [RE_CRIT('night_light_level', 'Night-light activity, last 12 months', 'nW/sr/cm²', 2, 0.1, 0.3)] },
+        resilience: { label: 'Hazard resilience', score: 45, coverage: 1, evidence_level: 'strong', criteria: [] },
+      },
+      context: {}, flags: ['Seasonal/flood-prone water covers 25% of this area.'], strengths: [], weaknesses: ['seasonal water 25 %'], errors: [] },
+  ],
+  caveats: ['Beta, "Jaipur" — flood history: ValueError: no surface-water statistics for this area'],
+  methodology: 'Each group score (0-100) is the weighted average of per-criterion utilities.',
+  sources: ['© OpenStreetMap contributors (ODbL) — amenities and roads'],
+  not_included: ['Property prices, rents and returns (no free open price data exists for India)', 'RERA project / supply-pipeline data (state portals differ; not yet connected)'],
+};
 
 export function register() {
   // ── Markets ────────────────────────────────────────────────────────────────
@@ -141,4 +168,63 @@ export function register() {
     route('/intel/asset-profile', { __status: 404 });
     has(text((await mount(<AssetProfile apiUrl="" kind="site" id="nope" onClose={() => {}} />)).container), 'Could not load this profile');
   });
+
+  // ── Real Estate (Location Intelligence) ───────────────────────────────────
+  test('Real Estate: form loads profiles; empty submit is refused without calling the API', async () => {
+    route('/realestate/profiles', { profiles: [{ id: 'balanced', label: 'Balanced' }, { id: 'investor', label: 'Growth investor' }] });
+    const c = (await mount(<RealEstateView apiUrl="" pollMs={20} />)).container;
+    await flush(30);
+    has(text(c), 'Growth investor', 'profiles come from the API');
+    has(text(c), 'No prices or returns are estimated', 'states the no-prices limitation up front');
+    await click(buttonWith(c, 'Analyse'));
+    has(text(c), 'Enter at least one place');
+    ok(!calls.some((u) => u.endsWith('/realestate/assess')), 'nothing was posted');
+  });
+
+  test('Real Estate: analyse → ranked cards with scores, flags, caveats, and what is NOT included', async () => {
+    route('/realestate/profiles', { profiles: [{ id: 'balanced', label: 'Balanced' }] });
+    route('/realestate/assess', (u) => (u.endsWith('/assess') ? { request_id: 'job1' } : { status: 'done', result: RE_RESULT }));
+    const c = (await mount(<RealEstateView apiUrl="" pollMs={20} />)).container;
+    const inputs = qa(c, 'input');
+    await typeInto(inputs[0], 'Alpha, Jaipur');
+    await typeInto(inputs[1], 'Beta, Jaipur');
+    await click(buttonWith(c, 'Analyse'));
+    await flush(120);
+    const t = text(c);
+    has(t, '#1 Alpha, Jaipur'); has(t, '81.5'); has(t, '#2 Beta'); has(t, '40.2');
+    has(t, 'Lender / insurer (risk-first)', 'profile is shown');
+    has(t, 'Hazard resilience'); has(t, 'not scored', 'an unscored group is labelled, not shown as 0');
+    has(t, 'Seasonal/flood-prone water covers 25%'); has(t, 'AQI 160');
+    has(t, 'no data', 'a missing criterion says so'); has(t, '70% data', 'partial evidence is disclosed');
+    has(t, 'Not included:'); has(t, 'no free open price data exists for India'); has(t, 'RERA');
+    has(t, 'no surface-water statistics', 'tool failures surface as caveats');
+    ok(buttonWith(c, 'Export CSV'), 'export button present');
+    ok(calls.some((u) => u.endsWith('/realestate/assess/job1')), 'polled the job');
+  });
+
+  test('Real Estate: API validation error and failed job are shown, and the form is usable again', async () => {
+    route('/realestate/assess', { __status: 422, detail: 'Unknown profile' });
+    let c = (await mount(<RealEstateView apiUrl="" pollMs={20} />)).container;
+    await typeInto(qa(c, 'input')[0], 'Alpha');
+    await click(buttonWith(c, 'Analyse'));
+    await flush(40);
+    has(text(c), 'Unknown profile');
+    ok(buttonWith(c, 'Analyse') && !buttonWith(c, 'Analyse').disabled, 'button re-enabled');
+
+    route('/realestate/assess', (u) => (u.endsWith('/assess') ? { request_id: 'bad' } : { __status: 422, detail: 'None of the locations could be found.' }));
+    c = (await mount(<RealEstateView apiUrl="" pollMs={20} />)).container;
+    await typeInto(qa(c, 'input')[0], 'Atlantis');
+    await click(buttonWith(c, 'Analyse'));
+    await flush(120);
+    has(text(c), 'None of the locations could be found');
+  });
+
+  test('Real Estate: CSV export is complete and escapes quotes', async () => {
+    const lines = toCsv(RE_RESULT).split('\n');
+    eq(lines[0].split(',')[0], '"location"');
+    ok(lines.length > 3, 'one row per criterion');
+    has(toCsv(RE_RESULT), '"Beta, ""Jaipur"""', 'embedded quotes are doubled, not broken');
+    has(lines[1], '"Alpha, Jaipur","1","81.5","liveability"');
+  });
+
 }

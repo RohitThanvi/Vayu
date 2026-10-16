@@ -55,6 +55,17 @@ export function register() {
     has(text(c), 'India · food & fuel pressure'); has(text(c), 'US Treasury yield curve');
     await fire({ view: 'alerts' }); has(text(c), 'New alert');
   });
+  test('Bar: Real Estate tab exists, is reachable by a command, and mounts the location-intelligence form', async () => {
+    wire();
+    route('/realestate/profiles', { profiles: [{ id: 'balanced', label: 'Balanced' }] });
+    const { container: c } = await mount(<BusinessIntelBar apiUrl="" alerts={mkAlerts()} />);
+    ok(buttonWith(c, 'Real Estate'), 'tab present in the strip');
+    await fire({ view: 'realestate' });
+    has(text(c), 'Locations (1-4)'); has(text(c), 'Analyse');
+    await fire({ view: 'economics' });
+    lacks(text(c), 'Locations (1-4)', 'switching away unmounts the view');
+  });
+
   test('Bar: a site profile command opens the one-page profile over the current view, and it can be closed', async () => {
     wire();
     const { container: c } = await mount(<BusinessIntelBar apiUrl="" alerts={mkAlerts()} />);

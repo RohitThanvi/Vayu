@@ -31,6 +31,7 @@ import AlertsView from './business/AlertsView';
 import AssetProfile from './business/AssetProfile';
 import IndiaRiskPanel from './business/IndiaRiskPanel';
 import YieldCurvePanel from './business/YieldCurvePanel';
+import RealEstateView from './business/RealEstateView';
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
@@ -420,7 +421,7 @@ function ChokepointMarketCorrelation({ apiUrl, chokepoint, days }) {
 
 export default function BusinessIntelBar({ apiUrl, isMobile, alerts }) {
   const [open, setOpen] = useState(true);
-  const [view, setView] = useState('live'); // 'live' | 'markets' | 'analysis' | 'economics' | 'alerts'
+  const [view, setView] = useState('live'); // 'live' | 'markets' | 'analysis' | 'economics' | 'realestate' | 'alerts'
   const [asset, setAsset] = useState(null);                 // {kind, id} of the open one-page profile
   const [marketsCommand, setMarketsCommand] = useState(null);
 
@@ -447,7 +448,7 @@ export default function BusinessIntelBar({ apiUrl, isMobile, alerts }) {
   const markets = useJson(apiUrl, '/api/v1/intel/markets', 30 * 60 * 1000);
 
   const worstBand = risk.data?.chokepoints?.[0]?.band; // already sorted worst-first by the API
-  const viewTabs = [['live', 'Live'], ['markets', 'Markets'], ['analysis', 'Analysis'], ['economics', 'Economics'], ['alerts', alerts?.unread ? `Alerts (${alerts.unread})` : 'Alerts']];
+  const viewTabs = [['live', 'Live'], ['markets', 'Markets'], ['analysis', 'Analysis'], ['economics', 'Economics'], ['realestate', 'Real Estate'], ['alerts', alerts?.unread ? `Alerts (${alerts.unread})` : 'Alerts']];
 
   return (
     <div style={{ flexShrink: 0, background: S.surface, borderTop: `1px solid ${S.border}`, display: 'flex', flexDirection: 'column' }}>
@@ -657,6 +658,8 @@ export default function BusinessIntelBar({ apiUrl, isMobile, alerts }) {
           <EconomicsView apiUrl={apiUrl} />
         </div>
       )}
+
+      {open && view === 'realestate' && <RealEstateView apiUrl={apiUrl} />}
 
       {open && view === 'alerts' && alerts && <div style={{ height: 340 }}><AlertsView apiUrl={apiUrl} alerts={alerts} /></div>}
 
