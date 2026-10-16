@@ -258,7 +258,7 @@ def test_osm_failure_and_sparse_osm_are_stated(monkeypatch):
     _world(monkeypatch, osm_fail=True)
     res = run(li.assess_locations([{"query": "Alpha"}], 2.0))
     assert res["locations"][0]["groups"]["liveability"]["score"] is None
-    assert any("OpenStreetMap could not be reached" in c for c in res["caveats"]) and res["locations"][0]["overall_score"] is not None
+    assert any("Amenity data was not available" in c and "timed out" in c for c in res["caveats"]) and res["locations"][0]["overall_score"] is not None
     _world(monkeypatch, osm_data={k: [] for k in osm.KINDS})
     res2 = run(li.assess_locations([{"query": "Alpha"}], 2.0))
     assert res2["locations"][0]["groups"]["liveability"]["score"] is None
@@ -502,7 +502,8 @@ def test_both_services_busy_reports_a_service_error_not_not_found(monkeypatch):
     _fake_http(monkeypatch, lambda n: (429, {}, {}), lambda n: (429, {}, {}))
     d = {}
     assert run(geocode_util.geocode_point("Mansarovar, Jaipur", d)) is None
-    assert "Nominatim" in d["geocode_error"] and "Photon" in d["geocode_error"] and "429" in d["geocode_error"]
+    assert "place-name service is busy" in d["geocode_error"] and "backup" in d["geocode_error"]
+    assert "429" not in d["geocode_error"] and "HTTP" not in d["geocode_error"]               # plain words only; code is in the logs
 
 
 def test_genuine_no_match_is_not_reported_as_a_service_error(monkeypatch):
@@ -522,12 +523,12 @@ def test_assess_says_lookup_service_is_busy_instead_of_not_found(monkeypatch):
     monkeypatch.setattr(li, "NOMINATIM_GAP_S", 0)
 
     async def busy(q, diag=None):
-        diag["geocode_error"] = "Nominatim is rate-limiting this server (HTTP 429)"
+        diag["geocode_error"] = "the place-name service is busy (too many requests)"
         return None
     monkeypatch.setattr(geocode_util, "geocode_point", busy)
     with pytest.raises(ValueError) as e:
         run(li.assess_locations([{"query": "Mansarovar, Jaipur"}]))
-    assert "busy or unreachable" in str(e.value) and "429" in str(e.value) and "'lat, lon'" in str(e.value)
+    assert "busy right now" in str(e.value) and "429" not in str(e.value) and "Nominatim" not in str(e.value) and "'lat, lon'" in str(e.value)
 
 
 def test_coordinates_never_need_the_geocoder(monkeypatch):

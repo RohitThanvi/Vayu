@@ -17,6 +17,38 @@ const S = {
 const scoreColor = (s) => s == null ? '#8a8f98' : s >= 70 ? '#7ec88f' : s >= 45 ? '#e8c15c' : '#e8746b';
 const GROUP_ORDER = ['liveability', 'growth', 'resilience'];
 
+const COORD_RE = /^\s*-?\d+(\.\d+)?\s*[,;]\s*-?\d+(\.\d+)?\s*$/;
+const _geoCache = new Map();
+
+/** Place name -> {lat, lon} using the USER's browser (their own IP gets its own Nominatim allowance, instead of every
+ *  user sharing the server's). Returns null on any failure so the caller falls back to letting the server try. */
+export async function geocodeInBrowser(q) {
+  const key = q.trim().toLowerCase();
+  if (COORD_RE.test(q)) return null;                          // the server parses coordinates itself
+  if (_geoCache.has(key)) return _geoCache.get(key);
+  try {
+    const r = await fetch('https://nominatim.openstreetmap.org/search?' + new URLSearchParams({ q, format: 'jsonv2', limit: '1' }));
+    if (!r.ok) return null;
+    const d = await r.json();
+    const hit = Array.isArray(d) && d[0] ? { lat: Number(d[0].lat), lon: Number(d[0].lon) } : null;
+    if (hit && Number.isFinite(hit.lat) && Number.isFinite(hit.lon)) { _geoCache.set(key, hit); return hit; }
+  } catch { /* fall through */ }
+  return null;
+}
+
+/** Turn a status / backend detail / network error into something a person can act on. Never shows a bare "429". */
+export function friendlyError(status, detail) {
+  const d = String(detail || '');
+  if (status === 429 || /rate.?limit|too many requests|\b429\b|\bbusy\b/i.test(d)) {
+    return { retry: true, text: 'The map-data services are busy right now (too many requests). Wait about a minute and try again. '
+      + 'Typing the place as coordinates, like "26.85, 75.76", skips the place-name lookup.' };
+  }
+  if (status >= 500 || /failed to fetch|networkerror|load failed|network request failed/i.test(d)) {
+    return { retry: true, text: 'Vayu could not reach its server, or the server hit a problem. Try again in a moment.' };
+  }
+  return { retry: false, text: d || (status ? `Request failed (${status})` : 'Something went wrong.') };
+}
+
 function Bar({ label, score, coverage }) {
   return (
     <div style={{ marginBottom: 6 }}>
@@ -127,7 +159,7 @@ function LocationCard({ loc }) {
   );
 }
 
-export default function RealEstateView({ apiUrl, pollMs = 3000 }) {
+export default function RealEstateView({ apiUrl, pollMs = 3000, geoGapMs = 1100 }) {
   const [rows, setRows] = useState(['', '']);
   const [radius, setRadius] = useState(2);
   const [profiles, setProfiles] = useState([{ id: 'balanced', label: 'Balanced' }]);
@@ -146,26 +178,36 @@ export default function RealEstateView({ apiUrl, pollMs = 3000 }) {
   const setRow = (i, v) => setRows(rs => rs.map((r, j) => (j === i ? v : r)));
 
   const run = async () => {
-    const locations = rows.map(r => r.trim()).filter(Boolean).map(q => ({ query: q }));
-    if (!locations.length) { setError('Enter at least one place or "lat, lon".'); return; }
-    setBusy(true); setError(null); setResult(null); setProgress({ pct: 2, label: 'Queued' });
+    const typed = rows.map(r => r.trim()).filter(Boolean);
+    if (!typed.length) { setError({ text: 'Enter at least one place or "lat, lon".', retry: false }); return; }
+    setBusy(true); setError(null); setResult(null); setProgress({ pct: 2, label: 'Looking up places' });
+    const fail = (status, detail) => { if (timer.current) clearInterval(timer.current); setError(friendlyError(status, detail)); setBusy(false); };
     try {
+      const locations = [];
+      let lookedUp = 0;
+      for (const q of typed) {
+        let hit = null;
+        if (!COORD_RE.test(q) && !_geoCache.has(q.toLowerCase()) && lookedUp++ > 0) await new Promise(r => setTimeout(r, geoGapMs));   // Nominatim: ~1 request/second
+        hit = await geocodeInBrowser(q);
+        locations.push(hit ? { name: q, lat: hit.lat, lon: hit.lon } : { query: q });          // fall back to the server's own lookup
+      }
+      setProgress({ pct: 4, label: 'Queued' });
       const res = await fetch(`${apiUrl}/api/v1/realestate/assess`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ locations, radius_km: Number(radius), profile }),
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Request failed (${res.status})`);
+      if (!res.ok) return fail(res.status, (await res.json().catch(() => ({}))).detail);
       const { request_id } = await res.json();
       timer.current = setInterval(async () => {
         try {
           const r = await fetch(`${apiUrl}/api/v1/realestate/assess/${request_id}`);
-          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `Failed (${r.status})`);
+          if (!r.ok) return fail(r.status, (await r.json().catch(() => ({}))).detail);
           const d = await r.json();
           if (d.status === 'done') { clearInterval(timer.current); setResult(d.result); setBusy(false); }
           else setProgress({ pct: d.progress_pct || 0, label: d.stage_label || 'Working' });
-        } catch (e) { clearInterval(timer.current); setError(e.message); setBusy(false); }
+        } catch (e) { fail(0, e.message); }
       }, pollMs);
-    } catch (e) { setError(e.message); setBusy(false); }
+    } catch (e) { fail(0, e.message); }
   };
 
   const download = () => {
@@ -193,7 +235,12 @@ export default function RealEstateView({ apiUrl, pollMs = 3000 }) {
         <button disabled={busy} onClick={run} style={{ width: '100%', background: busy ? S.surface2 : S.accent, color: busy ? S.text3 : '#0b0d10', border: 'none', borderRadius: 3, padding: '8px 0', fontWeight: 700, fontSize: 12, cursor: busy ? 'default' : 'pointer' }}>
           {busy ? `${progress.label} (${progress.pct}%)` : 'Analyse'}
         </button>
-        {error && <div style={{ fontSize: 11, color: '#e8746b', marginTop: 8, lineHeight: 1.4 }}>{error}</div>}
+        {error && (
+          <div role="alert" style={{ fontSize: 11, color: '#e8746b', marginTop: 8, lineHeight: 1.4 }}>
+            {error.text}
+            {error.retry && <div><button onClick={run} style={{ marginTop: 6, background: 'none', border: `1px solid ${S.border}`, color: S.accent, borderRadius: 3, fontSize: 11, padding: '3px 9px', cursor: 'pointer' }}>Try again</button></div>}
+          </div>
+        )}
         <div style={{ fontSize: 10, color: S.text3, marginTop: 10, lineHeight: 1.45 }}>
           Free data only. No prices or returns are estimated — no free open price data exists for India. Takes 1-3 minutes.
         </div>

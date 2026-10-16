@@ -3,7 +3,7 @@ import MarketsView from '../src/components/business/MarketsView.jsx';
 import IndiaRiskPanel from '../src/components/business/IndiaRiskPanel.jsx';
 import YieldCurvePanel from '../src/components/business/YieldCurvePanel.jsx';
 import AssetProfile from '../src/components/business/AssetProfile.jsx';
-import RealEstateView, { toCsv } from '../src/components/business/RealEstateView.jsx';
+import RealEstateView, { toCsv, friendlyError, geocodeInBrowser } from '../src/components/business/RealEstateView.jsx';
 
 const Q = (symbol, name, value, change_pct, extra = {}) => ({ symbol, name, value, change_pct, prev_close: value, market_time: 1700000000, ...extra });
 const DQ = { source: 'Yahoo Finance (unofficial chart API)', age_seconds: 300, stale: false, delay_note: 'Typically 15–20 minutes delayed', last_error: null };
@@ -175,7 +175,7 @@ export function register() {
   // ── Real Estate (Location Intelligence) ───────────────────────────────────
   test('Real Estate: form loads profiles; empty submit is refused without calling the API', async () => {
     route('/realestate/profiles', { profiles: [{ id: 'balanced', label: 'Balanced' }, { id: 'investor', label: 'Growth investor' }] });
-    const c = (await mount(<RealEstateView apiUrl="" pollMs={20} />)).container;
+    const c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
     await flush(30);
     has(text(c), 'Growth investor', 'profiles come from the API');
     has(text(c), 'No prices or returns are estimated', 'states the no-prices limitation up front');
@@ -187,7 +187,7 @@ export function register() {
   test('Real Estate: analyse → ranked cards with scores, flags, caveats, and what is NOT included', async () => {
     route('/realestate/profiles', { profiles: [{ id: 'balanced', label: 'Balanced' }] });
     route('/realestate/assess', (u) => (u.endsWith('/assess') ? { request_id: 'job1' } : { status: 'done', result: RE_RESULT }));
-    const c = (await mount(<RealEstateView apiUrl="" pollMs={20} />)).container;
+    const c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
     const inputs = qa(c, 'input');
     await typeInto(inputs[0], 'Alpha, Jaipur');
     await typeInto(inputs[1], 'Beta, Jaipur');
@@ -212,7 +212,7 @@ export function register() {
 
   test('Real Estate: API validation error and failed job are shown, and the form is usable again', async () => {
     route('/realestate/assess', { __status: 422, detail: 'Unknown profile' });
-    let c = (await mount(<RealEstateView apiUrl="" pollMs={20} />)).container;
+    let c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
     await typeInto(qa(c, 'input')[0], 'Alpha');
     await click(buttonWith(c, 'Analyse'));
     await flush(40);
@@ -220,11 +220,78 @@ export function register() {
     ok(buttonWith(c, 'Analyse') && !buttonWith(c, 'Analyse').disabled, 'button re-enabled');
 
     route('/realestate/assess', (u) => (u.endsWith('/assess') ? { request_id: 'bad' } : { __status: 422, detail: 'None of the locations could be found.' }));
-    c = (await mount(<RealEstateView apiUrl="" pollMs={20} />)).container;
+    c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
     await typeInto(qa(c, 'input')[0], 'Atlantis');
     await click(buttonWith(c, 'Analyse'));
     await flush(120);
     has(text(c), 'None of the locations could be found');
+  });
+
+  const capturePosts = () => {
+    const bodies = []; const orig = globalThis.fetch;
+    globalThis.fetch = async (u, o) => { if (String(u).endsWith('/realestate/assess') && o && o.body) bodies.push(JSON.parse(o.body)); return orig(u, o); };
+    return { bodies, restore: () => { globalThis.fetch = orig; } };
+  };
+
+  test('Real Estate: place names are looked up in the BROWSER and sent as coordinates; coordinates skip the lookup', async () => {
+    route('/realestate/assess', (u) => (u.endsWith('/assess') ? { request_id: 'g1' } : { status: 'done', result: RE_RESULT }));
+    route('nominatim.openstreetmap.org', [{ lat: '26.85', lon: '75.76' }]);
+    const cap = capturePosts();
+    try {
+      const c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
+      await typeInto(qa(c, 'input')[0], 'Mansarovar Test Colony, Jaipur');
+      await typeInto(qa(c, 'input')[1], '26.9, 75.8');
+      await click(buttonWith(c, 'Analyse')); await flush(80);
+      eq(cap.bodies.length, 1);
+      eq(JSON.stringify(cap.bodies[0].locations), JSON.stringify([{ name: 'Mansarovar Test Colony, Jaipur', lat: 26.85, lon: 75.76 }, { query: '26.9, 75.8' }]));
+      eq(calls.filter((u) => u.includes('nominatim')).length, 1, 'only the place name hit the geocoder');
+    } finally { cap.restore(); }
+  });
+
+  test('Real Estate: if the browser lookup is rate-limited the typed text is sent so the server can try', async () => {
+    route('/realestate/assess', (u) => (u.endsWith('/assess') ? { request_id: 'g2' } : { status: 'done', result: RE_RESULT }));
+    route('nominatim.openstreetmap.org', { __status: 429 });
+    const cap = capturePosts();
+    try {
+      const c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
+      await typeInto(qa(c, 'input')[0], 'Vaishali Test Nagar, Jaipur');
+      await click(buttonWith(c, 'Analyse')); await flush(80);
+      eq(JSON.stringify(cap.bodies[0].locations), JSON.stringify([{ query: 'Vaishali Test Nagar, Jaipur' }]));
+      ok(await geocodeInBrowser('Another Test Place') === null, 'a failed lookup returns null, never throws');
+    } finally { cap.restore(); }
+  });
+
+  test('Real Estate: a 429 is explained in plain words, offers Try again, and retrying calls the API again', async () => {
+    route('/realestate/assess', { __status: 429, error: 'Rate limit exceeded: 6 per 1 minute' });
+    const c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
+    await typeInto(qa(c, 'input')[0], '26.85, 75.76');
+    await click(buttonWith(c, 'Analyse')); await flush(40);
+    const t = text(c);
+    has(t, 'map-data services are busy'); has(t, 'Wait about a minute'); has(t, 'coordinates');
+    ok(!/\b429\b/.test(q(c, '[role="alert"]').textContent), 'no bare status code shown to the user');
+    const before = calls.filter((u) => u.endsWith('/realestate/assess')).length;
+    await click(buttonWith(c, 'Try again')); await flush(40);
+    eq(calls.filter((u) => u.endsWith('/realestate/assess')).length, before + 1, 'Try again re-submits');
+  });
+
+  test('Real Estate: a backend job failure about a busy lookup and a network failure are both friendly', async () => {
+    route('/realestate/assess', (u) => (u.endsWith('/assess') ? { request_id: 'b1' } : { __status: 422, detail: 'The place-name lookup service is busy right now, so the location could not be looked up.' }));
+    let c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
+    await typeInto(qa(c, 'input')[0], '26.85, 75.76');
+    await click(buttonWith(c, 'Analyse')); await flush(120);
+    has(text(c), 'map-data services are busy'); ok(buttonWith(c, 'Try again'), 'retry offered');
+
+    route('/realestate/assess', new Error('Failed to fetch'));
+    c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
+    await typeInto(qa(c, 'input')[0], '26.85, 75.76');
+    await click(buttonWith(c, 'Analyse')); await flush(60);
+    has(text(c), 'could not reach its server'); ok(!text(c).includes('Failed to fetch'), 'raw browser error text is hidden');
+  });
+
+  test('friendlyError: maps statuses and keeps real validation messages intact', async () => {
+    has(friendlyError(429, '').text, 'busy'); has(friendlyError(0, 'HTTP 429 from upstream').text, 'busy'); has(friendlyError(503, '').text, 'could not reach');
+    eq(friendlyError(422, 'Unknown profile').text, 'Unknown profile'); eq(friendlyError(422, 'Unknown profile').retry, false);
+    eq(friendlyError(404, '').text, 'Request failed (404)');
   });
 
   test('Real Estate: CSV export is complete and escapes quotes', async () => {

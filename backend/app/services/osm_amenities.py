@@ -143,20 +143,23 @@ async def _post(query: str) -> List[Dict[str, Any]]:
             async with httpx.AsyncClient(timeout=TIMEOUT_S, headers=_HEADERS) as client:
                 resp = await client.post(url, data={"data": query})
             if resp.status_code in (429, 504):
-                last = f"OpenStreetMap server is busy (HTTP {resp.status_code})"
+                logger.warning(f"Overpass {url}: HTTP {resp.status_code}")
+                last = "the OpenStreetMap server is busy (too many requests)"
                 continue
             resp.raise_for_status()
             data = resp.json()
             remark = str(data.get("remark") or "")
             if any(m in remark.lower() for m in _FAIL_REMARKS):
-                last = f"OpenStreetMap query did not complete ({remark[:90]})"
+                logger.warning(f"Overpass {url}: remark {remark[:160]!r}")
+                last = "the OpenStreetMap query did not complete (server overloaded)"
                 logger.warning(f"Overpass {url}: {last}")
                 continue
             return data.get("elements", []) or []
         except httpx.TimeoutException:
-            last = "OpenStreetMap server timed out"
+            last = "the OpenStreetMap server timed out"
         except Exception as e:
-            last = f"OpenStreetMap request failed ({type(e).__name__})"
+            logger.warning(f"Overpass {url}: {type(e).__name__}: {e}")
+            last = "the OpenStreetMap server could not be reached"
         logger.warning(f"Overpass {url}: {last}")
     raise OverpassError(last)
 
