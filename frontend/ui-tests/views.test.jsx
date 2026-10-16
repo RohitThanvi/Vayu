@@ -24,7 +24,10 @@ const RE_RESULT = {
         growth: { label: 'Growth momentum', score: 70, coverage: 0.7, evidence_level: 'partial', criteria: [RE_CRIT('night_light_level', 'Night-light activity, last 12 months', 'nW/sr/cm²', 12, 1, 0.3), RE_CRIT('night_light_growth_pct', 'Night-light growth over ~4 years', '%', null, null, 0.3)] },
         resilience: { label: 'Hazard resilience', score: 85, coverage: 1, evidence_level: 'strong', criteria: [RE_CRIT('seasonal_water_pct', 'Seasonal / flood-prone water coverage', '%', 1, 1, 0.28)] },
       },
-      context: { air_quality: { us_aqi: 160, category: 'Unhealthy' }, amenity_counts: { hospitals_10km: 4, schools_6km: 9 } },
+      context: { air_quality: { us_aqi: 160, category: 'Unhealthy' }, osm_status: 'ok',
+        amenities: { search_radius_km: { hospital: 10, school: 6, market: 8, rail: 10, bus: 2, park: 5, road: 8 },
+          nearby: { hospital: [{ name: 'SMS Hospital', type: 'hospital', distance_km: 0.8, direction: 'N' }, { name: 'Care Clinic', type: 'clinic', distance_km: 1.4, direction: 'SW' }],
+                    school: [{ name: '', type: 'school', distance_km: 0.5, direction: 'E' }], market: [], rail: [], bus: [], park: [], road: [] } } },
       flags: ['Air quality is currently unhealthy (US AQI 160).'], strengths: ['nearest hospital / clinic 0.8 km'], weaknesses: [], errors: [] },
     { name: 'Beta, "Jaipur"', lat: 26.95, lon: 75.85, radius_km: 2, rank: 2, overall_score: 40.2, overall_coverage: 0.8,
       groups: {
@@ -32,7 +35,7 @@ const RE_RESULT = {
         growth: { label: 'Growth momentum', score: 30, coverage: 1, evidence_level: 'strong', criteria: [RE_CRIT('night_light_level', 'Night-light activity, last 12 months', 'nW/sr/cm²', 2, 0.1, 0.3)] },
         resilience: { label: 'Hazard resilience', score: 45, coverage: 1, evidence_level: 'strong', criteria: [] },
       },
-      context: {}, flags: ['Seasonal/flood-prone water covers 25% of this area.'], strengths: [], weaknesses: ['seasonal water 25 %'], errors: [] },
+      context: { osm_status: 'unavailable' }, flags: ['Seasonal/flood-prone water covers 25% of this area.'], strengths: [], weaknesses: ['seasonal water 25 %'], errors: [] },
   ],
   caveats: ['Beta, "Jaipur" — flood history: ValueError: no surface-water statistics for this area'],
   methodology: 'Each group score (0-100) is the weighted average of per-criterion utilities.',
@@ -198,6 +201,11 @@ export function register() {
     has(t, 'no data', 'a missing criterion says so'); has(t, '70% data', 'partial evidence is disclosed');
     has(t, 'Not included:'); has(t, 'no free open price data exists for India'); has(t, 'RERA');
     has(t, 'no surface-water statistics', 'tool failures surface as caveats');
+    has(t, 'Nearest amenities'); has(t, 'SMS Hospital · 0.8 km N', 'nearest hospital is named with distance and direction');
+    has(t, 'Care Clinic', 'further hospitals are listed under the row'); has(t, 'school · 0.5 km E', 'an unnamed feature falls back to its type');
+    has(t, 'none mapped within 8 km', 'an empty category says none mapped, with the search radius');
+    has(t, 'OpenStreetMap could not be read', 'when OSM failed the card says so instead of silently omitting liveability');
+    eq(qa(c, '[data-testid="amenities"]').length, 1, 'only the location with amenity data shows the list');
     ok(buttonWith(c, 'Export CSV'), 'export button present');
     ok(calls.some((u) => u.endsWith('/realestate/assess/job1')), 'polled the job');
   });

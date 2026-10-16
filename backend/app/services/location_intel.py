@@ -46,6 +46,9 @@ USGS_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 QUAKE_RADIUS_KM = 200
 QUAKE_START = "1996-01-01"
 
+_KIND_METRIC = {"hospital": "hospital_km", "school": "school_km", "market": "market_km", "park": "park_km",
+                "road": "road_km", "rail": "transit_km", "bus": "transit_km"}
+
 METRICS: Dict[str, Tuple[str, str, str]] = {
     "hospital_km": ("Nearest hospital / clinic", "km", "OpenStreetMap"),
     "school_km": ("Nearest school / college", "km", "OpenStreetMap"),
@@ -444,18 +447,28 @@ async def assess_locations(inputs: List[dict], radius_km: float = DEFAULT_RADIUS
 
     osm_missing = osm is None
     items: List[Dict[str, Any]] = []
-    for st in state:
+    for si, st in enumerate(state):
         l = st["loc"]
         sparse = False
-        counts: Dict[str, int] = {}
+        amenity: Dict[str, Any] = {}
         if osm is not None:
             summ = osm_amenities.summarize((l["lat"], l["lon"]), osm)
             st["metrics"].update(summ["metrics"])
             st["notes"].update(summ["notes"])
-            sparse, counts = summ["sparse"], summ["counts"]
+            sparse = summ["sparse"]
+            # A later search ring failed: "none mapped" for those kinds was never actually checked, so drop the
+            # criterion rather than score an unchecked amenity as absent.
+            for kind in (diag.get("osm_unverified") or {}).get(si, []):
+                m = _KIND_METRIC.get(kind)
+                if m and m in summ["notes"]:
+                    st["metrics"].pop(m, None)
+                    st["notes"].pop(m, None)
+            amenity = {"nearby": summ["nearby"], "counts": summ["counts"], "count_radius_km": summ["count_radius_km"],
+                       "search_radius_km": summ["search_radius_km"]}
+        osm_status = "unavailable" if osm is None else "sparse" if sparse else "ok"
         groups = {g: score_group(g, st["metrics"], st["notes"]) for g in GROUPS}
         ov, cov = overall(groups, prof["weights"])
-        ctx = {**st["context"], "amenity_counts": counts,
+        ctx = {**st["context"], "amenities": amenity, "osm_status": osm_status, "amenity_counts": amenity.get("counts", {}),
                "terrain": {"elevation_m": st["metrics"].get("elevation_m"), "slope_deg": st["metrics"].get("slope_deg")},
                "land_cover": {k.replace("landcover_", "").replace("_pct", ""): round(v, 1) for k, v in st["metrics"].items() if k.startswith("landcover_")},
                "permanent_water_pct": st["metrics"].get("permanent_water_pct")}
@@ -464,6 +477,9 @@ async def assess_locations(inputs: List[dict], radius_km: float = DEFAULT_RADIUS
         items.append({"name": l["name"], "lat": round(l["lat"], 5), "lon": round(l["lon"], 5), "radius_km": l["radius_km"],
                       "overall_score": ov, "overall_coverage": cov, "groups": groups, "context": ctx,
                       "flags": make_flags(st["metrics"], st["context"], sparse), **highlights(groups), "errors": st["errors"]})
+    if osm is not None and diag.get("osm_partial"):
+        caveats.append(f"Part of the OpenStreetMap search did not finish ({diag['osm_partial']}); amenities shown as 'none mapped' "
+                       "beyond the nearest rings may simply not have been checked, so treat those distances as lower bounds.")
     if osm_missing:
         caveats.append(f"OpenStreetMap could not be reached ({diag.get('osm_error', 'unknown error')}), so liveability criteria were not scored.")
     ranked = rank(items)

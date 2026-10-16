@@ -13,8 +13,13 @@ Honesty rules:
   * Road distances use the segment centre (Overpass `out center`), which over-estimates the true
     distance to a long road — noted wherever it is shown.
   * Data (c) OpenStreetMap contributors, ODbL — attribution is part of the output.
+  * Overpass reports a timed-out / out-of-memory query as HTTP 200 plus a `remark`; that is treated as a FAILURE,
+    never as "nothing mapped".
+  * Search is nearest-first in widening rings (<=1.5 km, <=3 km, full radius) so the per-statement result cap can
+    never silently hide the nearest amenity in a dense city (Overpass cannot sort by distance).
 """
 
+import asyncio
 import logging
 import math
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -47,17 +52,41 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * 6371.0088 * math.asin(math.sqrt(a))
 
 
-def build_query(centers: List[Tuple[float, float]]) -> str:
-    parts = ["[out:json][timeout:60];"]
+RING_STEPS_KM = (1.5, 3.0)       # inner search rings; the last ring of every kind is its full radius
+RING_GAP_S = 1.0                 # be polite to the public Overpass servers between rings
+_FAIL_REMARKS = ("runtime error", "timed out", "out of memory")
+_COMPASS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
+
+class OverpassError(Exception):
+    pass
+
+
+def ring_radii(kind: str) -> List[float]:
+    full = KINDS[kind][1]
+    return sorted({min(full, r) for r in RING_STEPS_KM} | {full})
+
+
+def build_query_pairs(pairs: List[Tuple[float, float, str, float]]) -> str:
+    """pairs = (lat, lon, kind, radius_km). One `out` statement per kind, so each kind has its own result cap."""
+    parts = ["[out:json][timeout:45];"]
     n = 0
-    for kind, (filters, radius, cap) in KINDS.items():
+    for kind, (filters, _full, cap) in KINDS.items():
         stmts = []
-        for lat, lon in centers:
+        for lat, lon, k, radius in pairs:
+            if k != kind:
+                continue
             around = f"(around:{int(radius * 1000)},{lat:.5f},{lon:.5f})"
             stmts.extend(f.replace("{A}", around) for f in filters)
-        parts.append("(\n" + "\n".join(stmts) + f"\n)->.k{n};\n.k{n} out center tags {cap};")
-        n += 1
+        if stmts:
+            parts.append("(\n" + "\n".join(stmts) + f"\n)->.k{n};\n.k{n} out center tags {cap};")
+            n += 1
     return "\n".join(parts)
+
+
+def build_query(centers: List[Tuple[float, float]]) -> str:
+    """Full-radius query for every kind at every centre (kept for tests/diagnostics; fetch() uses rings)."""
+    return build_query_pairs([(lat, lon, kind, KINDS[kind][1]) for lat, lon in centers for kind in KINDS])
 
 
 def classify(el: Dict[str, Any]) -> Set[str]:
@@ -80,9 +109,18 @@ def classify(el: Dict[str, Any]) -> Set[str]:
     return kinds
 
 
-def parse(elements: List[Dict[str, Any]]) -> Dict[str, List[Tuple[float, float]]]:
-    out: Dict[str, List[Tuple[float, float]]] = {k: [] for k in KINDS}
-    seen: Set[Tuple[str, int]] = set()
+def _label(el: Dict[str, Any]) -> Tuple[str, str]:
+    t = el.get("tags") or {}
+    name = (t.get("name:en") or t.get("name") or t.get("operator") or t.get("ref") or "").strip()
+    sub = t.get("amenity") or t.get("shop") or t.get("railway") or t.get("public_transport") or t.get("leisure") or t.get("highway") or ""
+    return name[:80], str(sub).replace("_", " ")
+
+
+def parse(elements: List[Dict[str, Any]], pool: Optional[Dict[str, list]] = None, seen: Optional[Set[Tuple[str, int]]] = None
+          ) -> Dict[str, list]:
+    """-> {kind: [(lat, lon, name, subtype), ...]} de-duplicated by OSM element (pool/seen let rings accumulate)."""
+    out: Dict[str, list] = pool if pool is not None else {k: [] for k in KINDS}
+    seen = seen if seen is not None else set()
     for el in elements or []:
         key = (el.get("type", ""), el.get("id", -1))
         if key in seen:
@@ -92,48 +130,113 @@ def parse(elements: List[Dict[str, Any]]) -> Dict[str, List[Tuple[float, float]]
         lon = el.get("lon", (el.get("center") or {}).get("lon"))
         if lat is None or lon is None:
             continue
+        name, sub = _label(el)
         for k in classify(el):
-            out[k].append((float(lat), float(lon)))
+            out[k].append((float(lat), float(lon), name, sub))
     return out
 
 
-async def fetch(centers: List[Tuple[float, float]], diag: Optional[dict] = None) -> Optional[Dict[str, List[Tuple[float, float]]]]:
-    if not centers:
-        return None
-    q = build_query(centers)
+async def _post(query: str) -> List[Dict[str, Any]]:
     last = "unknown"
     for url in OVERPASS_URLS:
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT_S, headers=_HEADERS) as client:
-                resp = await client.post(url, data={"data": q})
-            if resp.status_code == 429:
-                last = "OpenStreetMap server is busy (HTTP 429)"
+                resp = await client.post(url, data={"data": query})
+            if resp.status_code in (429, 504):
+                last = f"OpenStreetMap server is busy (HTTP {resp.status_code})"
                 continue
             resp.raise_for_status()
-            return parse(resp.json().get("elements", []))
+            data = resp.json()
+            remark = str(data.get("remark") or "")
+            if any(m in remark.lower() for m in _FAIL_REMARKS):
+                last = f"OpenStreetMap query did not complete ({remark[:90]})"
+                logger.warning(f"Overpass {url}: {last}")
+                continue
+            return data.get("elements", []) or []
         except httpx.TimeoutException:
             last = "OpenStreetMap server timed out"
         except Exception as e:
             last = f"OpenStreetMap request failed ({type(e).__name__})"
         logger.warning(f"Overpass {url}: {last}")
-    if diag is not None:
-        diag["osm_error"] = last
-    return None
+    raise OverpassError(last)
 
 
-def summarize(center: Tuple[float, float], osm: Dict[str, List[Tuple[float, float]]]) -> Dict[str, Any]:
-    """-> {"metrics": {...}, "notes": {...}, "counts": {...}, "sparse": bool}. Distances in km."""
+def _nearest_within(center: Tuple[float, float], pts: list, radius: float) -> Optional[float]:
+    ds = [haversine_km(center[0], center[1], p[0], p[1]) for p in pts]
+    ds = [d for d in ds if d <= radius]
+    return min(ds) if ds else None
+
+
+async def fetch(centers: List[Tuple[float, float]], diag: Optional[dict] = None) -> Optional[Dict[str, list]]:
+    """Nearest-first ring search. None => OpenStreetMap could not be read at all (diag['osm_error'] says why).
+    If only a LATER ring fails, what was found is returned and diag['osm_partial'] names the gap."""
+    if not centers:
+        return None
+    pool: Dict[str, list] = {k: [] for k in KINDS}
+    seen: Set[Tuple[str, int]] = set()
+    open_pairs = {(i, k) for i in range(len(centers)) for k in KINDS}
+    for rung in range(len(RING_STEPS_KM) + 1):
+        pairs, owners = [], []
+        for (i, k) in sorted(open_pairs):
+            radii = ring_radii(k)
+            if rung < len(radii):
+                pairs.append((centers[i][0], centers[i][1], k, radii[rung]))
+                owners.append(i)
+        if not pairs:
+            break
+        if rung:
+            await asyncio.sleep(RING_GAP_S)
+        try:
+            elements = await _post(build_query_pairs(pairs))
+        except OverpassError as e:
+            if rung == 0:
+                if diag is not None:
+                    diag["osm_error"] = str(e)
+                return None
+            if diag is not None:
+                diag["osm_partial"] = str(e)
+                diag["osm_unverified"] = {i: sorted({k for (j, k) in open_pairs if j == i}) for i in range(len(centers))}
+            break
+        parse(elements, pool, seen)
+        for (lat, lon, k, radius), i in zip(pairs, owners):
+            if _nearest_within((lat, lon), pool[k], radius) is not None or radius >= KINDS[k][1]:
+                open_pairs.discard((i, k))
+    return pool
+
+
+def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> str:
+    y = math.sin(math.radians(lon2 - lon1)) * math.cos(math.radians(lat2))
+    x = math.cos(math.radians(lat1)) * math.sin(math.radians(lat2)) - math.sin(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.cos(math.radians(lon2 - lon1))
+    return _COMPASS[int(((math.degrees(math.atan2(y, x)) + 360) % 360 + 22.5) // 45) % 8]
+
+
+def summarize(center: Tuple[float, float], osm: Dict[str, list]) -> Dict[str, Any]:
+    """-> {"metrics", "notes", "sparse", "counts", "count_radius_km", "nearby"}. Distances in km.
+
+    nearby[kind] = up to 3 nearest mapped features [{name, type, distance_km, direction}] — what the reader actually
+    sees. counts[kind] = features within the ring that first found the nearest one (count_radius_km[kind]); it is a
+    lower bound on what is mapped nearby, not a census.
+    """
     lat, lon = center
     nearest: Dict[str, Optional[float]] = {}
     counts: Dict[str, int] = {}
-    for kind, (_, radius, _) in KINDS.items():
-        d = sorted(haversine_km(lat, lon, la, lo) for la, lo in osm.get(kind, []))
-        within = [x for x in d if x <= radius]
-        counts[kind] = len(within)
-        nearest[kind] = round(within[0], 2) if within else None
+    ring: Dict[str, float] = {}
+    nearby: Dict[str, List[Dict[str, Any]]] = {}
+    for kind, (_, full, _cap) in KINDS.items():
+        rows = sorted(((haversine_km(lat, lon, p[0], p[1]), p) for p in osm.get(kind, [])), key=lambda r: r[0])
+        within = [r for r in rows if r[0] <= full]
+        nearest[kind] = round(within[0][0], 2) if within else None
+        ring[kind] = next((r for r in ring_radii(kind) if within and within[0][0] <= r), full)
+        counts[kind] = sum(1 for d, _ in within if d <= ring[kind])
+        nearby[kind] = [{"name": (p[2] if len(p) > 2 else "") or "", "type": (p[3] if len(p) > 3 else "") or "",
+                         "distance_km": round(d, 2), "direction": _bearing(lat, lon, p[0], p[1])} for d, p in within[:3]]
 
-    poi_total = sum(counts[k] for k in ("hospital", "school", "market", "rail", "bus", "park"))
-    sparse = poi_total < MIN_POIS_FOR_TRUST
+    kinds6 = ("hospital", "school", "market", "rail", "bus", "park")
+    poi_total = sum(counts[k] for k in kinds6)
+    kinds_found = sum(1 for k in kinds6 if nearest[k] is not None)
+    # Sparse = almost nothing mapped. Rings stop counting once the nearest is found, so judge by how many kinds
+    # have ANY mapped feature as well as by the raw total.
+    sparse = poi_total < MIN_POIS_FOR_TRUST and kinds_found < 4
     metrics: Dict[str, float] = {}
     notes: Dict[str, str] = {}
     if not sparse:
@@ -155,6 +258,6 @@ def summarize(center: Tuple[float, float], osm: Dict[str, List[Tuple[float, floa
         else:
             metrics["transit_km"] = KINDS["rail"][1]
             notes["transit_km"] = "no rail/metro station or bus stop mapped nearby (may be unmapped); lower bound"
-    return {"metrics": metrics, "notes": notes, "sparse": sparse,
-            "counts": {"hospitals_10km": counts["hospital"], "schools_6km": counts["school"], "markets_8km": counts["market"],
-                       "rail_stations_10km": counts["rail"], "bus_stops_2km": counts["bus"], "parks_5km": counts["park"]}}
+    return {"metrics": metrics, "notes": notes, "sparse": sparse, "nearby": nearby,
+            "counts": dict(counts), "count_radius_km": {k: ring[k] for k in KINDS},
+            "search_radius_km": {k: KINDS[k][1] for k in KINDS}}
