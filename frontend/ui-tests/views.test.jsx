@@ -82,6 +82,22 @@ export function register() {
     await click(byLabel(c, 'Remove ^GSPC'));
     ok(!JSON.parse(localStorage.getItem('vayu.watchlist.v1')).includes('^GSPC'), 'removed and persisted');
   });
+  test('Markets: typing a company name offers suggestions; picking one adds it; existing entries are not re-offered', async () => {
+    wire();
+    route('/intel/symbol-search', { query: 'gener', results: [
+      { symbol: 'GM', name: 'General Motors', kind: 'equity', source: 'S&P 500' },
+      { symbol: 'TCS.NS', name: 'Tata Consultancy Services', kind: 'equity', exchange: 'NSE', source: 'Yahoo search' },
+      { symbol: '^GSPC', name: 'S&P 500', kind: 'index', source: 'Vayu curated' }], remote_ok: true });
+    const { container: c } = await mount(<MarketsView apiUrl="" />);
+    await typeInto(byLabel(c, 'Add symbol'), 'gener'); await flush(320);
+    ok(calls.some((u) => u.includes('symbol-search?q=gener')), 'search was called (debounced)');
+    const box = q(c, '[data-testid="suggestions"]');
+    ok(box, 'suggestions shown'); has(box.textContent, 'General Motors'); has(box.textContent, 'NSE');
+    lacks(box.textContent, 'S&P 500 · index', '^GSPC is already on the default watchlist so it is not offered again');
+    await click(qa(box, 'button').find((b) => b.textContent.includes('GM')));
+    ok(JSON.parse(localStorage.getItem('vayu.watchlist.v1')).includes('GM'), 'picked symbol added and persisted');
+    ok(!q(c, '[data-testid="suggestions"]'), 'list closes once the box is cleared');
+  });
   test('Markets: corrupted or hostile saved watchlist falls back safely', async () => {
     localStorage.setItem('vayu.watchlist.v1', '["<img src=x onerror=alert(1)>","ok"]');
     wire();

@@ -49,14 +49,20 @@ export default function MarketsView({ apiUrl, command, onOpenAsset }) {
   const byQuote = useMemo(() => Object.fromEntries((quotes.data?.quotes || []).map((q) => [q.symbol, q])), [quotes.data]);
   const points = useMemo(() => (hist?.points || []).map((p) => ({ date: new Date(p.date * 1000).toISOString(), value: p.value })), [hist]);
 
-  const add = (e) => {
-    e.preventDefault();
-    const s = draft.trim().toUpperCase();
+  const addSymbol = (raw) => {
+    const s = String(raw).trim().toUpperCase();
     if (!SYMBOL_RE.test(s)) return setMsg('Use a Yahoo symbol, e.g. RELIANCE.NS, TCS.NS, AAPL, INR=X.');
     if (watchlist.includes(s)) return setMsg('Already on your watchlist.');
     if (watchlist.length >= MAX_WATCHLIST) return setMsg(`Watchlist holds up to ${MAX_WATCHLIST} symbols.`);
     setWatchlist([...watchlist, s]); setSelected(s); setDraft(''); setMsg(null);
   };
+  const add = (e) => { e.preventDefault(); addSymbol(draft); };
+
+  // Name/symbol suggestions: S&P 500 + Vayu's lists + Yahoo search (server side), debounced so typing doesn't spam the API.
+  const [q, setQ] = useState('');
+  useEffect(() => { const t = setTimeout(() => setQ(draft.trim()), 250); return () => clearTimeout(t); }, [draft]);
+  const sugg = useJson(apiUrl, q.length >= 2 ? `/api/v1/intel/symbol-search?q=${encodeURIComponent(q)}` : null, 0).data;
+  const suggestions = (sugg?.results || []).filter((r) => !watchlist.includes(r.symbol)).slice(0, 8);
   const sectors = markets?.sectors || [];
   const strip = [...(markets?.indices || []), ...(markets?.fx || [])];
 
@@ -65,10 +71,21 @@ export default function MarketsView({ apiUrl, command, onOpenAsset }) {
       <div style={{ width: 340, flexShrink: 0, borderRight: `1px solid ${S.border}`, padding: '10px 14px', overflowY: 'auto', boxSizing: 'border-box' }}>
         <Panel title="Watchlist" right={<span style={{ fontSize: 9.5, color: S.text3, fontFamily: S.mono }}>{watchlist.length}/{MAX_WATCHLIST}</span>}>
           <form onSubmit={add} style={{ display: 'flex', gap: 5, marginBottom: 6 }}>
-            <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add symbol (RELIANCE.NS)" aria-label="Add symbol" style={{ ...input, flex: 1 }} />
+            <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Search name or symbol (Tata, GM, RELIANCE.NS)" aria-label="Add symbol" style={{ ...input, flex: 1 }} />
             <button type="submit" style={btn}>Add</button>
           </form>
           {msg && <div style={{ fontSize: 10.5, color: '#e0c23c', marginBottom: 6 }}>{msg}</div>}
+          {draft.trim().length >= 2 && suggestions.length > 0 && (
+            <div role="listbox" aria-label="Symbol suggestions" data-testid="suggestions" style={{ border: `1px solid ${S.border}`, borderRadius: 3, marginBottom: 6 }}>
+              {suggestions.map((r) => (
+                <button key={r.symbol} role="option" onClick={() => addSymbol(r.symbol)}
+                        style={{ display: 'flex', width: '100%', justifyContent: 'space-between', gap: 8, background: 'none', border: 'none', borderBottom: `1px solid ${S.border}`, color: S.text2, fontSize: 11, fontFamily: S.mono, padding: '4px 7px', cursor: 'pointer', textAlign: 'left' }}>
+                  <span style={{ color: S.accent }}>{r.symbol}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: S.text3 }}>{r.name}{r.exchange ? ` · ${r.exchange}` : r.kind && r.kind !== 'equity' ? ` · ${r.kind}` : ''}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {!watchlist.length && <Empty>Add a symbol to start your watchlist.</Empty>}
           {watchlist.map((sym) => {
             const q = byQuote[sym]; const err = quotes.data?.errors?.[sym];

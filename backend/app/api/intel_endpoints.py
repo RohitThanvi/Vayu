@@ -52,7 +52,7 @@ from ..services.intel.aircraft_store import aircraft_store
 from ..services.intel import satellite_tle
 from ..services.intel import commodity_prices
 from ..services.intel import market_indices
-from ..services.intel import watchlist, asset_profile, india_risk, yield_curve, exports
+from ..services.intel import watchlist, asset_profile, india_risk, yield_curve, exports, universe
 from ..services.intel.chokepoint_market_correlation import CHOKEPOINT_BELLWETHERS
 from ..core.rate_limit import limiter
 from ..services.intel import air_quality
@@ -411,6 +411,12 @@ async def get_quotes(request: Request, symbols: str = Query(..., max_length=300,
         return await watchlist.get_quotes([x for x in symbols.split(",") if x.strip()])
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/symbol-search", summary="Find a company, index or ETF by name or symbol (S&P 500 + Vayu curated + Yahoo search)")
+@limiter.limit("40/minute")
+async def symbol_search(request: Request, q: str = Query(..., min_length=1, max_length=40)):
+    return await universe.search(q)
 
 
 @router.get("/quote-history", summary="Daily closes for any symbol, for charting")
