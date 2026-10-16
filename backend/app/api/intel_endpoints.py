@@ -52,7 +52,7 @@ from ..services.intel.aircraft_store import aircraft_store
 from ..services.intel import satellite_tle
 from ..services.intel import commodity_prices
 from ..services.intel import market_indices
-from ..services.intel import watchlist, asset_profile, india_risk, yield_curve, exports, universe
+from ..services.intel import watchlist, asset_profile, india_risk, yield_curve, exports, universe, sec_company
 from ..services.intel.chokepoint_market_correlation import CHOKEPOINT_BELLWETHERS
 from ..core.rate_limit import limiter
 from ..services.intel import air_quality
@@ -417,6 +417,15 @@ async def get_quotes(request: Request, symbols: str = Query(..., max_length=300,
 @limiter.limit("40/minute")
 async def symbol_search(request: Request, q: str = Query(..., min_length=1, max_length=40)):
     return await universe.search(q)
+
+
+@router.get("/company/financials", summary="Annual financials a US-listed company reported to the SEC (XBRL), exactly as tagged")
+@limiter.limit("20/minute")
+async def company_financials(request: Request, symbol: str = Query(..., min_length=1, max_length=15)):
+    sym = watchlist.normalize_symbol(symbol)
+    if not sym:
+        raise HTTPException(status_code=422, detail="Invalid symbol")
+    return await sec_company.financials(sym)
 
 
 @router.get("/quote-history", summary="Daily closes for any symbol, for charting")

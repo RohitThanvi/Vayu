@@ -3,6 +3,7 @@ import MarketsView from '../src/components/business/MarketsView.jsx';
 import IndiaRiskPanel from '../src/components/business/IndiaRiskPanel.jsx';
 import YieldCurvePanel from '../src/components/business/YieldCurvePanel.jsx';
 import AssetProfile from '../src/components/business/AssetProfile.jsx';
+import Financials, { money } from '../src/components/business/Financials.jsx';
 import RealEstateView, { toCsv, friendlyError, geocodeInBrowser, explainSourceFailures } from '../src/components/business/RealEstateView.jsx';
 
 const Q = (symbol, name, value, change_pct, extra = {}) => ({ symbol, name, value, change_pct, prev_close: value, market_time: 1700000000, ...extra });
@@ -184,6 +185,40 @@ export function register() {
     await click(buttonWith(c, 'XOM')); eq(nav, ['ticker', 'XOM']);
     route('/intel/asset-profile', { ...SITE, signals: [], related_tickers: [], recent_news: [] });
     has(text((await mount(<AssetProfile apiUrl="" kind="site" id="jebel_ali" onClose={() => {}} />)).container), 'None detected near this site');
+  });
+  const FIN = { symbol: 'GM', cik: 1467858, entity: 'General Motors Co', available: true, source: 'SEC EDGAR XBRL company facts', as_of: '2025-01-31', source_url: 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001467858&type=10-K',
+    series: { revenue: [{ end: '2022-12-31', value: 156735000000, form: '10-K', filed: '2023-01-31' }, { end: '2023-12-31', value: 171842000000, form: '10-K', filed: '2024-01-30' }],
+              net_income: [{ end: '2022-12-31', value: -1200000000, form: '10-K', filed: '2023-01-31' }, { end: '2023-12-31', value: 10127000000, form: '10-K', filed: '2024-01-30' }],
+              eps_diluted: [{ end: '2023-12-31', value: 7.32, form: '10-K', filed: '2024-01-30' }] },
+    derived: { revenue_growth_pct: [{ end: '2023-12-31', pct: 9.6 }], net_margin_pct: [{ end: '2023-12-31', pct: 5.9 }] }, notes: ['Figures are exactly what the company tagged.'] };
+  test('Financials: bar charts per metric with latest value, derived ratios, source, and negative values drawn in red', async () => {
+    route('/intel/company/financials', FIN);
+    const { container: c } = await mount(<Financials apiUrl="" symbol="GM" />);
+    await flush(30);
+    const t = text(c);
+    has(t, 'annual financials (SEC)'); has(t, 'Revenue · latest $171.84B'); has(t, 'Net income · latest $10.13B');
+    has(t, 'Diluted EPS (2023-12-31): $7.32'); has(t, 'Revenue growth (2023-12-31): 9.6%'); has(t, 'Net margin (2023-12-31): 5.9%'); has(t, 'latest filing 2025-01-31');
+    eq(qa(c, 'svg[role="img"]').length, 2, 'one chart per charted metric (EPS is shown as text)');
+    ok(qa(c, 'svg rect').some((r) => r.getAttribute('fill') === '#e05c5c'), 'the 2022 loss is drawn red');
+    ok(q(c, 'a[href^="https://www.sec.gov/"]'), 'links to the SEC filings');
+    has(c.innerHTML, '2023-12-31: $171.84B (10-K, filed 2024-01-30)');
+  });
+  test('Financials: non-SEC companies get the reason, and failures are reported', async () => {
+    route('/intel/company/financials', { symbol: 'TCS.NS', available: false, series: {}, derived: {}, notes: ['No SEC filer is known for this symbol.'] });
+    has(text((await mount(<Financials apiUrl="" symbol="TCS.NS" />)).container), 'No SEC filer is known for this symbol');
+    route('/intel/company/financials', { __status: 500 });
+    has(text((await mount(<Financials apiUrl="" symbol="GM" />)).container), 'Could not load financials');
+    eq(money(null), '—'); eq(money(1.5e12), '$1.50T'); eq(money(-2.5e6), '-$2.5M'); eq(money(950), '$950');
+  });
+  test('Asset profile (ticker): shows a price chart and the financials panel', async () => {
+    route('/intel/asset-profile', { kind: 'ticker', id: 'GM', name: 'General Motors', quote: { value: 50, currency: 'USD', change_pct: 1 }, stats: { n_days: 300, volatility_annualised_pct: 20 }, linked_chokepoints: [], notes: [] });
+    route('/intel/company/financials', FIN); route('/intel/quote-history', HISTORY);
+    const { container: c } = await mount(<AssetProfile apiUrl="" kind="ticker" id="GM" onClose={() => {}} />);
+    await flush(40);
+    has(text(c), 'Price'); has(text(c), 'annual financials (SEC)');
+    ok(calls.some((u) => u.includes('quote-history?symbol=GM&range=1y')), 'price history fetched');
+    await click(buttonWith(c, '5Y')); await flush(20);
+    ok(calls.some((u) => u.includes('quote-history?symbol=GM&range=5y')), 'range selector refetches');
   });
   test('Asset profile: load failure is reported', async () => {
     route('/intel/asset-profile', { __status: 404 });
