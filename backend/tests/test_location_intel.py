@@ -136,12 +136,12 @@ def test_resolve_locations(monkeypatch):
     monkeypatch.setattr(li, "NOMINATIM_GAP_S", 0)
     seen = []
 
-    async def geo(q):
+    async def geo(q, diag=None):
         seen.append(q)
         if "nowhere" in q.lower():
             return None
-        return {"geometry": {"type": "Point", "coordinates": [75.76, 26.85]}}
-    monkeypatch.setattr(geocode_util, "geocode_place", geo)
+        return (26.85, 75.76)
+    monkeypatch.setattr(geocode_util, "geocode_point", geo)
     caveats = []
     out = run(li.resolve_locations([{"query": "Mansarovar, Jaipur"}, {"query": "Nowhere Land"}, {"query": "26.9, 75.8"},
                                     {"name": "Named", "lat": 26.1, "lon": 75.1}, {"query": "5th"}, {"query": "6th"}], 9.0, caveats))
@@ -205,12 +205,12 @@ def _world(monkeypatch, **kw):
     monkeypatch.setattr(li, "NOMINATIM_GAP_S", 0)
     table = {"Alpha": (26.90, 75.80), "Beta": (26.95, 75.85)}
 
-    async def geo(q):
+    async def geo(q, diag=None):
         for k, (lat, lon) in table.items():
             if k in q:
-                return {"geometry": {"type": "Point", "coordinates": [lon, lat]}}
+                return (lat, lon)
         return None
-    monkeypatch.setattr(geocode_util, "geocode_place", geo)
+    monkeypatch.setattr(geocode_util, "geocode_point", geo)
     per = {"Alpha": {"lat": 26.90, "slope": 2, "rel": 1.0, "nl": 12, "nlc": 3.0, "nlg": 40, "lst": 38, "water": 1, "quakes": 0},
            "Beta": {"lat": 26.95, "slope": 12, "rel": -14.0, "nl": 2, "nlc": -0.5, "nlg": -10, "lst": 45, "water": 25, "quakes": 6}}
     _stub_sources(monkeypatch, per, **kw)
@@ -437,3 +437,102 @@ def test_dense_city_nearest_is_exact_because_inner_ring_is_not_capped_by_far_res
     # 500 far clinics would fill a 400-result cap in the old single 10 km query; the 1.5 km ring only sees near ones.
     q = osm.build_query_pairs([(JAIPUR[0], JAIPUR[1], "hospital", 1.5)])
     assert "around:1500" in q and "around:10000" not in q and q.count("out center tags") == 1
+
+
+# ── geocoding resilience (Nominatim 429 -> retry -> Photon; cache; honest messages) ──
+def _fake_http(monkeypatch, nominatim, photon):
+    """nominatim/photon: callables (call_no) -> (status, json_body, headers)."""
+    calls = {"nom": 0, "pho": 0}
+
+    class Resp:
+        def __init__(self, status, body, headers=None):
+            self.status_code, self.body, self.headers = status, body, headers or {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return self.body
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, params=None):
+            if "nominatim" in url:
+                calls["nom"] += 1
+                return Resp(*nominatim(calls["nom"]))
+            calls["pho"] += 1
+            return Resp(*photon(calls["pho"]))
+    monkeypatch.setattr(geocode_util.httpx, "AsyncClient", Client)
+
+    async def nosleep(s):
+        pass
+    monkeypatch.setattr(geocode_util.asyncio, "sleep", nosleep)
+    geocode_util._POINT_CACHE.clear()
+    return calls
+
+
+PHOTON_HIT = (200, {"features": [{"geometry": {"type": "Point", "coordinates": [75.76, 26.85]}}]}, {})
+
+
+def test_nominatim_429_retries_then_succeeds(monkeypatch):
+    calls = _fake_http(monkeypatch, lambda n: (429, {}, {"Retry-After": "1"}) if n == 1 else (200, [{"lat": "26.85", "lon": "75.76"}], {}),
+                       lambda n: PHOTON_HIT)
+    d = {}
+    assert run(geocode_util.geocode_point("Mansarovar, Jaipur", d)) == (26.85, 75.76)
+    assert calls == {"nom": 2, "pho": 0} and not d
+
+
+def test_nominatim_persistently_429_falls_back_to_photon(monkeypatch):
+    calls = _fake_http(monkeypatch, lambda n: (429, {}, {}), lambda n: PHOTON_HIT)
+    d = {}
+    assert run(geocode_util.geocode_point("Mansarovar, Jaipur", d)) == (26.85, 75.76)     # Photon note: [lon, lat] order handled
+    assert calls["nom"] == 2 and calls["pho"] == 1 and not d
+
+
+def test_both_services_busy_reports_a_service_error_not_not_found(monkeypatch):
+    _fake_http(monkeypatch, lambda n: (429, {}, {}), lambda n: (429, {}, {}))
+    d = {}
+    assert run(geocode_util.geocode_point("Mansarovar, Jaipur", d)) is None
+    assert "Nominatim" in d["geocode_error"] and "Photon" in d["geocode_error"] and "429" in d["geocode_error"]
+
+
+def test_genuine_no_match_is_not_reported_as_a_service_error(monkeypatch):
+    _fake_http(monkeypatch, lambda n: (200, [], {}), lambda n: (200, {"features": []}, {}))
+    d = {}
+    assert run(geocode_util.geocode_point("Qwertyuiop Nowhere", d)) is None and "geocode_error" not in d
+
+
+def test_successful_lookups_are_cached(monkeypatch):
+    calls = _fake_http(monkeypatch, lambda n: (200, [{"lat": "26.85", "lon": "75.76"}], {}), lambda n: PHOTON_HIT)
+    assert run(geocode_util.geocode_point("Mansarovar, Jaipur")) == (26.85, 75.76)
+    assert run(geocode_util.geocode_point("  mansarovar,   JAIPUR ")) == (26.85, 75.76)
+    assert calls["nom"] == 1
+
+
+def test_assess_says_lookup_service_is_busy_instead_of_not_found(monkeypatch):
+    monkeypatch.setattr(li, "NOMINATIM_GAP_S", 0)
+
+    async def busy(q, diag=None):
+        diag["geocode_error"] = "Nominatim is rate-limiting this server (HTTP 429)"
+        return None
+    monkeypatch.setattr(geocode_util, "geocode_point", busy)
+    with pytest.raises(ValueError) as e:
+        run(li.assess_locations([{"query": "Mansarovar, Jaipur"}]))
+    assert "busy or unreachable" in str(e.value) and "429" in str(e.value) and "'lat, lon'" in str(e.value)
+
+
+def test_coordinates_never_need_the_geocoder(monkeypatch):
+    async def boom(q, diag=None):
+        raise AssertionError("geocoder must not be called for coordinates")
+    monkeypatch.setattr(geocode_util, "geocode_point", boom)
+    out = run(li.resolve_locations([{"query": "26.85, 75.76"}], 2.0, []))
+    assert out and out[0]["lat"] == 26.85

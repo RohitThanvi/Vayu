@@ -353,7 +353,8 @@ def _center(geom: dict) -> Optional[Tuple[float, float]]:
     return (min(lats) + max(lats)) / 2, (min(lons) + max(lons)) / 2
 
 
-async def resolve_locations(inputs: List[dict], radius_km: float, caveats: List[str]) -> List[Dict[str, Any]]:
+async def resolve_locations(inputs: List[dict], radius_km: float, caveats: List[str],
+                            diag: Optional[dict] = None) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     radius = max(MIN_RADIUS_KM, min(float(radius_km or DEFAULT_RADIUS_KM), MAX_RADIUS_KM))
     for idx, item in enumerate((inputs or [])[:MAX_LOCATIONS]):
@@ -369,13 +370,18 @@ async def resolve_locations(inputs: List[dict], radius_km: float, caveats: List[
                 continue
             if out or idx:
                 await asyncio.sleep(NOMINATIM_GAP_S)             # Nominatim usage policy: max ~1 request/second
+            gdiag: dict = {}
             try:
-                feat = await geocode_util.geocode_place(q)
-            except Exception:
-                feat = None
-            c = _center((feat or {}).get("geometry") or {})
+                c = await geocode_util.geocode_point(q, gdiag)
+            except Exception as e:
+                c, gdiag = None, {"geocode_error": f"lookup failed ({type(e).__name__})"}
             if not c:
-                caveats.append(f"Could not find '{q}' on the map, so it was skipped.")
+                if gdiag.get("geocode_error"):
+                    if diag is not None:
+                        diag["geocode_error"] = gdiag["geocode_error"]
+                    caveats.append(f"Could not look up '{q}': {gdiag['geocode_error']}. Enter it as 'lat, lon' to skip the lookup.")
+                else:
+                    caveats.append(f"Could not find '{q}' on the map, so it was skipped.")
                 continue
             lat, lon = c
             name = name or q
@@ -404,8 +410,11 @@ async def assess_locations(inputs: List[dict], radius_km: float = DEFAULT_RADIUS
     diag: Dict[str, Any] = {}
 
     _progress(progress, "Locating places", 5)
-    locs = await resolve_locations(inputs, radius_km, caveats)
+    locs = await resolve_locations(inputs, radius_km, caveats, diag)
     if not locs:
+        if diag.get("geocode_error"):
+            raise ValueError(f"The place-name lookup service is busy or unreachable right now ({diag['geocode_error']}). "
+                             "Try again in a minute, or enter the location as 'lat, lon' to skip the lookup.")
         raise ValueError("None of the locations could be found. Try a place name with its city, or 'lat, lon'.")
 
     sem = asyncio.Semaphore(GEE_CONCURRENCY)
