@@ -16,6 +16,7 @@ Vayu's is set below per https://www.sec.gov/os/webmaster-faq#developers.
 """
 
 import logging
+import os
 import time
 from typing import Any
 
@@ -24,7 +25,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 EDGAR_SEARCH_URL = "https://efts.sec.gov/LATEST/search-index"
-USER_AGENT = "Vayu Geospatial Intelligence contact@vayu-terminal.example (research/non-commercial EDGAR full-text search use)"
+# The SEC requires a descriptive User-Agent WITH a real contact address and may block requests without one. Set SEC_USER_AGENT
+# on the server, e.g. "Vayu Terminal you@yourdomain.com". The placeholder below is only a last resort.
+USER_AGENT = os.environ.get("SEC_USER_AGENT") or "Vayu Geospatial Intelligence contact@vayu-terminal.example (research/non-commercial EDGAR full-text search use)"
 
 CHOKEPOINT_SEARCH_TERMS = {
     "strait_of_hormuz":    ["Strait of Hormuz", "Hormuz"],

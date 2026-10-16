@@ -1,4 +1,7 @@
 /** One page on a ticker or a strategic site: what Vayu knows about it in one place. Descriptive only — no forecasts, no scores. */
+import { useState } from 'react';
+import SparkChart from '../SparkChart';
+import Financials from './Financials';
 import { S, useJson, num, BAND_COLOR, btn } from './theme';
 import { Change, Panel, Empty } from './ui';
 
@@ -34,6 +37,18 @@ function Links({ items }) {
           </span>
         ))}
       </div>
+    </Panel>
+  );
+}
+
+function PriceChart({ apiUrl, symbol }) {
+  const [range, setRange] = useState('1y');
+  const hist = useJson(apiUrl, `/api/v1/intel/quote-history?symbol=${encodeURIComponent(symbol)}&range=${range}`, 30 * 60 * 1000).data;
+  const points = (hist?.points || []).map((p) => ({ date: new Date(p.date * 1000).toISOString(), value: p.value }));
+  return (
+    <Panel title="Price" right={<span style={{ display: 'flex', gap: 4 }}>{[['3mo', '3M'], ['1y', '1Y'], ['5y', '5Y']].map(([r, l]) => (
+      <button key={r} aria-pressed={range === r} onClick={() => setRange(r)} style={{ ...btn, padding: '1px 7px', opacity: range === r ? 1 : 0.55 }}>{l}</button>))}</span>}>
+      {points.length > 1 ? <SparkChart points={points} height={170} /> : <Empty>No price history available.</Empty>}
     </Panel>
   );
 }
@@ -74,6 +89,8 @@ export default function AssetProfile({ apiUrl, kind, id, onClose, onOpenAsset })
               </>
             )}
           </Panel>
+          <PriceChart apiUrl={apiUrl} symbol={id} />
+          <Financials apiUrl={apiUrl} symbol={id} />
           <Links items={p.linked_chokepoints} />
         </>
       )}
