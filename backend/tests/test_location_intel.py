@@ -537,3 +537,66 @@ def test_coordinates_never_need_the_geocoder(monkeypatch):
     monkeypatch.setattr(geocode_util, "geocode_point", boom)
     out = run(li.resolve_locations([{"query": "26.85, 75.76"}], 2.0, []))
     assert out and out[0]["lat"] == 26.85
+
+
+# ── user-supplied prices ──────────────────────────────────────────────────────
+def test_price_block_premium_and_below_circle_warning():
+    assert li.price_block(None, None) == (None, [])
+    b, f = li.price_block(9000.0, 6000.0)
+    assert b["premium_to_circle_pct"] == 50.0 and b["source"].startswith("Entered by you") and f == []
+    b2, f2 = li.price_block(5000.0, 6000.0)
+    assert b2["premium_to_circle_pct"] == -16.7 and "below the circle rate" in f2[0]
+    b3, f3 = li.price_block(8000.0, None)
+    assert "premium_to_circle_pct" not in b3 and f3 == []
+
+
+def test_num_rejects_junk():
+    assert li._num("7500") == 7500.0 and li._num(None) is None and li._num(0) is None and li._num(-5) is None
+    assert li._num("abc") is None and li._num(float("inf")) is None and li._num(float("nan")) is None
+
+
+def test_value_ranks_need_two_priced_and_scored_locations():
+    mk = lambda s, p: {"overall_score": s, "price": {"price_per_sqft": p} if p else None}
+    one = [mk(80, 8000), mk(70, None)]
+    assert li.add_value_ranks(one) is False and "value_rank" not in one[0]["price"]
+    two = [mk(80, 16000), mk(60, 4000), mk(None, 3000)]                       # unscored location is excluded
+    assert li.add_value_ranks(two) is True
+    assert two[0]["price"]["score_per_1000"] == 5.0 and two[1]["price"]["score_per_1000"] == 15.0
+    assert two[1]["price"]["value_rank"] == 1 and two[0]["price"]["value_rank"] == 2 and two[1]["price"]["value_rank_of"] == 2
+    assert "value_rank" not in two[2]["price"]
+
+
+def test_assess_carries_user_prices_and_ranks_value(monkeypatch):
+    _world(monkeypatch)
+    res = run(li.assess_locations([
+        {"query": "Alpha, Jaipur", "price_per_sqft": 12000, "circle_rate_per_sqft": 8000},
+        {"name": "Beta", "lat": 26.95, "lon": 75.85, "price_per_sqft": 5000}]))
+    a = next(l for l in res["locations"] if l["name"].startswith("Alpha"))
+    b = next(l for l in res["locations"] if l["name"] == "Beta")
+    assert a["price"]["price_per_sqft"] == 12000.0 and a["price"]["premium_to_circle_pct"] == 50.0
+    assert b["price"]["price_per_sqft"] == 5000.0 and "premium_to_circle_pct" not in b["price"]
+    assert {a["price"]["value_rank"], b["price"]["value_rank"]} == {1, 2} and a["price"]["value_rank_of"] == 2
+    assert res["price_resources"] and all(r["url"].startswith("https://") for r in res["price_resources"])
+    assert "Market prices" in res["not_included"][0] and "NOT estimate prices" in res["methodology"]
+
+
+def test_unpriced_locations_have_no_price_block_and_no_value_noise(monkeypatch):
+    _world(monkeypatch)
+    res = run(li.assess_locations([{"query": "Alpha, Jaipur"}, {"query": "Beta, Jaipur"}]))
+    assert all(l["price"] is None for l in res["locations"]) and not any("Value comparison" in c for c in res["caveats"])
+
+
+def test_single_price_among_two_locations_does_not_rank_and_adds_no_noise(monkeypatch):
+    _world(monkeypatch)
+    res = run(li.assess_locations([{"query": "Alpha, Jaipur", "price_per_sqft": 9000}, {"query": "Beta, Jaipur"}]))
+    assert all("value_rank" not in (l["price"] or {}) for l in res["locations"])
+    assert not any("Value comparison" in c for c in res["caveats"])            # only one price entered: nothing to explain
+
+
+def test_http_validates_price_inputs(monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    c = TestClient(app)
+    for bad in ({"price_per_sqft": -1}, {"price_per_sqft": 0}, {"price_per_sqft": 5_000_000}, {"circle_rate_per_sqft": "abc"}):
+        r = c.post("/api/v1/realestate/assess", json={"locations": [{"query": "Alpha", **bad}]})
+        assert r.status_code == 422, bad

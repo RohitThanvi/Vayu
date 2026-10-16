@@ -99,7 +99,7 @@ METHODOLOGY = (
     "≥50% evidence coverage to be scored. The overall score weights the three groups by the chosen profile. Thresholds "
     "and weights are editable screening heuristics, not standards. Values describe a 1-4 km circle around the location, "
     "not a specific plot. This tool does NOT estimate prices or returns: no free open record-level price data exists for "
-    "India, and nothing here is investment, valuation or legal advice."
+    "India, and nothing here is investment, valuation or legal advice. Any price shown is exactly what you entered."
 )
 
 
@@ -324,6 +324,53 @@ async def _src_air(lat: float, lon: float) -> Dict[str, Any]:
     return {"us_aqi": r["us_aqi"], "category": r.get("category"), "pm2_5": r.get("pm2_5"), "observed_at": r.get("observed_at")}
 
 
+# ── prices (user-supplied only) ──────────────────────────────────────────────
+PRICE_SOURCE = "Entered by you — Vayu does not fetch or verify prices"
+PRICE_RESOURCES = [
+    {"label": "India.gov.in — Find land guideline values (links to each state's portal)", "url": "https://www.india.gov.in/find-land-guideline-values-0",
+     "note": "Circle rate / ready reckoner / guideline value: the government's MINIMUM registration value, usually below market price."},
+    {"label": "Karnataka — revised guidelines value", "url": "https://igr.karnataka.gov.in/page/Revised+Guidelines+Value/en", "note": "Official state page."},
+    {"label": "Tamil Nadu — TNREGINET (guideline value search)", "url": "https://tnreginet.gov.in/portal/?UserLocaleID=en", "note": "Official state portal."},
+    {"label": "RBI Database on Indian Economy — House Price Index (18 cities)", "url": "https://data.rbi.org.in/DBIE/#/dbie/home",
+     "note": "Built from registration transaction data. An INDEX (base 2022-23 = 100) for trend, not a price per sq ft. Path: Statistics > Real Sector > Prices & Wages."},
+]
+
+
+def _num(v: Any) -> Optional[float]:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f > 0 and math.isfinite(f) else None
+
+
+def price_block(price: Optional[float], circle: Optional[float]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """What the user typed, plus the one comparison that needs no outside data: market vs circle rate."""
+    if price is None and circle is None:
+        return None, []
+    blk: Dict[str, Any] = {"price_per_sqft": price, "circle_rate_per_sqft": circle, "source": PRICE_SOURCE}
+    flags: List[str] = []
+    if price is not None and circle is not None:
+        blk["premium_to_circle_pct"] = round((price / circle - 1.0) * 100.0, 1)
+        if price < circle:
+            flags.append("The price you entered is below the circle rate you entered. Registration duty is generally charged on the higher "
+                         "of the two, so double-check both numbers.")
+    return blk, flags
+
+
+def add_value_ranks(items: List[Dict[str, Any]]) -> bool:
+    """Score per ₹1,000/sq ft, ranked — only when at least two compared locations have both a price and an overall score.
+    A comparison aid for the places the user entered, NOT a valuation."""
+    rows = [i for i in items if i.get("price") and i["price"].get("price_per_sqft") and i["overall_score"] is not None]
+    if len(rows) < 2:
+        return False
+    for i in rows:
+        i["price"]["score_per_1000"] = round(i["overall_score"] / (i["price"]["price_per_sqft"] / 1000.0), 2)
+    for n, i in enumerate(sorted(rows, key=lambda r: -r["price"]["score_per_1000"]), 1):
+        i["price"]["value_rank"], i["price"]["value_rank_of"] = n, len(rows)
+    return True
+
+
 # ── locations ─────────────────────────────────────────────────────────────────
 def _parse_latlon(text: str) -> Optional[Tuple[float, float]]:
     parts = [p for p in text.replace(";", ",").split(",")]
@@ -386,6 +433,7 @@ async def resolve_locations(inputs: List[dict], radius_km: float, caveats: List[
             lat, lon = c
             name = name or q
         out.append({"name": name or f"{lat:.4f}, {lon:.4f}", "lat": float(lat), "lon": float(lon), "radius_km": radius,
+                    "price_per_sqft": _num(item.get("price_per_sqft")), "circle_rate_per_sqft": _num(item.get("circle_rate_per_sqft")),
                     "aoi": geocode_util._point_to_circle_polygon(float(lat), float(lon), radius),
                     "ring": geocode_util._point_to_circle_polygon(float(lat), float(lon), RING_RADIUS_KM)})
     if len(inputs or []) > MAX_LOCATIONS:
@@ -483,14 +531,18 @@ async def assess_locations(inputs: List[dict], radius_km: float = DEFAULT_RADIUS
                "permanent_water_pct": st["metrics"].get("permanent_water_pct")}
         for e in st["errors"]:
             caveats.append(f"{l['name']} — {e}")
+        pblk, pflags = price_block(l.get("price_per_sqft"), l.get("circle_rate_per_sqft"))
         items.append({"name": l["name"], "lat": round(l["lat"], 5), "lon": round(l["lon"], 5), "radius_km": l["radius_km"],
-                      "overall_score": ov, "overall_coverage": cov, "groups": groups, "context": ctx,
-                      "flags": make_flags(st["metrics"], st["context"], sparse), **highlights(groups), "errors": st["errors"]})
+                      "overall_score": ov, "overall_coverage": cov, "groups": groups, "context": ctx, "price": pblk,
+                      "flags": make_flags(st["metrics"], st["context"], sparse) + pflags, **highlights(groups), "errors": st["errors"]})
     if osm is not None and diag.get("osm_partial"):
         caveats.append(f"Part of the amenity search did not finish because {diag['osm_partial']}; amenities shown as 'none mapped' "
                        "beyond the nearest rings may simply not have been checked, so treat those distances as lower bounds.")
     if osm_missing:
         caveats.append(f"Amenity data was not available because {diag.get('osm_error', 'OpenStreetMap could not be read')}, so liveability criteria were not scored.")
+    value_ranked = add_value_ranks(items)
+    if sum(1 for i in items if i.get("price") and i["price"].get("price_per_sqft")) >= 2 and not value_ranked:
+        caveats.append("Value comparison needs at least two priced locations that could also be scored overall.")
     ranked = rank(items)
     for it in ranked:
         if it["overall_score"] is None:
@@ -499,5 +551,6 @@ async def assess_locations(inputs: List[dict], radius_km: float = DEFAULT_RADIUS
     return {"profile": profile, "profile_label": prof["label"], "weights": prof["weights"], "radius_km": locs[0]["radius_km"],
             "locations": ranked, "caveats": caveats, "methodology": METHODOLOGY, "sources": SOURCES,
             "generated_at": dt.datetime.utcnow().isoformat(timespec="seconds") + "Z",
-            "not_included": ["Property prices, rents and returns (no free open price data exists for India)",
+            "price_resources": PRICE_RESOURCES,
+            "not_included": ["Market prices, rents and returns are not fetched (no free open per-area price data exists for India); only prices you type in are shown",
                              "RERA project / supply-pipeline data (state portals differ; not yet connected)"]}

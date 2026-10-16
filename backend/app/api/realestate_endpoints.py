@@ -27,6 +27,10 @@ class LocationIn(BaseModel):
     query: Optional[str] = Field(default=None, max_length=160, description="Place name, or 'lat, lon'")
     lat: Optional[float] = Field(default=None, ge=-90, le=90)
     lon: Optional[float] = Field(default=None, ge=-180, le=180)
+    # Optional, user-typed prices in INR per sq ft. Vayu never fetches or estimates prices; these are shown back as
+    # "you entered". The ceiling only catches typos (e.g. an extra zero or a total price typed into a per-sq-ft box).
+    price_per_sqft: Optional[float] = Field(default=None, gt=0, le=1_000_000)
+    circle_rate_per_sqft: Optional[float] = Field(default=None, gt=0, le=1_000_000)
 
 
 class AssessRequest(BaseModel):
