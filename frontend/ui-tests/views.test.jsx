@@ -3,7 +3,7 @@ import MarketsView from '../src/components/business/MarketsView.jsx';
 import IndiaRiskPanel from '../src/components/business/IndiaRiskPanel.jsx';
 import YieldCurvePanel from '../src/components/business/YieldCurvePanel.jsx';
 import AssetProfile from '../src/components/business/AssetProfile.jsx';
-import RealEstateView, { toCsv, friendlyError, geocodeInBrowser } from '../src/components/business/RealEstateView.jsx';
+import RealEstateView, { toCsv, friendlyError, geocodeInBrowser, explainSourceFailures } from '../src/components/business/RealEstateView.jsx';
 
 const Q = (symbol, name, value, change_pct, extra = {}) => ({ symbol, name, value, change_pct, prev_close: value, market_time: 1700000000, ...extra });
 const DQ = { source: 'Yahoo Finance (unofficial chart API)', age_seconds: 300, stale: false, delay_note: 'Typically 15–20 minutes delayed', last_error: null };
@@ -286,6 +286,27 @@ export function register() {
     await typeInto(qa(c, 'input')[0], '26.85, 75.76');
     await click(buttonWith(c, 'Analyse')); await flush(60);
     has(text(c), 'could not reach its server'); ok(!text(c).includes('Failed to fetch'), 'raw browser error text is hidden');
+  });
+
+  test('Real Estate: when every source failed the card says so, explains likely causes, and keeps technical details', async () => {
+    const empty = { label: 'x', score: null, coverage: 0, evidence_level: 'weak', criteria: [RE_CRIT('hospital_km', 'Nearest hospital / clinic', 'km', null, null, 0.22), RE_CRIT('slope_deg', 'Mean slope', '°', null, null, 0.1)] };
+    const dead = { ...RE_RESULT.locations[0], overall_score: null, rank: null, overall_coverage: 0, flags: [],
+      groups: { liveability: empty, growth: empty, resilience: empty }, context: { osm_status: 'unavailable' },
+      errors: ['terrain: EEException: Earth Engine client library not initialized', 'night lights: TimeoutError: '] };
+    route('/realestate/profiles', { profiles: [{ id: 'balanced', label: 'Balanced' }] });
+    route('/realestate/assess', (u) => (u.endsWith('/assess') ? { request_id: 'dead' } : { status: 'done', result: { ...RE_RESULT, locations: [dead] } }));
+    const c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
+    await typeInto(qa(c, 'input')[0], '26.85, 75.76');
+    await click(buttonWith(c, 'Analyse')); await flush(100);
+    const t = text(c);
+    has(t, 'No measurements came back'); has(t, 'Earth Engine did not return data'); has(t, 'timed out'); has(t, 'Technical details (2)');
+    ok(q(c, '[data-testid="no-data"]'), 'banner present');
+    // a card with real data never shows the banner
+    const ok2 = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
+    route('/realestate/assess', (u) => (u.endsWith('/assess') ? { request_id: 'fine' } : { status: 'done', result: RE_RESULT }));
+    await typeInto(qa(ok2, 'input')[0], '26.85, 75.76'); await click(buttonWith(ok2, 'Analyse')); await flush(100);
+    ok(!q(ok2, '[data-testid="no-data"]'), 'no banner when data exists');
+    eq(explainSourceFailures([]).length, 0);
   });
 
   test('friendlyError: maps statuses and keeps real validation messages intact', async () => {
