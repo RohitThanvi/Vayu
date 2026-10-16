@@ -17,9 +17,11 @@ isn't worth the added install weight on Render's free tier, especially
 given this project's history of free-tier infra friction).
 """
 
+import asyncio
 import logging
 import math
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Dict, Optional, Tuple
 
 import httpx
 
@@ -28,6 +30,9 @@ logger = logging.getLogger(__name__)
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 _HEADERS = {"User-Agent": "VAYU-Geocode/1.0"}
+PHOTON_URL = "https://photon.komoot.io/api/"
+GEOCODE_CACHE_TTL_S = 7 * 24 * 3600
+_POINT_CACHE: Dict[str, Tuple[float, Tuple[float, float]]] = {}
 
 # Matches the "2km" convention already used elsewhere in this project
 # (research agent's default marker radius) — a sane default AOI size
@@ -66,6 +71,67 @@ async def geocode_place(query: str) -> Optional[dict]:
     except Exception as e:
         logger.warning(f"geocode_place failed for '{query}': {e}")
         return None
+
+
+async def geocode_point(query: str, diag: Optional[dict] = None) -> Optional[Tuple[float, float]]:
+    """Place name -> (lat, lon), resilient to a busy geocoder.
+
+    Nominatim first (one retry that honours Retry-After on HTTP 429), then Photon (komoot's OSM-based geocoder, free and
+    keyless) if Nominatim is rate-limited, errors, or has no match. Successful lookups are cached for a week so repeat
+    analyses never re-hit the public servers. A genuine "no such place" returns None with NO diag error; a service
+    problem returns None with diag['geocode_error'] set, so callers can tell the two apart.
+    """
+    key = " ".join((query or "").lower().split())
+    if not key:
+        return None
+    hit = _POINT_CACHE.get(key)
+    if hit and time.time() - hit[0] < GEOCODE_CACHE_TTL_S:
+        return hit[1]
+    errors: list = []
+
+    def done(pt: Tuple[float, float]) -> Tuple[float, float]:
+        _POINT_CACHE[key] = (time.time(), pt)
+        return pt
+
+    for attempt in range(2):                                    # ── Nominatim
+        try:
+            async with httpx.AsyncClient(timeout=10, headers=_HEADERS) as client:
+                resp = await client.get(NOMINATIM_URL, params={"q": query, "format": "jsonv2", "limit": 1})
+            if resp.status_code == 429:
+                err = "Nominatim is rate-limiting this server (HTTP 429)"
+                if err not in errors:
+                    errors.append(err)
+                ra = resp.headers.get("Retry-After", "")
+                if attempt == 0:
+                    await asyncio.sleep(min(float(ra), 3.0) if ra.replace(".", "", 1).isdigit() else 1.5)
+                    continue
+                break
+            resp.raise_for_status()
+            data = resp.json()
+            if data:
+                return done((float(data[0]["lat"]), float(data[0]["lon"])))
+            break                                               # reachable, but no match: try the fallback anyway
+        except Exception as e:
+            errors.append(f"Nominatim request failed ({type(e).__name__})")
+            break
+    try:                                                         # ── Photon fallback
+        async with httpx.AsyncClient(timeout=10, headers=_HEADERS) as client:
+            resp = await client.get(PHOTON_URL, params={"q": query, "limit": 1})
+        if resp.status_code == 429:
+            errors.append("Photon is rate-limiting this server (HTTP 429)")
+        else:
+            resp.raise_for_status()
+            feats = (resp.json() or {}).get("features") or []
+            coords = ((feats[0].get("geometry") or {}).get("coordinates") or []) if feats else []
+            if len(coords) >= 2:
+                return done((float(coords[1]), float(coords[0])))
+    except Exception as e:
+        errors.append(f"Photon request failed ({type(e).__name__})")
+    if errors:
+        logger.warning(f"geocode_point failed for '{query}': {'; '.join(errors)}")
+        if diag is not None:
+            diag["geocode_error"] = "; ".join(errors)
+    return None
 
 
 async def geocode_to_aoi(query: str, fallback_radius_km: float = DEFAULT_FALLBACK_RADIUS_KM) -> Optional[Dict[str, Any]]:
