@@ -113,6 +113,33 @@ function Amenities({ amenities, status }) {
   );
 }
 
+export function explainSourceFailures(errors) {
+  const e = (errors || []).join(' ').toLowerCase();
+  const parts = [];
+  if (/earthengine|earth engine|\bee\b|gcp_project|credential|not initiali[sz]ed|eeexception|permission|quota|asset/.test(e)) {
+    parts.push('Earth Engine did not return data (not set up on this server, out of quota, or temporarily failing) — this blanks the satellite criteria: night lights, terrain, flood history and surface temperature.');
+  }
+  if (/timed ?out|timeout|asyncio|cancel/.test(e)) parts.push('Some satellite queries timed out; a second run is usually faster because results are cached.');
+  return parts;
+}
+
+function NoDataBanner({ loc }) {
+  const allEmpty = GROUP_ORDER.every(g => (loc.groups[g]?.criteria || []).every(c => c.value == null));
+  if (!allEmpty) return null;
+  const why = explainSourceFailures(loc.errors);
+  return (
+    <div role="alert" data-testid="no-data" style={{ fontSize: 11, color: '#e8746b', lineHeight: 1.45, margin: '6px 0' }}>
+      <b>No measurements came back for this location.</b> {why.length ? why.join(' ') : 'Every data source failed for it; the reasons are listed below.'}
+      {loc.errors?.length > 0 && (
+        <details style={{ marginTop: 4, color: S.text3, fontFamily: S.mono, fontSize: 10 }}>
+          <summary style={{ cursor: 'pointer' }}>Technical details ({loc.errors.length})</summary>
+          {loc.errors.map((x, i) => <div key={i}>{x}</div>)}
+        </details>
+      )}
+    </div>
+  );
+}
+
 function LocationCard({ loc }) {
   const c = loc.context || {};
   const chips = [
@@ -129,6 +156,7 @@ function LocationCard({ loc }) {
       </div>
       <div style={{ fontSize: 10, color: S.text3, fontFamily: S.mono, marginBottom: 8 }}>{loc.lat}, {loc.lon} · {loc.radius_km} km radius · {Math.round(loc.overall_coverage * 100)}% evidence</div>
       {GROUP_ORDER.map(g => <Bar key={g} label={loc.groups[g].label} score={loc.groups[g].score} coverage={loc.groups[g].coverage} />)}
+      <NoDataBanner loc={loc} />
       <Amenities amenities={c.amenities} status={c.osm_status} />
       {loc.flags?.length > 0 && <div style={{ fontSize: 11, color: '#e8746b', lineHeight: 1.45, margin: '6px 0' }}>⚠ {loc.flags.join(' ')}</div>}
       {(loc.strengths?.length > 0 || loc.weaknesses?.length > 0) && (
