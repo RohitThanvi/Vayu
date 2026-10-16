@@ -28,6 +28,7 @@ const RE_RESULT = {
         amenities: { search_radius_km: { hospital: 10, school: 6, market: 8, rail: 10, bus: 2, park: 5, road: 8 },
           nearby: { hospital: [{ name: 'SMS Hospital', type: 'hospital', distance_km: 0.8, direction: 'N' }, { name: 'Care Clinic', type: 'clinic', distance_km: 1.4, direction: 'SW' }],
                     school: [{ name: '', type: 'school', distance_km: 0.5, direction: 'E' }], market: [], rail: [], bus: [], park: [], road: [] } } },
+      price: { price_per_sqft: 12000, circle_rate_per_sqft: 8000, premium_to_circle_pct: 50, score_per_1000: 6.8, value_rank: 1, value_rank_of: 2, source: 'Entered by you' },
       flags: ['Air quality is currently unhealthy (US AQI 160).'], strengths: ['nearest hospital / clinic 0.8 km'], weaknesses: [], errors: [] },
     { name: 'Beta, "Jaipur"', lat: 26.95, lon: 75.85, radius_km: 2, rank: 2, overall_score: 40.2, overall_coverage: 0.8,
       groups: {
@@ -37,6 +38,7 @@ const RE_RESULT = {
       },
       context: { osm_status: 'unavailable' }, flags: ['Seasonal/flood-prone water covers 25% of this area.'], strengths: [], weaknesses: ['seasonal water 25 %'], errors: [] },
   ],
+  price_resources: [{ label: 'India.gov.in — Find land guideline values', url: 'https://www.india.gov.in/find-land-guideline-values-0', note: 'Circle rate is the government minimum, usually below market price.' }],
   caveats: ['Beta, "Jaipur" — flood history: ValueError: no surface-water statistics for this area'],
   methodology: 'Each group score (0-100) is the weighted average of per-criterion utilities.',
   sources: ['© OpenStreetMap contributors (ODbL) — amenities and roads'],
@@ -307,6 +309,37 @@ export function register() {
     await typeInto(qa(ok2, 'input')[0], '26.85, 75.76'); await click(buttonWith(ok2, 'Analyse')); await flush(100);
     ok(!q(ok2, '[data-testid="no-data"]'), 'no banner when data exists');
     eq(explainSourceFailures([]).length, 0);
+  });
+
+  test('Real Estate: typed prices go into the request, junk is ignored, and unpriced rows send none', async () => {
+    route('/realestate/assess', (u) => (u.endsWith('/assess') ? { request_id: 'p1' } : { status: 'done', result: RE_RESULT }));
+    const cap = capturePosts();
+    try {
+      const c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
+      const inputs = qa(c, 'input');
+      await typeInto(inputs[0], '26.85, 75.76'); await typeInto(inputs[1], '26.9, 75.8');
+      await typeInto(q(c, 'input[aria-label="Market price per sq ft, location 1"]'), '₹ 12,000');
+      await typeInto(q(c, 'input[aria-label="Circle rate per sq ft, location 1"]'), '8000');
+      await typeInto(q(c, 'input[aria-label="Market price per sq ft, location 2"]'), 'abc');
+      await click(buttonWith(c, 'Analyse')); await flush(80);
+      const locs = cap.bodies[0].locations;
+      eq(locs[0].price_per_sqft, 12000, 'rupee sign and commas are stripped'); eq(locs[0].circle_rate_per_sqft, 8000);
+      ok(!('price_per_sqft' in locs[1]) && !('circle_rate_per_sqft' in locs[1]), 'non-numeric input is dropped, not sent');
+    } finally { cap.restore(); }
+  });
+
+  test('Real Estate: price block shows what was entered with its limits; official links are offered', async () => {
+    route('/realestate/assess', (u) => (u.endsWith('/assess') ? { request_id: 'p2' } : { status: 'done', result: RE_RESULT }));
+    const c = (await mount(<RealEstateView apiUrl="" pollMs={20} geoGapMs={0} />)).container;
+    await typeInto(qa(c, 'input')[0], '26.85, 75.76');
+    await click(buttonWith(c, 'Analyse')); await flush(100);
+    const t = text(c);
+    has(t, 'Price (entered by you)'); has(t, '₹12,000 / sq ft'); has(t, '₹8,000 / sq ft'); has(t, '50% above the circle rate');
+    has(t, 'Score per ₹1,000/sq ft: 6.8'); has(t, 'value rank #1 of 2'); has(t, 'not a valuation'); has(t, 'Not verified by Vayu');
+    eq(qa(c, '[data-testid="price"]').length, 1, 'only the priced location shows a price block');
+    const link = q(c, '[data-testid="price-resources"] a');
+    eq(link.getAttribute('href'), 'https://www.india.gov.in/find-land-guideline-values-0'); eq(link.getAttribute('rel'), 'noopener noreferrer');
+    has(t, 'government minimum');
   });
 
   test('friendlyError: maps statuses and keeps real validation messages intact', async () => {

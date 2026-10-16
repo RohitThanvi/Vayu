@@ -140,6 +140,25 @@ function NoDataBanner({ loc }) {
   );
 }
 
+const inr = (n) => `₹${Math.round(n).toLocaleString('en-IN')}`;
+
+function PriceBlock({ price }) {
+  if (!price) return null;
+  const { price_per_sqft: p, circle_rate_per_sqft: cr, premium_to_circle_pct: prem, score_per_1000: spk, value_rank: vr, value_rank_of: vo } = price;
+  return (
+    <div data-testid="price" style={{ margin: '8px 0 4px' }}>
+      <div style={{ fontSize: 10, color: S.accent, fontFamily: S.mono, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 2 }}>Price (entered by you)</div>
+      <div style={{ fontSize: 11, fontFamily: S.mono, color: S.text2, lineHeight: 1.5 }}>
+        {p != null && <div>Market: {inr(p)} / sq ft</div>}
+        {cr != null && <div>Circle rate: {inr(cr)} / sq ft</div>}
+        {prem != null && <div>{prem >= 0 ? `${prem}% above` : `${Math.abs(prem)}% below`} the circle rate</div>}
+        {spk != null && <div>Score per ₹1,000/sq ft: {spk}{vr != null ? ` · value rank #${vr} of ${vo}` : ''}</div>}
+      </div>
+      <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2 }}>Not verified by Vayu. The value rank only compares the places you entered; it is not a valuation.</div>
+    </div>
+  );
+}
+
 function LocationCard({ loc }) {
   const c = loc.context || {};
   const chips = [
@@ -157,6 +176,7 @@ function LocationCard({ loc }) {
       <div style={{ fontSize: 10, color: S.text3, fontFamily: S.mono, marginBottom: 8 }}>{loc.lat}, {loc.lon} · {loc.radius_km} km radius · {Math.round(loc.overall_coverage * 100)}% evidence</div>
       {GROUP_ORDER.map(g => <Bar key={g} label={loc.groups[g].label} score={loc.groups[g].score} coverage={loc.groups[g].coverage} />)}
       <NoDataBanner loc={loc} />
+      <PriceBlock price={loc.price} />
       <Amenities amenities={c.amenities} status={c.osm_status} />
       {loc.flags?.length > 0 && <div style={{ fontSize: 11, color: '#e8746b', lineHeight: 1.45, margin: '6px 0' }}>⚠ {loc.flags.join(' ')}</div>}
       {(loc.strengths?.length > 0 || loc.weaknesses?.length > 0) && (
@@ -189,6 +209,7 @@ function LocationCard({ loc }) {
 
 export default function RealEstateView({ apiUrl, pollMs = 3000, geoGapMs = 1100 }) {
   const [rows, setRows] = useState(['', '']);
+  const [prices, setPrices] = useState([['', ''], ['', '']]);   // per row: [market ₹/sq ft, circle rate ₹/sq ft]
   const [radius, setRadius] = useState(2);
   const [profiles, setProfiles] = useState([{ id: 'balanced', label: 'Balanced' }]);
   const [profile, setProfile] = useState('balanced');
@@ -204,20 +225,25 @@ export default function RealEstateView({ apiUrl, pollMs = 3000, geoGapMs = 1100 
   }, [apiUrl]);
 
   const setRow = (i, v) => setRows(rs => rs.map((r, j) => (j === i ? v : r)));
+  const setPrice = (i, k, v) => setPrices(ps => { const n = rows.map((_, j) => ps[j] || ['', '']); n[i] = n[i].map((x, kk) => (kk === k ? v : x)); return n; });
+  const priceNum = (v) => { const n = Number(String(v).replace(/[,₹\s]/g, '')); return Number.isFinite(n) && n > 0 ? n : undefined; };
 
   const run = async () => {
-    const typed = rows.map(r => r.trim()).filter(Boolean);
+    const typedIdx = rows.map((r, i) => [r.trim(), i]).filter(([r]) => r);
+    const typed = typedIdx.map(([r]) => r);
     if (!typed.length) { setError({ text: 'Enter at least one place or "lat, lon".', retry: false }); return; }
     setBusy(true); setError(null); setResult(null); setProgress({ pct: 2, label: 'Looking up places' });
     const fail = (status, detail) => { if (timer.current) clearInterval(timer.current); setError(friendlyError(status, detail)); setBusy(false); };
     try {
       const locations = [];
       let lookedUp = 0;
-      for (const q of typed) {
+      for (const [q, ri] of typedIdx) {
         let hit = null;
         if (!COORD_RE.test(q) && !_geoCache.has(q.toLowerCase()) && lookedUp++ > 0) await new Promise(r => setTimeout(r, geoGapMs));   // Nominatim: ~1 request/second
         hit = await geocodeInBrowser(q);
-        locations.push(hit ? { name: q, lat: hit.lat, lon: hit.lon } : { query: q });          // fall back to the server's own lookup
+        const pr = prices[ri] || ['', ''];
+        const priced = { price_per_sqft: priceNum(pr[0]), circle_rate_per_sqft: priceNum(pr[1]) };   // undefined values are dropped by JSON
+        locations.push(hit ? { name: q, lat: hit.lat, lon: hit.lon, ...priced } : { query: q, ...priced });   // fall back to the server's own lookup
       }
       setProgress({ pct: 4, label: 'Queued' });
       const res = await fetch(`${apiUrl}/api/v1/realestate/assess`, {
@@ -251,7 +277,22 @@ export default function RealEstateView({ apiUrl, pollMs = 3000, geoGapMs = 1100 
           <input key={i} value={r} onChange={e => setRow(i, e.target.value)} placeholder={i === 0 ? 'e.g. Mansarovar, Jaipur' : 'Add another to compare, or "26.85, 75.76"'}
                  style={{ width: '100%', boxSizing: 'border-box', marginBottom: 5, background: S.surface2, border: `1px solid ${S.border}`, color: S.text, borderRadius: 3, padding: '6px 8px', fontSize: 12 }} />
         ))}
-        {rows.length < 4 && <button onClick={() => setRows(rs => [...rs, ''])} style={{ background: 'none', border: 'none', color: S.accent, fontSize: 11, cursor: 'pointer', padding: 0, marginBottom: 8 }}>+ add location</button>}
+        {rows.length < 4 && <button onClick={() => { setRows(rs => [...rs, '']); setPrices(ps => [...ps, ['', '']]); }} style={{ background: 'none', border: 'none', color: S.accent, fontSize: 11, cursor: 'pointer', padding: 0, marginBottom: 8 }}>+ add location</button>}
+        <details style={{ marginBottom: 8 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 11, color: S.accent }}>Add prices you have seen (optional)</summary>
+          <div style={{ fontSize: 10, color: S.text3, lineHeight: 1.4, margin: '4px 0' }}>₹ per sq ft. Vayu does not look up prices; whatever you type is shown back and compared.</div>
+          {rows.map((r, i) => (
+            <div key={i} style={{ marginBottom: 4 }}>
+              <div style={{ fontSize: 10, color: S.text3, fontFamily: S.mono, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.trim() || `Location ${i + 1}`}</div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <input aria-label={`Market price per sq ft, location ${i + 1}`} inputMode="numeric" placeholder="Market ₹/sq ft" value={(prices[i] || ['', ''])[0]} onChange={e => setPrice(i, 0, e.target.value)}
+                       style={{ flex: 1, minWidth: 0, background: S.surface2, border: `1px solid ${S.border}`, color: S.text, borderRadius: 3, padding: '4px 6px', fontSize: 11 }} />
+                <input aria-label={`Circle rate per sq ft, location ${i + 1}`} inputMode="numeric" placeholder="Circle rate ₹/sq ft" value={(prices[i] || ['', ''])[1]} onChange={e => setPrice(i, 1, e.target.value)}
+                       style={{ flex: 1, minWidth: 0, background: S.surface2, border: `1px solid ${S.border}`, color: S.text, borderRadius: 3, padding: '4px 6px', fontSize: 11 }} />
+              </div>
+            </div>
+          ))}
+        </details>
         <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
           <select value={radius} onChange={e => setRadius(e.target.value)} style={{ flex: 1, background: S.surface2, color: S.text, border: `1px solid ${S.border}`, borderRadius: 3, padding: 5, fontSize: 11 }}>
             {[1, 2, 3, 4].map(r => <option key={r} value={r}>{r} km radius</option>)}
@@ -270,7 +311,7 @@ export default function RealEstateView({ apiUrl, pollMs = 3000, geoGapMs = 1100 
           </div>
         )}
         <div style={{ fontSize: 10, color: S.text3, marginTop: 10, lineHeight: 1.45 }}>
-          Free data only. No prices or returns are estimated — no free open price data exists for India. Takes 1-3 minutes.
+          Free data only. No prices or returns are estimated — no free open price data exists for India; you can add prices you have seen and Vayu will compare them. Takes 1-3 minutes.
         </div>
       </div>
 
@@ -290,6 +331,14 @@ export default function RealEstateView({ apiUrl, pollMs = 3000, geoGapMs = 1100 
               {result.locations.map((l, i) => <LocationCard key={i} loc={l} />)}
             </div>
             {result.caveats?.length > 0 && <div style={{ fontSize: 11, color: S.text3, marginTop: 10, lineHeight: 1.5 }}><b>Caveats:</b> {result.caveats.join(' ')}</div>}
+            {result.price_resources?.length > 0 && (
+              <details data-testid="price-resources" style={{ fontSize: 10.5, color: S.text3, marginTop: 8, lineHeight: 1.5 }}>
+                <summary style={{ cursor: 'pointer', color: S.accent }}>Where to find real prices and circle rates (official sources)</summary>
+                {result.price_resources.map((r, i) => (
+                  <div key={i} style={{ marginTop: 3 }}><a href={r.url} target="_blank" rel="noopener noreferrer" style={{ color: S.accent }}>{r.label}</a> — {r.note}</div>
+                ))}
+              </details>
+            )}
             <div style={{ fontSize: 10.5, color: S.text3, marginTop: 8, lineHeight: 1.5 }}><b>Not included:</b> {result.not_included.join('; ')}.</div>
             <div style={{ fontSize: 10.5, color: S.text3, marginTop: 6, lineHeight: 1.5 }}>{result.methodology}</div>
             <div style={{ fontSize: 10, color: S.text3, marginTop: 6, lineHeight: 1.5 }}>Sources: {result.sources.join(' · ')}</div>
