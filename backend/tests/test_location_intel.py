@@ -115,7 +115,7 @@ def test_osm_summary_nearest_counts_and_lower_bounds():
     s = osm.summarize(JAIPUR, _dense_osm())
     m = s["metrics"]
     assert not s["sparse"] and 0.9 < m["hospital_km"] < 1.3 and m["transit_km"] < 0.5 and m["road_km"] < 0.6
-    assert s["counts"]["schools_6km"] == 2 and s["counts"]["bus_stops_2km"] == 7
+    assert s["counts"]["school"] == 1 and s["counts"]["bus"] == 7 and s["count_radius_km"]["bus"] == 1.5 and s["count_radius_km"]["school"] == 1.5
     far = {**_dense_osm(), "market": [], "park": []}
     s2 = osm.summarize(JAIPUR, far)
     assert s2["metrics"]["market_km"] == 8.0 and "lower bound" in s2["notes"]["market_km"] and s2["metrics"]["park_km"] == 5.0
@@ -311,3 +311,129 @@ def test_http_failed_job_reports_the_reason(monkeypatch):
     r = c.get(f"/api/v1/realestate/assess/{rid}")
     assert r.status_code == 422 and "could be found" in r.json()["detail"]
     assert c.get("/api/v1/realestate/assess/00000000-0000-0000-0000-000000000000").status_code == 404
+
+
+# ── OSM rings, failure detection, nearby list ─────────────────────────────────
+import asyncio
+
+
+def _el(i, lat, lon, **tags):
+    return {"type": "node", "id": i, "lat": lat, "lon": lon, "tags": tags}
+
+
+def test_overpass_runtime_remark_is_a_failure_not_an_empty_result(monkeypatch):
+    calls = []
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self, body):
+            self.body = body
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.body
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, data=None):
+            calls.append(url)
+            return Resp({"elements": [], "remark": 'runtime error: Query timed out in "query" at line 3 after 61 seconds.'})
+    monkeypatch.setattr(osm.httpx, "AsyncClient", Client)
+    diag = {}
+    assert asyncio.run(osm.fetch([JAIPUR], diag)) is None
+    assert "did not complete" in diag["osm_error"] and len(calls) == len(osm.OVERPASS_URLS)   # tried the mirror too
+
+
+def _fake_post(monkeypatch, handler):
+    seen = []
+
+    async def post(q):
+        seen.append(q)
+        return handler(len(seen), q)
+    monkeypatch.setattr(osm, "_post", post)
+    monkeypatch.setattr(osm, "RING_GAP_S", 0)
+    return seen
+
+
+def test_rings_stop_early_when_everything_is_found_close(monkeypatch):
+    near = [_el(1, JAIPUR[0] + .002, JAIPUR[1], amenity="hospital", name="City Hospital"),
+            _el(2, JAIPUR[0] + .003, JAIPUR[1], amenity="school"), _el(3, JAIPUR[0] + .004, JAIPUR[1], shop="supermarket"),
+            _el(4, JAIPUR[0] + .005, JAIPUR[1], railway="station"), _el(5, JAIPUR[0] + .001, JAIPUR[1], highway="bus_stop"),
+            _el(6, JAIPUR[0] + .006, JAIPUR[1], leisure="park"), {"type": "way", "id": 7, "center": {"lat": JAIPUR[0] + .007, "lon": JAIPUR[1]}, "tags": {"highway": "primary"}}]
+    seen = _fake_post(monkeypatch, lambda n, q: near)
+    pool = asyncio.run(osm.fetch([JAIPUR], {}))
+    assert len(seen) == 1 and "around:1500" in seen[0] and "around:10000" not in seen[0]
+    assert pool["hospital"][0][2] == "City Hospital"
+
+
+def test_rings_widen_only_for_kinds_not_yet_found(monkeypatch):
+    far_hospital = _el(1, JAIPUR[0] + .05, JAIPUR[1], amenity="hospital", name="Far Hospital")     # ~5.5 km
+    school = _el(2, JAIPUR[0] + .004, JAIPUR[1], amenity="school")
+
+    def handler(n, q):
+        return [school] if n == 1 else [far_hospital] if "around:10000" in q else []
+    seen = _fake_post(monkeypatch, handler)
+    diag = {}
+    pool = asyncio.run(osm.fetch([JAIPUR], diag))
+    assert len(seen) == 3                                    # 1.5 km, 3 km, full radius for the missing kinds
+    assert 'hospital|clinic' in seen[2] and 'school|college' not in seen[2]
+    assert pool["hospital"][0][2] == "Far Hospital" and "osm_error" not in diag and "osm_partial" not in diag
+
+
+def test_later_ring_failure_keeps_earlier_data_and_drops_unchecked_criteria(monkeypatch):
+    dense = [_el(i, JAIPUR[0] + .001 * i, JAIPUR[1], **t) for i, t in enumerate(
+        [{"amenity": "school"}, {"shop": "supermarket"}, {"railway": "station"}, {"leisure": "park"},
+         {"highway": "bus_stop"}, {"highway": "bus_stop"}, {"highway": "bus_stop"}, {"highway": "bus_stop"}], 1)]
+
+    def handler(n, q):
+        if n == 1:
+            return dense
+        raise osm.OverpassError("OpenStreetMap server timed out")
+    _fake_post(monkeypatch, handler)
+    diag = {}
+    pool = asyncio.run(osm.fetch([JAIPUR], diag))
+    assert pool is not None and diag["osm_partial"] and "hospital" in diag["osm_unverified"][0]
+    assert "osm_error" not in diag
+
+
+def test_assess_drops_unverified_kinds_and_states_it(monkeypatch):
+    _world(monkeypatch)
+
+    async def fetch_osm(centers, diag=None):
+        diag["osm_partial"] = "OpenStreetMap server timed out"
+        diag["osm_unverified"] = {0: ["hospital"], 1: ["hospital"]}
+        return {**_dense_osm(), "hospital": []}
+    monkeypatch.setattr(osm, "fetch", fetch_osm)
+    res = asyncio.run(li.assess_locations([{"query": "Alpha, Jaipur"}, {"query": "Beta, Jaipur"}]))
+    crit = {c["metric"]: c for c in res["locations"][0]["groups"]["liveability"]["criteria"]}
+    assert crit["hospital_km"]["value"] is None and crit["school_km"]["value"] is not None
+    assert any("did not finish" in c for c in res["caveats"])
+
+
+def test_summary_lists_nearest_amenities_with_name_distance_direction():
+    pts = {"hospital": [(JAIPUR[0] + .01, JAIPUR[1], "SMS Hospital", "hospital"), (JAIPUR[0] - .02, JAIPUR[1], "", "clinic")],
+           "school": [(JAIPUR[0], JAIPUR[1] + .01, "DPS", "school")], "market": [], "rail": [], "bus": [(JAIPUR[0], JAIPUR[1] - .003)] * 1,
+           "park": [(JAIPUR[0] + .004, JAIPUR[1])] * 1, "road": []}
+    s = osm.summarize(JAIPUR, {**_dense_osm(), **pts})
+    h = s["nearby"]["hospital"]
+    assert h[0]["name"] == "SMS Hospital" and h[0]["direction"] == "N" and 1.0 < h[0]["distance_km"] < 1.2
+    assert h[1]["direction"] == "S" and h[1]["type"] == "clinic"
+    assert s["nearby"]["school"][0]["direction"] == "E"
+    assert s["nearby"]["bus"][0]["name"] == ""                    # 2-tuples (no label) still work
+
+
+def test_dense_city_nearest_is_exact_because_inner_ring_is_not_capped_by_far_results():
+    # 500 far clinics would fill a 400-result cap in the old single 10 km query; the 1.5 km ring only sees near ones.
+    q = osm.build_query_pairs([(JAIPUR[0], JAIPUR[1], "hospital", 1.5)])
+    assert "around:1500" in q and "around:10000" not in q and q.count("out center tags") == 1

@@ -38,6 +38,49 @@ export function toCsv(result) {
   return rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
 }
 
+const AMENITY_ROWS = [
+  ['hospital', 'Hospital / clinic'], ['school', 'School / college'], ['market', 'Supermarket / market'],
+  ['rail', 'Rail / metro'], ['bus', 'Bus stop'], ['park', 'Park'], ['road', 'Major road'],
+];
+const OSM_STATUS_TEXT = {
+  unavailable: 'Amenity data unavailable — OpenStreetMap could not be read, so liveability is not scored. Try again in a minute.',
+  sparse: 'OpenStreetMap has very little mapped around here, so liveability is not scored (a mapping gap is not the same as no amenities).',
+};
+
+function Amenities({ amenities, status }) {
+  if (status && status !== 'ok') {
+    return <div data-testid="osm-status" style={{ fontSize: 11, color: '#e8c15c', lineHeight: 1.45, margin: '6px 0' }}>{OSM_STATUS_TEXT[status] || OSM_STATUS_TEXT.unavailable}</div>;
+  }
+  const nearby = amenities?.nearby;
+  if (!nearby) return null;
+  return (
+    <div data-testid="amenities" style={{ margin: '8px 0 4px' }}>
+      <div style={{ fontSize: 10, color: S.accent, fontFamily: S.mono, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 2 }}>Nearest amenities</div>
+      {AMENITY_ROWS.map(([kind, label]) => {
+        const items = nearby[kind] || [];
+        const first = items[0];
+        const reach = amenities.search_radius_km?.[kind];
+        return (
+          <details key={kind} style={{ fontSize: 10.5, fontFamily: S.mono, color: S.text3 }}>
+            <summary style={{ cursor: items.length > 1 ? 'pointer' : 'default', display: 'flex', justifyContent: 'space-between', gap: 6 }}>
+              <span>{label}</span>
+              <span style={{ color: first ? S.text2 : S.text3 }}>
+                {first ? `${first.name || first.type || 'unnamed'} · ${first.distance_km} km ${first.direction}` : `none mapped within ${reach} km`}
+              </span>
+            </summary>
+            {items.slice(1).map((it, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 10 }}>
+                <span>{it.name || it.type || 'unnamed'}</span><span>{it.distance_km} km {it.direction}</span>
+              </div>
+            ))}
+          </details>
+        );
+      })}
+      <div style={{ fontSize: 9.5, color: S.text3, marginTop: 2 }}>© OpenStreetMap contributors · distances are straight-line; "none mapped" can mean unmapped.</div>
+    </div>
+  );
+}
+
 function LocationCard({ loc }) {
   const c = loc.context || {};
   const chips = [
@@ -45,7 +88,6 @@ function LocationCard({ loc }) {
     c.terrain?.elevation_m != null && `Elev ${Math.round(c.terrain.elevation_m)} m`,
     c.seismic?.quake_max_mag != null && `Max quake M${c.seismic.quake_max_mag}`,
     c.land_cover?.builtup != null && `Built-up ${c.land_cover.builtup}%`,
-    c.amenity_counts && `${c.amenity_counts.hospitals_10km} hospitals · ${c.amenity_counts.schools_6km} schools nearby`,
   ].filter(Boolean);
   return (
     <div style={{ flex: '1 1 300px', minWidth: 290, background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '10px 12px' }}>
@@ -55,6 +97,7 @@ function LocationCard({ loc }) {
       </div>
       <div style={{ fontSize: 10, color: S.text3, fontFamily: S.mono, marginBottom: 8 }}>{loc.lat}, {loc.lon} · {loc.radius_km} km radius · {Math.round(loc.overall_coverage * 100)}% evidence</div>
       {GROUP_ORDER.map(g => <Bar key={g} label={loc.groups[g].label} score={loc.groups[g].score} coverage={loc.groups[g].coverage} />)}
+      <Amenities amenities={c.amenities} status={c.osm_status} />
       {loc.flags?.length > 0 && <div style={{ fontSize: 11, color: '#e8746b', lineHeight: 1.45, margin: '6px 0' }}>⚠ {loc.flags.join(' ')}</div>}
       {(loc.strengths?.length > 0 || loc.weaknesses?.length > 0) && (
         <div style={{ fontSize: 11, color: S.text2, lineHeight: 1.5 }}>
