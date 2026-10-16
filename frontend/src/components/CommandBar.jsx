@@ -5,7 +5,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { SYMBOL_RE } from '../lib/alertRules';
 
-const BUSINESS_VIEWS = [['live', 'Live'], ['markets', 'Markets'], ['analysis', 'Analysis'], ['economics', 'Economics — India food & fuel, yield curve'], ['alerts', 'Alerts']];
+const BUSINESS_VIEWS = [['live', 'Live'], ['markets', 'Markets'], ['analysis', 'Analysis'], ['economics', 'Economics — India food & fuel, yield curve'], ['realestate', 'Real Estate — location intelligence (free data)'], ['alerts', 'Alerts']];
 
 export default function CommandBar({ open, onClose, tabs, apiUrl, onCommand }) {
   const [q, setQ] = useState('');
