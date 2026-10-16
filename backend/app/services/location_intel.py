@@ -379,7 +379,7 @@ async def resolve_locations(inputs: List[dict], radius_km: float, caveats: List[
                 if gdiag.get("geocode_error"):
                     if diag is not None:
                         diag["geocode_error"] = gdiag["geocode_error"]
-                    caveats.append(f"Could not look up '{q}': {gdiag['geocode_error']}. Enter it as 'lat, lon' to skip the lookup.")
+                    caveats.append(f"'{q}' was skipped because {gdiag['geocode_error']}. Try again shortly, or enter it as 'lat, lon'.")
                 else:
                     caveats.append(f"Could not find '{q}' on the map, so it was skipped.")
                 continue
@@ -413,8 +413,8 @@ async def assess_locations(inputs: List[dict], radius_km: float = DEFAULT_RADIUS
     locs = await resolve_locations(inputs, radius_km, caveats, diag)
     if not locs:
         if diag.get("geocode_error"):
-            raise ValueError(f"The place-name lookup service is busy or unreachable right now ({diag['geocode_error']}). "
-                             "Try again in a minute, or enter the location as 'lat, lon' to skip the lookup.")
+            raise ValueError("The place-name lookup service is busy right now, so the location could not be looked up. "
+                             "Wait a minute and try again, or enter it as 'lat, lon' to skip the lookup.")
         raise ValueError("None of the locations could be found. Try a place name with its city, or 'lat, lon'.")
 
     sem = asyncio.Semaphore(GEE_CONCURRENCY)
@@ -487,10 +487,10 @@ async def assess_locations(inputs: List[dict], radius_km: float = DEFAULT_RADIUS
                       "overall_score": ov, "overall_coverage": cov, "groups": groups, "context": ctx,
                       "flags": make_flags(st["metrics"], st["context"], sparse), **highlights(groups), "errors": st["errors"]})
     if osm is not None and diag.get("osm_partial"):
-        caveats.append(f"Part of the OpenStreetMap search did not finish ({diag['osm_partial']}); amenities shown as 'none mapped' "
+        caveats.append(f"Part of the amenity search did not finish because {diag['osm_partial']}; amenities shown as 'none mapped' "
                        "beyond the nearest rings may simply not have been checked, so treat those distances as lower bounds.")
     if osm_missing:
-        caveats.append(f"OpenStreetMap could not be reached ({diag.get('osm_error', 'unknown error')}), so liveability criteria were not scored.")
+        caveats.append(f"Amenity data was not available because {diag.get('osm_error', 'OpenStreetMap could not be read')}, so liveability criteria were not scored.")
     ranked = rank(items)
     for it in ranked:
         if it["overall_score"] is None:

@@ -98,7 +98,8 @@ async def geocode_point(query: str, diag: Optional[dict] = None) -> Optional[Tup
             async with httpx.AsyncClient(timeout=10, headers=_HEADERS) as client:
                 resp = await client.get(NOMINATIM_URL, params={"q": query, "format": "jsonv2", "limit": 1})
             if resp.status_code == 429:
-                err = "Nominatim is rate-limiting this server (HTTP 429)"
+                logger.warning(f"Nominatim HTTP 429 for '{query}' (Retry-After={resp.headers.get('Retry-After')!r})")
+                err = "the place-name service is busy (too many requests)"
                 if err not in errors:
                     errors.append(err)
                 ra = resp.headers.get("Retry-After", "")
@@ -112,13 +113,15 @@ async def geocode_point(query: str, diag: Optional[dict] = None) -> Optional[Tup
                 return done((float(data[0]["lat"]), float(data[0]["lon"])))
             break                                               # reachable, but no match: try the fallback anyway
         except Exception as e:
-            errors.append(f"Nominatim request failed ({type(e).__name__})")
+            logger.warning(f"Nominatim error for '{query}': {type(e).__name__}: {e}")
+            errors.append("the place-name service could not be reached")
             break
     try:                                                         # ── Photon fallback
         async with httpx.AsyncClient(timeout=10, headers=_HEADERS) as client:
             resp = await client.get(PHOTON_URL, params={"q": query, "limit": 1})
         if resp.status_code == 429:
-            errors.append("Photon is rate-limiting this server (HTTP 429)")
+            logger.warning(f"Photon HTTP 429 for '{query}'")
+            errors.append("the backup place-name service is busy (too many requests)")
         else:
             resp.raise_for_status()
             feats = (resp.json() or {}).get("features") or []
@@ -126,11 +129,12 @@ async def geocode_point(query: str, diag: Optional[dict] = None) -> Optional[Tup
             if len(coords) >= 2:
                 return done((float(coords[1]), float(coords[0])))
     except Exception as e:
-        errors.append(f"Photon request failed ({type(e).__name__})")
+        logger.warning(f"Photon error for '{query}': {type(e).__name__}: {e}")
+        errors.append("the backup place-name service could not be reached")
     if errors:
         logger.warning(f"geocode_point failed for '{query}': {'; '.join(errors)}")
         if diag is not None:
-            diag["geocode_error"] = "; ".join(errors)
+            diag["geocode_error"] = "; ".join(dict.fromkeys(errors))
     return None
 
 
