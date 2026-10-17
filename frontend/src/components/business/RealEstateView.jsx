@@ -8,6 +8,8 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { friendlyError } from './theme';
+export { friendlyError };
 
 const S = {
   mono: "'JetBrains Mono','Courier New',monospace",
@@ -34,19 +36,6 @@ export async function geocodeInBrowser(q) {
     if (hit && Number.isFinite(hit.lat) && Number.isFinite(hit.lon)) { _geoCache.set(key, hit); return hit; }
   } catch { /* fall through */ }
   return null;
-}
-
-/** Turn a status / backend detail / network error into something a person can act on. Never shows a bare "429". */
-export function friendlyError(status, detail) {
-  const d = String(detail || '');
-  if (status === 429 || /rate.?limit|too many requests|\b429\b|\bbusy\b/i.test(d)) {
-    return { retry: true, text: 'The map-data services are busy right now (too many requests). Wait about a minute and try again. '
-      + 'Typing the place as coordinates, like "26.85, 75.76", skips the place-name lookup.' };
-  }
-  if (status >= 500 || /failed to fetch|networkerror|load failed|network request failed/i.test(d)) {
-    return { retry: true, text: 'Vayu could not reach its server, or the server hit a problem. Try again in a moment.' };
-  }
-  return { retry: false, text: d || (status ? `Request failed (${status})` : 'Something went wrong.') };
 }
 
 function Bar({ label, score, coverage }) {

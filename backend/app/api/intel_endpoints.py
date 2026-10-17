@@ -52,7 +52,7 @@ from ..services.intel.aircraft_store import aircraft_store
 from ..services.intel import satellite_tle
 from ..services.intel import commodity_prices
 from ..services.intel import market_indices
-from ..services.intel import watchlist, asset_profile, india_risk, yield_curve, exports, universe, sec_company, company_graph
+from ..services.intel import watchlist, asset_profile, india_risk, yield_curve, exports, universe, sec_company, company_graph, event_study
 from ..services.intel.chokepoint_market_correlation import CHOKEPOINT_BELLWETHERS
 from ..core.rate_limit import limiter
 from ..services.intel import air_quality
@@ -435,6 +435,40 @@ async def company_relationships(request: Request, symbol: str = Query(..., min_l
     if not sym:
         raise HTTPException(status_code=422, detail="Invalid symbol")
     return await company_graph.relationships(sym)
+
+
+@router.get("/company/event-study/options", summary="Regions and magnitudes available for the earthquake event study")
+async def event_study_options():
+    return {"regions": [{"id": k, "label": v["label"]} for k, v in event_study.QUAKE_REGIONS.items()], "magnitudes": [5.5, 6.0, 6.5, 7.0],
+            "windows": list(event_study.WINDOWS), "max_events": event_study.MAX_EVENTS}
+
+
+@router.get("/company/event-study", summary="How a stock moved around dates you supply, vs the market and vs its own ordinary days")
+@limiter.limit("10/minute")
+async def company_event_study(request: Request, symbol: str = Query(..., min_length=1, max_length=15), dates: str = Query(..., min_length=8, max_length=1200),
+                              benchmark: Optional[str] = Query(default=None, max_length=15)):
+    events, problems = event_study.parse_dates(dates)
+    if not events:
+        raise HTTPException(status_code=422, detail="; ".join(problems) or "Enter at least one past date (YYYY-MM-DD).")
+    if len(events) > event_study.MAX_EVENTS:
+        raise HTTPException(status_code=422, detail=f"At most {event_study.MAX_EVENTS} dates at a time.")
+    try:
+        res = await event_study.study(symbol, events, benchmark)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if problems:
+        res["input_problems"] = problems
+    return res
+
+
+@router.get("/company/event-study/quakes", summary="Event study around USGS earthquakes in a region")
+@limiter.limit("10/minute")
+async def company_event_study_quakes(request: Request, symbol: str = Query(..., min_length=1, max_length=15), region: str = Query(..., max_length=20),
+                                     min_magnitude: float = Query(6.0, ge=5.0, le=8.5), benchmark: Optional[str] = Query(default=None, max_length=15)):
+    try:
+        return await event_study.study_quakes(symbol, region, min_magnitude, benchmark)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.get("/quote-history", summary="Daily closes for any symbol, for charting")

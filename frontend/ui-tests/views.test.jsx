@@ -5,6 +5,7 @@ import YieldCurvePanel from '../src/components/business/YieldCurvePanel.jsx';
 import AssetProfile from '../src/components/business/AssetProfile.jsx';
 import Financials, { money } from '../src/components/business/Financials.jsx';
 import RelationshipMap, { loadAnalystEdges } from '../src/components/business/RelationshipMap.jsx';
+import EventImpact, { pct } from '../src/components/business/EventImpact.jsx';
 import RealEstateView, { toCsv, friendlyError, geocodeInBrowser, explainSourceFailures } from '../src/components/business/RealEstateView.jsx';
 
 const Q = (symbol, name, value, change_pct, extra = {}) => ({ symbol, name, value, change_pct, prev_close: value, market_time: 1700000000, ...extra });
@@ -293,6 +294,68 @@ export function register() {
     route('/intel/company/relationships', { ...GRAPH('RELIANCE.NS', 'Reliance Industries'), suppliers: [], customers: [], notes: ['No SEC filer is known for this symbol.'] });
     const c4 = (await mount(<RelationshipMap apiUrl="" symbol="RELIANCE.NS" />)).container; await flush(30);
     has(text(c4), 'No relationships were found in the filings checked'); has(text(c4), 'No SEC filer is known');
+  });
+  const R = (a, s = a + 1, b = 0.1) => ({ stock: s, bench: b, abnormal: a, unusual: Math.abs(a) > 4 });
+  const ES = { symbol: 'TSM', benchmark: '^GSPC', windows: [0, 1, 3, 5],
+    events: [{ date: '2024-04-03', aligned_date: '2024-04-03', label: 'M7.4 Hualien, Taiwan', note: null, overlaps_other_event: false, ret: { 0: R(-3.1), 1: R(-1.2), 3: R(0.8), 5: R(5.2) } },
+             { date: '2024-04-06', aligned_date: '2024-04-08', label: 'Weekend test', note: 'aligned to the next trading day (2024-04-08)', overlaps_other_event: true, ret: { 0: R(1.0), 1: R(0.4), 3: null, 5: null } }],
+    skipped: [{ date: '2019-01-02', reason: 'before the available price history' }], input_problems: ['\'soon\' is not a date (use YYYY-MM-DD)'],
+    summary: { 0: { n: 2, mean_abnormal_pct: -1.05, median_abnormal_pct: -1.05, share_positive_pct: 50 }, 1: { n: 2, mean_abnormal_pct: -0.4, median_abnormal_pct: -0.4, share_positive_pct: 50 },
+               3: { n: 1, mean_abnormal_pct: 0.8, median_abnormal_pct: 0.8, share_positive_pct: 100, note: 'Fewer than 3 events: no spread or ranking is shown.' },
+               5: { n: 3, mean_abnormal_pct: 2.1, median_abnormal_pct: 1.9, share_positive_pct: 67, std_error_pct: 1.4, percentile_vs_random_windows: 83 } },
+    baseline: { 5: { p05: -4.1, median: 0.1, p95: 4.3, n: 1200 } }, notes: ['Abnormal = the stock\'s move minus the benchmark\'s.'],
+    source: { name: 'USGS Earthquake Catalog', region: 'Taiwan (rough box)', min_magnitude: 6, events_found: 2, note: 'One event per day.' } };
+  test('Event impact: my dates -> request, summary table, events table with markers, chart, notes and skipped input', async () => {
+    route('/company/event-study/options', { regions: [{ id: 'taiwan', label: 'Taiwan (rough box)' }, { id: 'japan', label: 'Japan (rough box)' }], magnitudes: [5.5, 6.0, 6.5, 7.0], windows: [0, 1, 3, 5] });
+    route('/company/event-study?', ES);
+    const { container: c } = await mount(<EventImpact apiUrl="" symbol="TSM" />);
+    const runBtn = buttonWith(c, 'Run event study');
+    ok(runBtn.disabled, 'cannot run with no dates');
+    await typeInto(byLabel(c, 'Event dates'), '2024-04-03 Quake\n2024-04-06, soon'); await click(buttonWith(c, 'Run event study')); await flush(30);
+    const url = calls.find((u) => u.includes('/company/event-study?'));
+    ok(url.includes('symbol=TSM') && url.includes('dates=2024-04-03%20Quake%0A2024-04-06%2C%20soon'), 'symbol and dates are encoded into the request');
+    const sum = text(q(c, '[data-testid="es-summary"]'));
+    has(sum, 'Event day'); has(sum, '-1.05%'); has(sum, '83th pct'); has(sum, 'n < 3'); has(sum, '1.4');
+    const evs = text(q(c, '[data-testid="es-events"]'));
+    has(evs, '2024-04-03'); has(evs, 'M7.4 Hualien, Taiwan'); has(evs, '+5.20% ★'); has(evs, '-3.10%'); lacks(evs, '-3.10% ★', 'only moves outside the ordinary range get a star'); has(evs, '2024-04-08'); has(evs, '⧉'); has(evs, '—');
+    has(text(c), 'Ordinary +5 days range for this stock (5th–95th pct): -4.10% to +4.30%'); has(text(c), 'Skipped: 2019-01-02 (before the available price history)');
+    has(text(c), 'Ignored input: \'soon\' is not a date'); has(text(c), 'not a significance test'); has(text(c), 'stock move minus ^GSPC');
+    eq(qa(c, 'svg[role="img"]').length, 1); has(c.innerHTML, '2024-04-03: +5.20% — M7.4 Hualien, Taiwan');     // default chart window is +5 days
+    await click(buttonWith(c, 'Event day'));
+    has(c.innerHTML, '2024-04-03: -3.10% — M7.4 Hualien, Taiwan');
+    ok(qa(c, 'button').find((b) => b.textContent === 'Event day' && b.getAttribute('aria-pressed') === 'true'), 'chart window selector switches');
+    ok(!/\bcaused\b/i.test(text(c).replace(/not proof of cause|not caused|was caused by the event/gi, '')), 'no causal claims in the copy');
+  });
+  test('Event impact: earthquake mode sends region and magnitude and shows the USGS source', async () => {
+    route('/company/event-study/options', { regions: [{ id: 'taiwan', label: 'Taiwan (rough box)' }, { id: 'japan', label: 'Japan (rough box)' }], magnitudes: [5.5, 6.0, 6.5, 7.0], windows: [0, 1, 3, 5] });
+    route('/company/event-study/quakes', ES);
+    const { container: c } = await mount(<EventImpact apiUrl="" symbol="TSM" />);
+    await click(buttonWith(c, 'Earthquakes')); await flush(10);
+    await typeInto(byLabel(c, 'Earthquake region'), 'japan'); await typeInto(byLabel(c, 'Minimum magnitude'), '6.5');
+    await click(buttonWith(c, 'Run event study')); await flush(30);
+    const url = calls.find((u) => u.includes('/company/event-study/quakes'));
+    ok(url.includes('symbol=TSM') && url.includes('region=japan') && url.includes('min_magnitude=6.5'), url);
+    has(text(c), 'USGS Earthquake Catalog'); has(text(c), 'Taiwan (rough box)'); has(text(c), '2 qualifying days');
+  });
+  test('Event impact: errors, empty results and the formatter are handled in plain words', async () => {
+    route('/company/event-study/options', { regions: [{ id: 'taiwan', label: 'T' }], magnitudes: [6], windows: [0] });
+    route('/company/event-study?', { __status: 422, detail: "'soon' is not a date (use YYYY-MM-DD)" });
+    let c = (await mount(<EventImpact apiUrl="" symbol="TSM" />)).container;
+    await typeInto(byLabel(c, 'Event dates'), 'soon soon soon'); await click(buttonWith(c, 'Run event study')); await flush(30);
+    has(text(c), "'soon' is not a date"); ok(!buttonWith(c, 'Run event study').disabled, 'form is usable again');
+    route('/company/event-study?', { __status: 429 });
+    c = (await mount(<EventImpact apiUrl="" symbol="TSM" />)).container;
+    await typeInto(byLabel(c, 'Event dates'), '2024-04-03 Quake'); await click(buttonWith(c, 'Run event study')); await flush(30);
+    has(text(c), 'map-data services are busy'); lacks(text(c), '429');
+    route('/company/event-study?', new Error('Failed to fetch'));
+    c = (await mount(<EventImpact apiUrl="" symbol="TSM" />)).container;
+    await typeInto(byLabel(c, 'Event dates'), '2024-04-03 Quake'); await click(buttonWith(c, 'Run event study')); await flush(30);
+    has(text(c), 'could not reach'); lacks(text(c), 'Failed to fetch');
+    route('/company/event-study?', { symbol: 'TSM', windows: [0, 1, 3, 5], events: [], skipped: [], summary: {}, baseline: {}, notes: ['Not enough price history for the symbol or the benchmark to run an event study.'] });
+    c = (await mount(<EventImpact apiUrl="" symbol="TSM" />)).container;
+    await typeInto(byLabel(c, 'Event dates'), '2024-04-03 Quake'); await click(buttonWith(c, 'Run event study')); await flush(30);
+    has(text(c), 'Not enough price history');
+    eq(pct(1.234), '+1.23%'); eq(pct(-0.5), '-0.50%'); eq(pct(0), '0.00%'); eq(pct(null), '—'); eq(pct('x'), '—');
   });
   test('Asset profile: load failure is reported', async () => {
     route('/intel/asset-profile', { __status: 404 });
