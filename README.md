@@ -166,6 +166,9 @@ Results are cached (exact-match on tool + every parameter, 30-day TTL, Redis if 
 * **India sector heatmap** — ten Nifty sector indices coloured by day change, with an honest "n of 10 available" (the sector symbols could not be live-checked from the build sandbox; any that Yahoo does not recognise are omitted rather than faked).
 * **Indices, currencies and the dollar index** (including USD/INR) beside the watchlist.
 * **One-page profiles** for a ticker or a strategic site (click "Open one-page profile" in a site's map tooltip, or use the command bar): live quote and price statistics (1m/3m/1y return, annualised volatility, max drawdown, position in the 52-week range — all descriptive, none a forecast) for tickers; signals, recent news and related bellwether tickers for sites; and linked chokepoints with their current risk band. Links exist only where already explicit in the code: the published chokepoint-bellwether mapping, and sites whose own description names a chokepoint.
+* **Name/symbol search** — type "general motors" or "tata" in the watchlist box and pick a result. Matches come from the S&P 500 snapshot shipped in `backend/app/data/universe_sp500.csv` (503 companies with CIK and GICS sector; open `datasets/s-and-p-500-companies` data, derived from Wikipedia, CC BY-SA — refresh the CSV when index membership changes), Vayu's curated indices/FX/bellwethers, and Yahoo's keyless symbol search for everything else (unofficial; not live-tested from the build sandbox — if it fails, local matches still work).
+* **Company page (ticker profile)** adds a price chart (3M/1Y/5Y), **annual financials from the SEC** (revenue, net income, operating income, operating cash flow, total assets, diluted EPS, growth and margins — exactly as the company tagged them in its 10-Ks via the free XBRL "company facts" API; US-GAAP filers only, so most non-US/Indian companies show a clear "no SEC data" message), and a **relationship map**.
+* **Relationship map (suppliers ← company → customers)** — a free, honest take on Bloomberg's supply-chain view. There is no free complete supplier/customer database, so Vayu reads what companies must tell the SEC: the right side is customers named in the company's own latest 10-K (≥10%-of-revenue disclosures); the left side is other companies' 10-Ks, found with SEC full-text search, where this company is named in the same sentence as a revenue share. Click a node for the evidence sentence, percentage, filing date and a link to the filing; "Open map" re-centres on that company with breadcrumbs back. Every edge is labelled *extracted from filing text — verify*; anonymised customers ("Customer A") stay anonymised; a missing edge means "not found in the filings checked", never "no relationship". You can add relationships you know of (saved in your browser, dashed, marked as yours and unverified). The first look at a company reads up to ~9 filings (≤6 MB each) and can take up to a minute; complete results are cached for 24 h. The extraction logic is unit-tested on realistic sentences, but the SEC calls themselves could not be live-tested from the build sandbox. Set `SEC_USER_AGENT` (see below) — the SEC requires a real contact address.
 * **CSV exports** for markets and commodities.
 
 ### Alerts
@@ -438,6 +441,9 @@ ADMIN_EMAIL=you@example.com
 # Optional Redis: caches Spectra results and persists the intel feed across restarts; both fall back to in-memory (and silently
 # fall back again if Redis is unreachable)
 REDIS_URL=rediss://...
+
+# SEC EDGAR requires a descriptive User-Agent with a real contact address (company financials, relationship map, full-text search)
+SEC_USER_AGENT=Vayu Terminal you@yourdomain.com
 
 # Historical mandi price trend (CEDA) -- optional
 CEDA_API_KEY=your-ceda-key

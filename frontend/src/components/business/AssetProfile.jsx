@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import SparkChart from '../SparkChart';
 import Financials from './Financials';
+import RelationshipMap from './RelationshipMap';
 import { S, useJson, num, BAND_COLOR, btn } from './theme';
 import { Change, Panel, Empty } from './ui';
 
@@ -91,6 +92,7 @@ export default function AssetProfile({ apiUrl, kind, id, onClose, onOpenAsset })
           </Panel>
           <PriceChart apiUrl={apiUrl} symbol={id} />
           <Financials apiUrl={apiUrl} symbol={id} />
+          <RelationshipMap apiUrl={apiUrl} symbol={id} onOpenAsset={onOpenAsset} />
           <Links items={p.linked_chokepoints} />
         </>
       )}

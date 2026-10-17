@@ -4,6 +4,7 @@ import IndiaRiskPanel from '../src/components/business/IndiaRiskPanel.jsx';
 import YieldCurvePanel from '../src/components/business/YieldCurvePanel.jsx';
 import AssetProfile from '../src/components/business/AssetProfile.jsx';
 import Financials, { money } from '../src/components/business/Financials.jsx';
+import RelationshipMap, { loadAnalystEdges } from '../src/components/business/RelationshipMap.jsx';
 import RealEstateView, { toCsv, friendlyError, geocodeInBrowser, explainSourceFailures } from '../src/components/business/RealEstateView.jsx';
 
 const Q = (symbol, name, value, change_pct, extra = {}) => ({ symbol, name, value, change_pct, prev_close: value, market_time: 1700000000, ...extra });
@@ -219,6 +220,79 @@ export function register() {
     ok(calls.some((u) => u.includes('quote-history?symbol=GM&range=1y')), 'price history fetched');
     await click(buttonWith(c, '5Y')); await flush(20);
     ok(calls.some((u) => u.includes('quote-history?symbol=GM&range=5y')), 'range selector refetches');
+  });
+  const GRAPH = (sym, name, extra = {}) => ({ center: { symbol: sym, name, cik: 1 }, partial: false, exposures: [], notes: ['Built only from companies\' own SEC filings.'],
+    suppliers: [{ name: 'STRATTEC SECURITY CORP', symbol: 'STRT', pct: 14, evidence: 'General Motors Company accounted for 14% of our net sales', source_url: 'https://www.sec.gov/Archives/edgar/data/933034/x/strt.htm', filed: '2024-08-30', confidence: 'extracted' }],
+    customers: [{ name: 'Walmart Inc.', symbol: 'WMT', pct: 25, evidence: 'Walmart Inc. accounted for 25% of our net sales', source_url: 'https://sec.example/10k.htm', filed: '2025-01-31', confidence: 'extracted' },
+                { name: 'Customer A (undisclosed)', symbol: null, pct: 12, evidence: 'Customer A accounted for 12% of revenue', source_url: 'javascript:alert(1)', filed: '2025-01-31', confidence: 'extracted', anonymous: true }], ...extra });
+  test('Relationship map: suppliers left, customers right, centre company; selecting a node shows evidence and a safe source link', async () => {
+    localStorage.removeItem('vayu.relationships.v1');
+    route('/intel/company/relationships', GRAPH('GM', 'General Motors', { exposures: [{ chokepoint: 'suez_canal', display: 'Suez Canal', basis: 'Vayu mapping' }] }));
+    const { container: c } = await mount(<RelationshipMap apiUrl="" symbol="GM" />);
+    await flush(30);
+    eq(qa(c, '[data-testid="node-supplier"]').length, 1); eq(qa(c, '[data-testid="node-customer"]').length, 2);
+    has(text(c), 'General Motors'); has(text(c), 'Suez Canal'); has(text(c), 'Built only from companies');
+    await click(qa(c, '[data-testid="node-supplier"]')[0]);
+    const d = text(q(c, '[data-testid="edge-detail"]'));
+    has(d, 'STRATTEC SECURITY CORP reports General Motors as 14% of its sales'); has(d, 'accounted for 14% of our net sales'); has(d, 'verify in the filing'); has(d, 'filed 2024-08-30');
+    eq(q(c, '[data-testid="edge-detail"] a').getAttribute('rel'), 'noopener noreferrer');
+    await click(qa(c, '[data-testid="node-customer"]')[0]);
+    has(text(q(c, '[data-testid="edge-detail"]')), 'General Motors reports Walmart Inc. as 25% of its sales');
+    await click(qa(c, '[data-testid="node-customer"]')[1]);
+    ok(!q(c, '[data-testid="edge-detail"] a'), 'an unsafe (javascript:) source URL is never rendered as a link');
+    ok(!buttonWith(c, 'Open map for'), 'an anonymised customer cannot be drilled into');
+  });
+  test('Relationship map: drilling down re-centres, breadcrumbs go back, and a node can open its profile', async () => {
+    route('/intel/company/relationships', (u) => (u.includes('symbol=STRT') ? GRAPH('STRT', 'STRATTEC SECURITY CORP', { suppliers: [], customers: [] }) : GRAPH('GM', 'General Motors')));
+    let opened = null;
+    const { container: c } = await mount(<RelationshipMap apiUrl="" symbol="GM" onOpenAsset={(k, i) => { opened = [k, i]; }} />);
+    await flush(30);
+    await click(qa(c, '[data-testid="node-supplier"]')[0]);
+    await click(buttonWith(c, 'Profile')); eq(opened, ['ticker', 'STRT']);
+    await click(buttonWith(c, 'Open map for STRT')); await flush(30);
+    ok(calls.some((u) => u.includes('relationships?symbol=STRT')), 'drill-down fetched the supplier\'s own map');
+    has(text(c), 'STRATTEC SECURITY CORP'); has(text(q(c, '[data-testid="crumbs"]')), 'GM'); has(text(c), 'No relationships were found in the filings checked');
+    await click(buttonWith(q(c, '[data-testid="crumbs"]'), 'GM')); await flush(30);
+    ok(!q(c, '[data-testid="crumbs"]'), 'back at the root: no breadcrumb'); eq(qa(c, '[data-testid="node-customer"]').length, 2);
+  });
+  test('Relationship map: analyst-added relationships are saved, marked as theirs and unverified, and removable', async () => {
+    localStorage.removeItem('vayu.relationships.v1');
+    route('/intel/company/relationships', GRAPH('GM', 'General Motors'));
+    const { container: c } = await mount(<RelationshipMap apiUrl="" symbol="GM" />);
+    await flush(30);
+    await typeInto(byLabel(c, 'Company name'), 'Acme Seats'); await typeInto(byLabel(c, 'Ticker (optional)'), 'acme');
+    await typeInto(byLabel(c, 'Share of sales percent (optional)'), '9.5'); await typeInto(byLabel(c, 'Source link (optional)'), 'javascript:alert(1)');
+    await submit(q(c, 'form')); await flush(10);
+    eq(qa(c, '[data-testid="node-supplier"]').length, 2, 'added to the supplier side');
+    const saved = loadAnalystEdges('GM');
+    eq(saved.length, 1); eq(saved[0].symbol, 'ACME'); eq(saved[0].pct, 9.5); eq(saved[0].source_url, null, 'a non-http source link is dropped');
+    await click(qa(c, '[data-testid="node-supplier"]')[1]);
+    const d = text(q(c, '[data-testid="edge-detail"]'));
+    has(d, 'Added by you: supplies General Motors'); has(d, 'Not verified by Vayu');
+    await click(buttonWith(c, 'Remove')); eq(loadAnalystEdges('GM').length, 0); eq(qa(c, '[data-testid="node-supplier"]').length, 1);
+    localStorage.setItem('vayu.relationships.v1', '{"GM":[{"name":"<img src=x onerror=alert(1)>","side":"supplier"},{"bad":1},"junk"]}');
+    const m2 = await mount(<RelationshipMap apiUrl="" symbol="GM" />); await flush(30);
+    eq(qa(m2.container, 'img').length, 0, 'hostile saved entries never become real elements');
+    has(text(m2.container), '<img src=x onerror=aler');   // shown as (truncated) text
+    eq(qa(m2.container, '[data-testid="node-supplier"]').length, 2, 'the entry without an id still renders (and gets a key)');
+    localStorage.setItem('vayu.relationships.v1', 'not json'); eq(loadAnalystEdges('GM'), []);
+  });
+  test('Relationship map: loading, partial, failure and empty states are honest', async () => {
+    const orig = globalThis.fetch;
+    globalThis.fetch = (u, o) => (String(u).includes('relationships') ? new Promise(() => {}) : orig(u, o));
+    try { has(text((await mount(<RelationshipMap apiUrl="" symbol="GM" />)).container), 'Reading SEC filings'); } finally { globalThis.fetch = orig; }
+    route('/intel/company/relationships', GRAPH('GM', 'General Motors', { partial: true }));
+    const c1 = (await mount(<RelationshipMap apiUrl="" symbol="GM" />)).container; await flush(30);
+    has(text(c1), 'may be incomplete');
+    route('/intel/company/relationships', { __status: 429 });
+    const c2 = (await mount(<RelationshipMap apiUrl="" symbol="YYY" />)).container; await flush(30);
+    has(text(c2), 'Too many requests'); lacks(text(c2), '429');
+    route('/intel/company/relationships', { __status: 500 });
+    const c3 = (await mount(<RelationshipMap apiUrl="" symbol="XXX" />)).container; await flush(30);
+    has(text(c3), 'Could not load relationships right now');
+    route('/intel/company/relationships', { ...GRAPH('RELIANCE.NS', 'Reliance Industries'), suppliers: [], customers: [], notes: ['No SEC filer is known for this symbol.'] });
+    const c4 = (await mount(<RelationshipMap apiUrl="" symbol="RELIANCE.NS" />)).container; await flush(30);
+    has(text(c4), 'No relationships were found in the filings checked'); has(text(c4), 'No SEC filer is known');
   });
   test('Asset profile: load failure is reported', async () => {
     route('/intel/asset-profile', { __status: 404 });
