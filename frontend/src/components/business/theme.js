@@ -41,3 +41,16 @@ export const exportUrl = (apiUrl, dataset) => `${apiUrl}/api/v1/intel/export/${d
 
 export const btn = { background: 'rgba(126,184,212,0.12)', border: `1px solid ${S.accent}`, color: S.accent, fontSize: 10.5, fontFamily: S.mono, padding: '4px 10px', borderRadius: 3, cursor: 'pointer', textDecoration: 'none' };
 export const input = { background: S.surface2, border: `1px solid ${S.border}`, color: S.text, fontSize: 11.5, fontFamily: S.mono, padding: '5px 7px', borderRadius: 3, minWidth: 0 };
+
+/** Turn a status / backend detail / network error into something a person can act on. Never shows a bare "429". */
+export function friendlyError(status, detail) {
+  const d = String(detail || '');
+  if (status === 429 || /rate.?limit|too many requests|\b429\b|\bbusy\b/i.test(d)) {
+    return { retry: true, text: 'The map-data services are busy right now (too many requests). Wait about a minute and try again. '
+      + 'Typing the place as coordinates, like "26.85, 75.76", skips the place-name lookup.' };
+  }
+  if (status >= 500 || /failed to fetch|networkerror|load failed|network request failed/i.test(d)) {
+    return { retry: true, text: 'Vayu could not reach its server, or the server hit a problem. Try again in a moment.' };
+  }
+  return { retry: false, text: d || (status ? `Request failed (${status})` : 'Something went wrong.') };
+}

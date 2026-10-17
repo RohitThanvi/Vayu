@@ -14,7 +14,7 @@ export const money = (v) => {
 const LABELS = { revenue: 'Revenue', net_income: 'Net income', operating_income: 'Operating income', operating_cash_flow: 'Operating cash flow', assets: 'Total assets', eps_diluted: 'Diluted EPS' };
 const ORDER = ['revenue', 'net_income', 'operating_income', 'operating_cash_flow', 'assets', 'eps_diluted'];
 
-export function Bars({ points, fmt = money, color = S.accent, label }) {
+export function Bars({ points, fmt = money, color = S.accent, label, tip }) {
   if (!points?.length) return null;
   const W = 300, H = 92, pad = 4, bw = Math.max(8, (W - pad * 2) / points.length - 6);
   const vals = points.map((p) => Number(p.value));
@@ -27,7 +27,7 @@ export function Bars({ points, fmt = money, color = S.accent, label }) {
         const x = pad + i * ((W - pad * 2) / points.length) + 3, v = Number(p.value), top = Math.min(y(v), y(0)), h = Math.max(1, Math.abs(y(v) - y(0)));
         return (
           <g key={p.end}>
-            <title>{`${p.end}: ${fmt(v)} (${p.form}, filed ${p.filed || '?'})`}</title>
+            <title>{tip ? tip(p, fmt(v)) : `${p.end}: ${fmt(v)} (${p.form}, filed ${p.filed || '?'})`}</title>
             <rect x={x} y={top} width={bw} height={h} fill={v < 0 ? '#e05c5c' : color} opacity="0.85" />
             <text x={x + bw / 2} y={H - 3} textAnchor="middle" fontSize="8" fill={S.text3} fontFamily={S.mono}>{p.end.slice(0, 4)}</text>
           </g>
