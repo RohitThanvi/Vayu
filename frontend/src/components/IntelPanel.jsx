@@ -17,6 +17,8 @@ const SOURCE_COLORS = {
   "NASA FIRMS": "#8b2020",
   "GDELT":      "#3a3a7a",
   "ACLED":      "#6b2020",
+  "GDACS":      "#7a4a10",
+  "NOAA Tsunami": "#1a5a7a",
   "OpenSky":    "#1a4a5a",
   "AISHub":     "#1a3a6a",
 };
@@ -27,7 +29,7 @@ const SEVERITY_COLORS = {
   info:     "#2a3a4a",
 };
 
-const ALL_SOURCES = ["USGS", "NASA FIRMS", "GDELT", "ACLED"];
+const ALL_SOURCES = ["USGS", "NASA FIRMS", "GDELT", "ACLED", "GDACS", "NOAA Tsunami"];
 const ALL_SEVERITIES = ["critical", "warn", "info"];
 
 function timeAgo(ts) {

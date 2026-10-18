@@ -52,7 +52,7 @@ from ..services.intel.aircraft_store import aircraft_store
 from ..services.intel import satellite_tle
 from ..services.intel import commodity_prices
 from ..services.intel import market_indices
-from ..services.intel import watchlist, asset_profile, india_risk, yield_curve, exports, universe, sec_company, company_graph, event_study
+from ..services.intel import watchlist, asset_profile, india_risk, yield_curve, exports, universe, sec_company, company_graph, event_study, hazards
 from ..services.intel.chokepoint_market_correlation import CHOKEPOINT_BELLWETHERS
 from ..core.rate_limit import limiter
 from ..services.intel import air_quality
@@ -172,7 +172,8 @@ async def get_sources():
         {"id": "CelesTrak",  "name": "CelesTrak Satellites", "status": "live", "auth": False, "count": satellite_tle.get_satellites().get("count", 0), "interval_min": 360},
         {"id": "CPCB AQI",   "name": "CPCB Air Quality (India)", "status": "error" if air_quality.get_stations().get("last_error") else "live", "auth": True, "count": len(air_quality.get_stations().get("stations", [])), "interval_min": 60, "last_error": air_quality.get_stations().get("last_error")},
         {"id": "AISHub",     "name": "AISHub Maritime",   "status": "planned", "auth": True,  "count": 0, "interval_min": 5},
-        {"id": "GDACS",      "name": "GDACS Disasters",   "status": "planned", "auth": False, "count": 0, "interval_min": 30},
+        {"id": "GDACS",      "name": "GDACS Disasters (cyclone, flood, quake, volcano)", "status": "live", "auth": False, "count": by_source.get("GDACS", 0), "interval_min": 30},
+        {"id": "NOAA Tsunami", "name": "NOAA tsunami.gov messages", "status": "live", "auth": False, "count": by_source.get("NOAA Tsunami", 0), "interval_min": 5},
         {"id": "ISRO",       "name": "ISRO Bhuvan",       "status": "planned", "auth": True,  "count": 0, "interval_min": 60},
     ]
     return {"sources": sources, "total_events": stats.get("current_events", 0)}
@@ -437,10 +438,32 @@ async def company_relationships(request: Request, symbol: str = Query(..., min_l
     return await company_graph.relationships(sym)
 
 
+@router.get("/hazards", summary="Current natural-hazard alerts (GDACS Orange/Red + NOAA tsunami messages) with Vayu's market context")
+@limiter.limit("30/minute")
+async def get_hazards(request: Request, limit: int = Query(40, ge=1, le=200)):
+    evs = intel_store.query(sources=[hazards.SOURCE_GDACS, hazards.SOURCE_TSUNAMI], limit=limit)
+    out = []
+    for e in evs:
+        m = e.get("meta") or {}
+        out.append({"id": e.get("id"), "source": e.get("source"), "hazard": m.get("hazard"), "title": e.get("title"), "detail": e.get("detail"), "severity": e.get("severity"),
+                    "alert": m.get("alert"), "ts": e.get("ts"), "lat": e.get("lat"), "lon": e.get("lon"), "country": m.get("country"), "iso3": m.get("iso3") or [],
+                    "severity_text": m.get("severity_text"), "url": m.get("url"), "current": m.get("current"), "from": m.get("from"),
+                    "exposure": hazards.exposure_for(e.get("lat"), e.get("lon"), m.get("iso3") or [])})
+    order = {"critical": 0, "warn": 1, "info": 2}
+    out.sort(key=lambda x: x["ts"] or "", reverse=True)                       # newest first ...
+    out.sort(key=lambda x: order.get(x["severity"], 3))                        # ... then most severe first (stable)
+    return {"count": len(out), "events": out, "sources": [
+        {"id": "GDACS", "name": "GDACS (UN/EU)", "url": "https://www.gdacs.org/", "note": "Orange and Red alerts only; alert levels are GDACS's own assessment."},
+        {"id": "NOAA Tsunami", "name": "NOAA tsunami.gov", "url": "https://www.tsunami.gov/", "note": "Latest message from each warning centre; the linked bulletin is authoritative."}],
+        "notes": ["Market context shows what is near the event (chokepoints within 400 km, the affected country's home index where Vayu carries one). It is context, not a forecast."]}
+
+
 @router.get("/company/event-study/options", summary="Regions and magnitudes available for the earthquake event study")
 async def event_study_options():
     return {"regions": [{"id": k, "label": v["label"]} for k, v in event_study.QUAKE_REGIONS.items()], "magnitudes": [5.5, 6.0, 6.5, 7.0],
-            "windows": list(event_study.WINDOWS), "max_events": event_study.MAX_EVENTS}
+            "windows": list(event_study.WINDOWS), "max_events": event_study.MAX_EVENTS,
+            "hazard_types": [{"id": k, "label": v["label"]} for k, v in hazards.TYPES.items()],
+            "hazard_countries": [{"id": k, "label": v} for k, v in hazards.STUDY_COUNTRIES.items()]}
 
 
 @router.get("/company/event-study", summary="How a stock moved around dates you supply, vs the market and vs its own ordinary days")
@@ -458,6 +481,33 @@ async def company_event_study(request: Request, symbol: str = Query(..., min_len
         raise HTTPException(status_code=422, detail=str(e))
     if problems:
         res["input_problems"] = problems
+    return res
+
+
+@router.get("/company/event-study/disasters", summary="Event study around GDACS Orange/Red disasters of one type in one country")
+@limiter.limit("10/minute")
+async def company_event_study_disasters(request: Request, symbol: str = Query(..., min_length=1, max_length=15), hazard: str = Query(..., min_length=2, max_length=2),
+                                        country: str = Query(..., min_length=3, max_length=3), levels: str = Query("orange_red", pattern="^(orange_red|red)$"),
+                                        benchmark: Optional[str] = Query(default=None, max_length=15)):
+    try:
+        events = await hazards.fetch_history_dates(hazard.upper(), country.upper(), ["Red"] if levels == "red" else ["Red", "Orange"])
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.warning(f"GDACS history failed: {type(e).__name__}")
+        return {"symbol": symbol, "events": [], "skipped": [], "summary": {}, "baseline": {}, "windows": list(event_study.WINDOWS),
+                "notes": ["GDACS disaster history could not be fetched right now. Try again shortly."]}
+    try:
+        res = await event_study.study(symbol, events[-event_study.MAX_EVENTS:], benchmark)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    res["source"] = {"name": "GDACS", "url": "https://www.gdacs.org/", "region": hazards.STUDY_COUNTRIES.get(country.upper(), country.upper()),
+                     "hazard": hazards.TYPES[hazard.upper()]["label"], "levels": "Red only" if levels == "red" else "Orange and Red", "events_found": len(events),
+                     "note": "One event per start date. Alert levels are GDACS's own assessment of severity and population exposure."}
+    if len(events) > event_study.MAX_EVENTS:
+        res["notes"].append(f"{len(events)} events were found; only the most recent {event_study.MAX_EVENTS} are analysed.")
+    if not events:
+        res["notes"].insert(0, "GDACS lists no events of this type and alert level for this country in the last five years.")
     return res
 
 
