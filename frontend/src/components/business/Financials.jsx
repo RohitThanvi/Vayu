@@ -48,6 +48,12 @@ export default function Financials({ apiUrl, symbol }) {
       {!f && !error && <Empty>Loading…</Empty>}
       {error && !f && <Empty>Could not load financials ({error}).</Empty>}
       {f && !have.length && <Empty>{(f.notes && f.notes[0]) || 'No annual financials available for this symbol.'}</Empty>}
+      {f && !have.length && /\.(NS|BO)$/i.test(symbol) && (
+        <div data-testid="india-filings" style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 6 }}>
+          Indian listed companies file their results, shareholding patterns and governance reports (in XBRL) with the exchanges, but the exchanges publish no free API for them.
+          Read them on <a href="https://www.nseindia.com" target="_blank" rel="noopener noreferrer" style={{ color: S.accent }}>NSE</a> or <a href="https://www.bseindia.com" target="_blank" rel="noopener noreferrer" style={{ color: S.accent }}>BSE</a>; BSE sells a machine-readable feed under licence.
+        </div>
+      )}
       {have.length > 0 && (
         <>
           <div data-testid="fin-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>

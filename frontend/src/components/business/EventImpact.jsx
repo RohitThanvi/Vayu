@@ -16,18 +16,25 @@ export default function EventImpact({ apiUrl, symbol }) {
   const [dates, setDates] = useState('');
   const [region, setRegion] = useState('');
   const [mag, setMag] = useState('6.0');
+  const [hazard, setHazard] = useState('');
+  const [country, setCountry] = useState('');
+  const [levels, setLevels] = useState('orange_red');
   const [win, setWin] = useState('5');
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState(null);
   const opts = useJson(apiUrl, '/api/v1/intel/company/event-study/options', 0).data;
   const regions = opts?.regions || [];
+  const hazTypes = opts?.hazard_types || [];
+  const hazCountries = opts?.hazard_countries || [];
 
   const run = async () => {
     setBusy(true); setErr(null); setRes(null);
     const qs = mode === 'dates'
       ? `/api/v1/intel/company/event-study?symbol=${encodeURIComponent(symbol)}&dates=${encodeURIComponent(dates.trim())}`
-      : `/api/v1/intel/company/event-study/quakes?symbol=${encodeURIComponent(symbol)}&region=${encodeURIComponent(region || regions[0]?.id || '')}&min_magnitude=${encodeURIComponent(mag)}`;
+      : mode === 'disasters'
+        ? `/api/v1/intel/company/event-study/disasters?symbol=${encodeURIComponent(symbol)}&hazard=${encodeURIComponent(hazard || hazTypes[0]?.id || '')}&country=${encodeURIComponent(country || hazCountries[0]?.id || '')}&levels=${levels}`
+        : `/api/v1/intel/company/event-study/quakes?symbol=${encodeURIComponent(symbol)}&region=${encodeURIComponent(region || regions[0]?.id || '')}&min_magnitude=${encodeURIComponent(mag)}`;
     try {
       const r = await fetch(`${apiUrl}${qs}`);
       if (!r.ok) { setErr(friendlyError(r.status, (await r.json().catch(() => ({}))).detail)); }
@@ -35,7 +42,7 @@ export default function EventImpact({ apiUrl, symbol }) {
     } catch (e) { setErr(friendlyError(0, e.message)); }
     setBusy(false);
   };
-  const canRun = !busy && (mode === 'dates' ? dates.trim().length >= 8 : regions.length > 0);
+  const canRun = !busy && (mode === 'dates' ? dates.trim().length >= 8 : mode === 'disasters' ? hazTypes.length > 0 && hazCountries.length > 0 : regions.length > 0);
 
   const events = res?.events || [];
   const summary = res?.summary || {};
@@ -44,12 +51,22 @@ export default function EventImpact({ apiUrl, symbol }) {
   return (
     <Panel title="Event impact — how it moved around events">
       <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-        {[['dates', 'My dates'], ['quakes', 'Earthquakes']].map(([k, l]) => (
+        {[['dates', 'My dates'], ['quakes', 'Earthquakes'], ['disasters', 'Disasters']].map(([k, l]) => (
           <button key={k} aria-pressed={mode === k} onClick={() => { setMode(k); setRes(null); setErr(null); }} style={{ ...btn, opacity: mode === k ? 1 : 0.55 }}>{l}</button>))}
       </div>
       {mode === 'dates' ? (
         <textarea aria-label="Event dates" rows={3} value={dates} onChange={(e) => setDates(e.target.value)} placeholder={'One per line or comma-separated, YYYY-MM-DD with an optional label:\n2024-03-01 Port strike\n2024-05-02'}
                   style={{ ...input, width: '100%', boxSizing: 'border-box', fontFamily: S.mono, fontSize: 11 }} />
+      ) : mode === 'disasters' ? (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <select aria-label="Disaster type" value={hazard || hazTypes[0]?.id || ''} onChange={(e) => setHazard(e.target.value)} style={input}>
+            {hazTypes.map((h) => <option key={h.id} value={h.id}>{h.label}</option>)}</select>
+          <select aria-label="Disaster country" value={country || hazCountries[0]?.id || ''} onChange={(e) => setCountry(e.target.value)} style={input}>
+            {hazCountries.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
+          <select aria-label="Alert levels" value={levels} onChange={(e) => setLevels(e.target.value)} style={input}>
+            <option value="orange_red">Orange + Red alerts</option><option value="red">Red alerts only</option></select>
+          {!hazTypes.length && <span style={{ fontSize: 10.5, color: S.text3 }}>Disaster options unavailable right now.</span>}
+        </div>
       ) : (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <select aria-label="Earthquake region" value={region || regions[0]?.id || ''} onChange={(e) => setRegion(e.target.value)} style={input}>
@@ -64,7 +81,7 @@ export default function EventImpact({ apiUrl, symbol }) {
 
       {res && (
         <div style={{ marginTop: 10 }}>
-          {res.source && <div style={{ fontSize: 10.5, color: S.text3, marginBottom: 4 }}>{res.source.name} · {res.source.region} · M ≥ {res.source.min_magnitude} · {res.source.events_found} qualifying days. {res.source.note}</div>}
+          {res.source && <div style={{ fontSize: 10.5, color: S.text3, marginBottom: 4 }}>{res.source.name} · {res.source.region}{res.source.hazard ? ` · ${res.source.hazard} · ${res.source.levels}` : ` · M ≥ ${res.source.min_magnitude}`} · {res.source.events_found} {res.source.hazard ? 'events' : 'qualifying days'}. {res.source.note}</div>}
           {!events.length && <Empty>{res.notes?.[0] || 'No events could be analysed.'}</Empty>}
           {events.length > 0 && (
             <>

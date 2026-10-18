@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useMemo } from 'react';
 import SparkChart from '../SparkChart';
+import HazardsPanel from './HazardsPanel';
 import { S, useJson, num, exportUrl, btn, input, SYMBOL_RE, UP, DOWN } from './theme';
 import { Change, Panel, DataStamp, Empty } from './ui';
 
@@ -138,6 +139,7 @@ export default function MarketsView({ apiUrl, command, onOpenAsset }) {
       </div>
 
       <div style={{ flex: 1, minWidth: 360, padding: '10px 14px', overflowY: 'auto', boxSizing: 'border-box' }}>
+        <HazardsPanel apiUrl={apiUrl} />
         <Panel title="India sectors (Nifty) — day change" right={<span style={{ fontSize: 9.5, color: S.text3, fontFamily: S.mono }}>{sectors.length} of 10 available</span>}>
           {sectors.length ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(112px, 1fr))', gap: 5 }}>

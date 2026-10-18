@@ -319,6 +319,8 @@ const INTEL_COLORS = {
   'NASA FIRMS': { fill: '#d4622a', border: '#f0803a' },
   'GDELT':      { fill: '#3a6ab0', border: '#5a8ad0' },
   'ACLED':      { fill: '#a03a4a', border: '#c05a6a' },
+  'GDACS':      { fill: '#d08a2a', border: '#f0aa4a' },
+  'NOAA Tsunami': { fill: '#2a8ab0', border: '#4aaad0' },
 };
 
 const VESSEL_COLORS = {

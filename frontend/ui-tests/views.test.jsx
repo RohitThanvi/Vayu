@@ -6,6 +6,7 @@ import AssetProfile from '../src/components/business/AssetProfile.jsx';
 import Financials, { money } from '../src/components/business/Financials.jsx';
 import RelationshipMap, { loadAnalystEdges } from '../src/components/business/RelationshipMap.jsx';
 import EventImpact, { pct } from '../src/components/business/EventImpact.jsx';
+import HazardsPanel, { ago } from '../src/components/business/HazardsPanel.jsx';
 import RealEstateView, { toCsv, friendlyError, geocodeInBrowser, explainSourceFailures } from '../src/components/business/RealEstateView.jsx';
 
 const Q = (symbol, name, value, change_pct, extra = {}) => ({ symbol, name, value, change_pct, prev_close: value, market_time: 1700000000, ...extra });
@@ -207,7 +208,12 @@ export function register() {
   });
   test('Financials: non-SEC companies get the reason, and failures are reported', async () => {
     route('/intel/company/financials', { symbol: 'TCS.NS', available: false, series: {}, derived: {}, notes: ['No SEC filer is known for this symbol.'] });
-    has(text((await mount(<Financials apiUrl="" symbol="TCS.NS" />)).container), 'No SEC filer is known for this symbol');
+    const ind = (await mount(<Financials apiUrl="" symbol="TCS.NS" />)).container;
+    has(text(ind), 'No SEC filer is known for this symbol'); has(text(q(ind, '[data-testid="india-filings"]')), 'publish no free API');
+    eq(q(ind, '[data-testid="india-filings"] a').getAttribute('href'), 'https://www.nseindia.com');
+    route('/intel/company/financials', { symbol: 'ZIM', available: false, series: {}, derived: {}, notes: ['No SEC filer is known for this symbol.'] });
+    ok(!q((await mount(<Financials apiUrl="" symbol="ZIM" />)).container, '[data-testid="india-filings"]'), 'the India pointer appears only for .NS/.BO symbols');
+    route('/intel/company/financials', { symbol: 'TCS.NS', available: false, series: {}, derived: {}, notes: ['No SEC filer is known for this symbol.'] });
     route('/intel/company/financials', { __status: 500 });
     has(text((await mount(<Financials apiUrl="" symbol="GM" />)).container), 'Could not load financials');
     eq(money(null), '—'); eq(money(1.5e12), '$1.50T'); eq(money(-2.5e6), '-$2.5M'); eq(money(950), '$950');
@@ -356,6 +362,70 @@ export function register() {
     await typeInto(byLabel(c, 'Event dates'), '2024-04-03 Quake'); await click(buttonWith(c, 'Run event study')); await flush(30);
     has(text(c), 'Not enough price history');
     eq(pct(1.234), '+1.23%'); eq(pct(-0.5), '-0.50%'); eq(pct(0), '0.00%'); eq(pct(null), '—'); eq(pct('x'), '—');
+  });
+  const HZ = { count: 4, events: [
+    { id: 'g1', source: 'GDACS', hazard: 'cyclone', title: 'Tropical cyclone — BETA (Red alert)', severity: 'critical', alert: 'red', ts: new Date(Date.now() - 3 * 3600e3).toISOString(), country: 'Japan', iso3: ['JPN'],
+      severity_text: 'Typhoon (185 km/h)', url: 'https://www.gdacs.org/report.aspx?eventtype=TC&eventid=1', from: '2024-11-01T00:00:00',
+      exposure: { chokepoints: [{ chokepoint: 'malacca', display: 'Strait of Malacca', distance_km: 210, watch_commodities: ['Crude oil'], bellwethers: ['ZIM'] }], country_indices: [{ iso3: 'JPN', symbol: '^N225', label: 'Nikkei 225' }] } },
+    { id: 'g2', source: 'GDACS', hazard: 'flood', title: 'Flood — ALPHA (Orange alert)', severity: 'warn', alert: 'orange', ts: new Date(Date.now() - 50 * 3600e3).toISOString(), country: 'United States', iso3: ['USA'], url: 'javascript:alert(1)', from: '2024-10-28T00:00:00',
+      exposure: { chokepoints: [], country_indices: [{ iso3: 'USA', symbol: '^GSPC', label: 'S&P 500' }] } },
+    { id: 't1', source: 'NOAA Tsunami', hazard: 'tsunami', title: 'Tsunami Information Statement Number 1 — 40 miles SW of Sandspit', severity: 'info', ts: new Date(Date.now() - 20 * 60e3).toISOString(), url: 'https://www.tsunami.gov/events/x/WEAK53.txt',
+      exposure: { chokepoints: [], country_indices: [] } },
+    { id: 'g3', source: 'GDACS', hazard: 'flood', title: 'Flood — GAMMA (Orange alert)', severity: 'warn', alert: 'orange', ts: new Date().toISOString(), country: 'India', iso3: ['IND'], from: '2024-11-02T00:00:00', exposure: { chokepoints: [], country_indices: [{ iso3: 'IND', symbol: '^NSEI', label: 'Nifty 50' }] } }],
+    notes: ['Market context is context, not a forecast.'], sources: [{ id: 'GDACS', name: 'GDACS (UN/EU)', note: 'Alert levels are GDACS\'s own assessment.' }] };
+  test('Hazards panel: live alerts with badges, exposure chips, safe links and honest notes', async () => {
+    route('/intel/hazards', HZ);
+    const { container: c } = await mount(<HazardsPanel apiUrl="" />);
+    await flush(30);
+    const rows = qa(c, '[data-testid="hazard"]');
+    eq(rows.length, 4); has(text(rows[0]), 'RED'); has(text(rows[0]), 'Tropical cyclone — BETA'); has(text(rows[0]), 'Typhoon (185 km/h)'); has(text(rows[0]), '3 h ago');
+    has(text(rows[0]), 'Strait of Malacca · 210 km'); has(text(rows[0]), 'Nikkei 225');
+    eq(q(rows[0], '[data-testid="chip-choke"]').getAttribute('title'), 'Watch: Crude oil · bellwethers: ZIM');
+    has(text(rows[1]), 'ORANGE'); has(text(rows[1]), '2 d ago'); ok(!q(rows[1], 'a'), 'a javascript: link is never rendered');
+    has(text(rows[2]), 'MSG'); eq(q(rows[2], 'a').getAttribute('href'), 'https://www.tsunami.gov/events/x/WEAK53.txt'); has(text(rows[2]), 'official bulletin'); has(text(rows[2]), 'Tsunami message');
+    eq(q(rows[0], 'a').getAttribute('rel'), 'noopener noreferrer'); has(text(rows[0]), 'GDACS report');
+    has(text(c), 'context, not a forecast'); has(text(c), 'GDACS\'s own assessment');
+    eq(ago('garbage'), ''); eq(ago(new Date(Date.now() - 5 * 60e3).toISOString()), '5 min ago');
+  });
+  test('Hazards panel: market reaction is on demand, uses the event start date, and says when it is too recent', async () => {
+    route('/intel/hazards', HZ);
+    route('/company/event-study?', (u) => (u.includes('symbol=%5ENSEI') ? { symbol: '^NSEI', benchmark: '^GSPC', windows: [0, 1, 3, 5], skipped: [], notes: [],
+      events: [{ date: '2024-11-02', aligned_date: '2024-11-04', ret: { 0: { stock: -1.2, bench: 0.1, abnormal: -1.3 }, 1: { stock: -0.8, bench: 0.4, abnormal: -1.2 }, 3: null, 5: null } }] }
+      : { symbol: '^N225', benchmark: '^GSPC', windows: [0, 1, 3, 5], skipped: [], notes: [], events: [{ date: '2024-11-01', aligned_date: '2024-11-01', ret: { 0: null, 1: null, 3: null, 5: null } }] }));
+    const { container: c } = await mount(<HazardsPanel apiUrl="" />);
+    await flush(30);
+    const rows = qa(c, '[data-testid="hazard"]');
+    ok(!calls.some((u) => u.includes('/event-study')), 'nothing is fetched until asked');
+    ok(!buttonWith(rows[1], 'Market reaction'), 'US events get no reaction button (the home index would equal the benchmark)');
+    ok(!buttonWith(rows[2], 'Market reaction'), 'tsunami messages have no start date or index, so no button');
+    await click(buttonWith(rows[3], 'Market reaction so far (Nifty 50)')); await flush(30);
+    ok(calls.some((u) => u.includes('symbol=%5ENSEI') && u.includes('dates=2024-11-02')), 'queried the index for the event start date');
+    const r = text(q(rows[3], '[data-testid="reaction"]'));
+    has(r, 'Nifty 50 vs ^GSPC since 2024-11-02: event day -1.30% · +1 day -1.20%'); lacks(r, '+3 days'); has(r, 'one event is one data point');
+    await click(buttonWith(rows[0], 'Market reaction so far (Nikkei 225)')); await flush(30);
+    has(text(q(rows[0], '[data-testid="reaction"]')), 'Too recent');
+  });
+  test('Hazards panel: empty, failed and truncated states', async () => {
+    route('/intel/hazards', { count: 0, events: [], notes: [], sources: [] });
+    has(text((await mount(<HazardsPanel apiUrl="" />)).container), 'No Orange/Red alerts are currently held');
+    route('/intel/hazards', { __status: 500 });
+    has(text((await mount(<HazardsPanel apiUrl="" />)).container), 'unavailable right now');
+    route('/intel/hazards', { count: 9, notes: [], sources: [], events: Array.from({ length: 9 }, (_, i) => ({ id: `e${i}`, source: 'GDACS', hazard: 'flood', title: `Flood ${i}`, severity: 'warn', alert: 'orange', ts: new Date().toISOString(), exposure: {} })) });
+    const c = (await mount(<HazardsPanel apiUrl="" />)).container; await flush(30);
+    eq(qa(c, '[data-testid="hazard"]').length, 6); await click(buttonWith(c, 'Show all 9')); eq(qa(c, '[data-testid="hazard"]').length, 9);
+    await click(buttonWith(c, 'Show fewer')); eq(qa(c, '[data-testid="hazard"]').length, 6);
+  });
+  test('Event impact: disasters mode sends type, country and alert levels and shows the GDACS source', async () => {
+    route('/company/event-study/options', { regions: [{ id: 'taiwan', label: 'Taiwan (rough box)' }], magnitudes: [6], windows: [0, 1, 3, 5],
+      hazard_types: [{ id: 'EQ', label: 'Earthquake' }, { id: 'TC', label: 'Tropical cyclone' }, { id: 'FL', label: 'Flood' }], hazard_countries: [{ id: 'IND', label: 'India' }, { id: 'JPN', label: 'Japan' }] });
+    route('/company/event-study/disasters', { ...ES, source: { name: 'GDACS', region: 'India', hazard: 'Flood', levels: 'Orange and Red', events_found: 7, note: 'One event per start date.' } });
+    const { container: c } = await mount(<EventImpact apiUrl="" symbol="^NSEI" />);
+    await click(buttonWith(c, 'Disasters')); await flush(10);
+    await typeInto(byLabel(c, 'Disaster type'), 'FL'); await typeInto(byLabel(c, 'Disaster country'), 'IND'); await typeInto(byLabel(c, 'Alert levels'), 'red');
+    await click(buttonWith(c, 'Run event study')); await flush(30);
+    const url = calls.find((u) => u.includes('/company/event-study/disasters'));
+    ok(url.includes('symbol=%5ENSEI') && url.includes('hazard=FL') && url.includes('country=IND') && url.includes('levels=red'), url);
+    has(text(c), 'GDACS · India · Flood · Orange and Red · 7 events');
   });
   test('Asset profile: load failure is reported', async () => {
     route('/intel/asset-profile', { __status: 404 });

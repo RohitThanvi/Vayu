@@ -25,6 +25,7 @@ import logging
 from datetime import datetime
 
 from .fetchers import fetch_all_intel, fetch_usgs, fetch_firms, fetch_gdelt, fetch_acled, fetch_opensky
+from .hazards import fetch_gdacs_events, fetch_tsunami_events
 from .store import intel_store
 from . import feed_persistence
 from .vessel_store import vessel_store, CHOKEPOINTS
@@ -41,10 +42,14 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_HAZARD_HEADERS = {"User-Agent": "Vayu/1.0 (natural-hazard monitor; non-commercial)"}
+
 # ── Poll intervals in seconds ─────────────────────────────────────────────────
 INTERVAL_USGS   = 5  * 60
 INTERVAL_FIRMS  = 15 * 60
 INTERVAL_GDELT  = 10 * 60
+INTERVAL_GDACS  = 30 * 60   # GDACS updates alert levels on the order of hours; the feeds are small
+INTERVAL_TSUNAMI = 5 * 60   # two tiny Atom files; a tsunami message is the most time-critical thing Vayu ingests
 INTERVAL_ACLED  = 60 * 60
 INTERVAL_AIS    = 60
 INTERVAL_AIRCRAFT = 90   # OpenSky anonymous tier is rate-limited; global
@@ -121,6 +126,8 @@ class IntelScheduler:
             asyncio.create_task(self._persist_feed_loop(), name="persist-feed"),
             asyncio.create_task(self._poll_usgs(),   name="poll-usgs"),
             asyncio.create_task(self._poll_firms(),  name="poll-firms"),
+            asyncio.create_task(self._poll_gdacs(),  name="poll-gdacs"),
+            asyncio.create_task(self._poll_tsunami(), name="poll-tsunami"),
             asyncio.create_task(self._poll_gdelt(),  name="poll-gdelt"),
             asyncio.create_task(self._poll_acled(),  name="poll-acled"),
             asyncio.create_task(self._poll_ais(),    name="poll-ais"),
@@ -187,6 +194,30 @@ class IntelScheduler:
             except Exception as e:
                 logger.error(f"FIRMS poll error: {e}")
             await asyncio.sleep(INTERVAL_FIRMS)
+
+    async def _poll_gdacs(self):
+        await asyncio.sleep(20)
+        while self._running:
+            try:
+                async with httpx.AsyncClient(headers=_HAZARD_HEADERS, follow_redirects=True) as client:
+                    events = await fetch_gdacs_events(client)
+                await intel_store.ingest(events)
+                logger.info(f"GDACS poll: {len(events)} events")
+            except Exception as e:
+                logger.error(f"GDACS poll error: {e}")
+            await asyncio.sleep(INTERVAL_GDACS)
+
+    async def _poll_tsunami(self):
+        await asyncio.sleep(30)
+        while self._running:
+            try:
+                async with httpx.AsyncClient(headers=_HAZARD_HEADERS, follow_redirects=True) as client:
+                    events = await fetch_tsunami_events(client)
+                await intel_store.ingest(events)
+                logger.info(f"Tsunami poll: {len(events)} events")
+            except Exception as e:
+                logger.error(f"Tsunami poll error: {e}")
+            await asyncio.sleep(INTERVAL_TSUNAMI)
 
     async def _poll_gdelt(self):
         await asyncio.sleep(120)
