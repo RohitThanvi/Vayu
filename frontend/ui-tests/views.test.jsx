@@ -7,6 +7,7 @@ import Financials, { money } from '../src/components/business/Financials.jsx';
 import RelationshipMap, { loadAnalystEdges } from '../src/components/business/RelationshipMap.jsx';
 import EventImpact, { pct } from '../src/components/business/EventImpact.jsx';
 import HazardsPanel, { ago } from '../src/components/business/HazardsPanel.jsx';
+import CompanyNews from '../src/components/business/CompanyNews.jsx';
 import RealEstateView, { toCsv, friendlyError, geocodeInBrowser, explainSourceFailures } from '../src/components/business/RealEstateView.jsx';
 
 const Q = (symbol, name, value, change_pct, extra = {}) => ({ symbol, name, value, change_pct, prev_close: value, market_time: 1700000000, ...extra });
@@ -426,6 +427,55 @@ export function register() {
     const url = calls.find((u) => u.includes('/company/event-study/disasters'));
     ok(url.includes('symbol=%5ENSEI') && url.includes('hazard=FL') && url.includes('country=IND') && url.includes('levels=red'), url);
     has(text(c), 'GDACS · India · Flood · Orange and Red · 7 events');
+  });
+  const NEWS = (u, extra = {}) => ({ symbol: 'GM', company: 'General Motors', timespan: u.includes('timespan=30d') ? '30d' : u.includes('timespan=3d') ? '3d' : '7d', stale: false, notes: [],
+    source: { name: 'GDELT DOC 2.0', note: 'A hit means the company is mentioned in the article — possibly in passing.' },
+    articles: [{ title: 'GM unveils new EV platform', url: 'https://news.example.com/a', domain: 'news.example.com', country: 'United States', seen: new Date(Date.now() - 2 * 3600e3).toISOString() },
+               { title: 'Sneaky link', url: 'javascript:alert(1)', domain: 'evil.example', country: null, seen: null }], ...extra });
+  const FILINGS = { symbol: 'GM', available: true, entity: 'General Motors Co', source: { name: 'SEC EDGAR', note: 'Official filings, newest first.' }, notes: [],
+    filings: [{ form: '8-K', label: 'Current report', filed: '2026-02-03', accession: 'a1', url: 'https://www.sec.gov/Archives/edgar/data/1/a1/gm-8k.htm', items: [{ code: '2.02', label: 'Results of operations (earnings)' }] },
+              { form: '10-Q', label: 'Quarterly report', filed: '2026-01-30', accession: 'a2', url: null, items: [] }] };
+  test('Company news & filings: headlines with safe links, filings with item labels, window switch refetches', async () => {
+    route('/company/news', (u) => NEWS(u)); route('/company/filings', FILINGS);
+    const { container: c } = await mount(<CompanyNews apiUrl="" symbol="GM" name="General Motors" />);
+    await flush(30);
+    ok(calls.some((u) => u.includes('/company/news?symbol=GM&name=General%20Motors&timespan=7d')), 'name and default window are sent');
+    const links = qa(q(c, '[data-testid="news-list"]'), 'a');
+    eq(links.length, 1, 'only the https headline is a link'); has(text(q(c, '[data-testid="news-list"]')), 'Sneaky link'); eq(links[0].getAttribute('href'), 'https://news.example.com/a'); eq(links[0].getAttribute('rel'), 'noopener noreferrer');
+    has(text(c), 'GM unveils new EV platform'); has(text(c), 'news.example.com · United States · 2 h ago');
+    const fl = text(q(c, '[data-testid="filings-list"]'));
+    has(fl, '8-K'); has(fl, 'Current report'); has(fl, '2026-02-03'); has(fl, '2.02 Results of operations (earnings)'); has(fl, '10-Q'); has(fl, 'Quarterly report');
+    eq(qa(q(c, '[data-testid="filings-list"]'), 'a').length, 1, 'a filing with no document has no (broken) link');
+    has(text(c), 'possibly in passing'); has(text(c), 'Official filings, newest first');
+    await click(buttonWith(c, '30 days')); await flush(30);
+    ok(calls.some((u) => u.includes('timespan=30d')), 'the window button refetches');
+    ok(qa(c, 'button').find((b) => b.textContent === '30 days' && b.getAttribute('aria-pressed') === 'true'));
+  });
+  test('Company news & filings: the headline link row for a javascript: URL is never a live link', async () => {
+    route('/company/news', (u) => NEWS(u)); route('/company/filings', FILINGS);
+    const { container: c } = await mount(<CompanyNews apiUrl="" symbol="GM" />);
+    await flush(30);
+    ok(!qa(c, 'a').some((a) => (a.getAttribute('href') || '').startsWith('javascript')), 'no javascript: href anywhere');
+    ok(calls.some((u) => u.includes('/company/news?symbol=GM&timespan=7d')) && !calls.some((u) => u.includes('name=')), 'no name param when none is known');
+  });
+  test('Company news & filings: stale, empty, loading and failure states are honest', async () => {
+    const orig = globalThis.fetch;
+    globalThis.fetch = (u, o) => (String(u).includes('/company/news') ? new Promise(() => {}) : orig(u, o));
+    try { has(text((await mount(<CompanyNews apiUrl="" symbol="GM" />)).container), 'Loading news'); } finally { globalThis.fetch = orig; }
+    route('/company/filings', FILINGS);
+    route('/company/news', (u) => NEWS(u, { stale: true, notes: ['The news source is throttling requests right now. Showing the last result from 2026-03-01T00:00:00Z.'] }));
+    let c = (await mount(<CompanyNews apiUrl="" symbol="GM" />)).container; await flush(30);
+    has(text(q(c, '[data-testid="news-stale"]')), 'throttling requests right now'); has(text(c), 'GM unveils new EV platform');
+    route('/company/news', (u) => NEWS(u, { articles: [], notes: ['No English-language articles mentioning General Motors in the last 7d.'] }));
+    c = (await mount(<CompanyNews apiUrl="" symbol="GM" />)).container; await flush(30);
+    has(text(c), 'No English-language articles mentioning General Motors');
+    route('/company/news', { __status: 500 }); route('/company/filings', { __status: 500 });
+    c = (await mount(<CompanyNews apiUrl="" symbol="GM" />)).container; await flush(30);
+    has(text(c), 'News is unavailable right now'); has(text(c), 'Filings are unavailable right now');
+    route('/company/news', (u) => NEWS(u, { articles: [], notes: ['No company name is known for this symbol, so news cannot be searched.'] }));
+    route('/company/filings', { symbol: 'TCS.NS', available: false, filings: [], notes: ['No SEC filer is known for this symbol; non-US listings and indices have no SEC filings here.'] });
+    c = (await mount(<CompanyNews apiUrl="" symbol="TCS.NS" />)).container; await flush(30);
+    has(text(c), 'No company name is known'); has(text(c), 'non-US listings and indices have no SEC filings here');
   });
   test('Asset profile: load failure is reported', async () => {
     route('/intel/asset-profile', { __status: 404 });
