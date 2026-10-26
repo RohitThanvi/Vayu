@@ -52,7 +52,7 @@ from ..services.intel.aircraft_store import aircraft_store
 from ..services.intel import satellite_tle
 from ..services.intel import commodity_prices
 from ..services.intel import market_indices
-from ..services.intel import watchlist, asset_profile, india_risk, yield_curve, exports, universe, sec_company, company_graph, event_study, hazards
+from ..services.intel import watchlist, asset_profile, india_risk, yield_curve, exports, universe, sec_company, company_graph, event_study, hazards, company_news
 from ..services.intel.chokepoint_market_correlation import CHOKEPOINT_BELLWETHERS
 from ..core.rate_limit import limiter
 from ..services.intel import air_quality
@@ -456,6 +456,26 @@ async def get_hazards(request: Request, limit: int = Query(40, ge=1, le=200)):
         {"id": "GDACS", "name": "GDACS (UN/EU)", "url": "https://www.gdacs.org/", "note": "Orange and Red alerts only; alert levels are GDACS's own assessment."},
         {"id": "NOAA Tsunami", "name": "NOAA tsunami.gov", "url": "https://www.tsunami.gov/", "note": "Latest message from each warning centre; the linked bulletin is authoritative."}],
         "notes": ["Market context shows what is near the event (chokepoints within 400 km, the affected country's home index where Vayu carries one). It is context, not a forecast."]}
+
+
+@router.get("/company/news", summary="Latest news mentions of a company (GDELT, keyless, no monthly quota; paced and cached)")
+@limiter.limit("30/minute")
+async def company_news_endpoint(request: Request, symbol: str = Query(..., min_length=1, max_length=15), name: Optional[str] = Query(default=None, max_length=80),
+                                timespan: str = Query("7d", pattern="^(3d|7d|30d)$")):
+    sym = watchlist.normalize_symbol(symbol)
+    if not sym:
+        raise HTTPException(status_code=422, detail="Invalid symbol")
+    clean = "".join(ch for ch in (name or "") if ch.isprintable()).strip() or None
+    return await company_news.news(sym, clean, timespan)
+
+
+@router.get("/company/filings", summary="Latest official SEC filings (8-K, 10-Q, 10-K ...) for a US-listed company")
+@limiter.limit("30/minute")
+async def company_filings_endpoint(request: Request, symbol: str = Query(..., min_length=1, max_length=15)):
+    sym = watchlist.normalize_symbol(symbol)
+    if not sym:
+        raise HTTPException(status_code=422, detail="Invalid symbol")
+    return await company_news.filings(sym)
 
 
 @router.get("/company/event-study/options", summary="Regions and magnitudes available for the earthquake event study")

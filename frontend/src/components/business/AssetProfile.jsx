@@ -4,6 +4,7 @@ import SparkChart from '../SparkChart';
 import Financials from './Financials';
 import RelationshipMap from './RelationshipMap';
 import EventImpact from './EventImpact';
+import CompanyNews from './CompanyNews';
 import { S, useJson, num, BAND_COLOR, btn } from './theme';
 import { Change, Panel, Empty } from './ui';
 
@@ -92,6 +93,7 @@ export default function AssetProfile({ apiUrl, kind, id, onClose, onOpenAsset })
             )}
           </Panel>
           <PriceChart apiUrl={apiUrl} symbol={id} />
+          <CompanyNews apiUrl={apiUrl} symbol={id} name={p.name} />
           <Financials apiUrl={apiUrl} symbol={id} />
           <RelationshipMap apiUrl={apiUrl} symbol={id} onOpenAsset={onOpenAsset} />
           <EventImpact apiUrl={apiUrl} symbol={id} />
