@@ -11,7 +11,7 @@
     "tailwind": "tailwindcss init -p",
     "build:android": "cross-env VITE_API_URL=https://vayu-0zxv.onrender.com vite build && npx cap sync android",
     "open:android": "npx cap open android",
-    "test:ui": "node ui-tests/run.mjs"
+    "test:ui": "node ui-tests/run.mjs && node ui-tests/offline-static.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",
