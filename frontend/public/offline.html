@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#05070c" />
+<meta name="robots" content="noindex" />
+<title>VAYU — No Signal</title>
+<link rel="icon" href="/favicon.ico" />
+<!--
+  VAYU offline page. Served by the service worker (public/sw.js) whenever a page navigation cannot reach the network.
+  It must work with NO internet, so everything is local and inline: fonts come from /fonts (cached by the service worker),
+  there is no CDN, no external texture and no framework. Same palette as 404.html (deep space + gold).
+  Absolute URLs only: the service worker serves this file at whatever URL the visitor asked for.
+-->
+<style>
+  @font-face { font-family: 'Orbitron'; font-weight: 700; font-display: swap; src: local('Orbitron Bold'), url('/fonts/orbitron-latin-700-normal.woff2') format('woff2'); }
+  @font-face { font-family: 'Orbitron'; font-weight: 900; font-display: swap; src: local('Orbitron Black'), url('/fonts/orbitron-latin-900-normal.woff2') format('woff2'); }
+  @font-face { font-family: 'Rajdhani'; font-weight: 500; font-display: swap; src: local('Rajdhani Medium'), url('/fonts/rajdhani-latin-500-normal.woff2') format('woff2'); }
+  @font-face { font-family: 'Rajdhani'; font-weight: 600; font-display: swap; src: local('Rajdhani SemiBold'), url('/fonts/rajdhani-latin-600-normal.woff2') format('woff2'); }
+
+  :root { --gold: #e8c15c; --gold-bright: #f5d98a; --gold-deep: #a9781f; --space: #05070c; --atmo: #6fa8dc;
+          --display: 'Orbitron', 'Eurostile', 'Bank Gothic', 'Segoe UI', system-ui, sans-serif;
+          --body: 'Rajdhani', 'Segoe UI', system-ui, -apple-system, sans-serif; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--space); color: var(--gold); overflow: hidden; }
+  body { min-height: 100dvh; font-family: var(--body); -webkit-font-smoothing: antialiased; }
+
+  #stars { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; }
+
+  /* Earth's limb: only the top rim of a huge sphere shows at the bottom. */
+  .earth { position: fixed; left: 50%; bottom: calc(-150vmax + 17vh); width: 170vmax; height: 170vmax; transform: translateX(-50%); border-radius: 50%; overflow: hidden; z-index: 1;
+           background: radial-gradient(circle at 50% 0%, #0f2742 0%, #0a1830 22%, #060d1c 48%, #04070f 100%);
+           box-shadow: 0 -3px 50px rgba(111, 168, 220, 0.38), 0 -1px 0 rgba(160, 205, 245, 0.55), inset 0 10px 60px rgba(111, 168, 220, 0.20); }
+  .earth::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle at 50% 0%, rgba(111,168,220,0.14), transparent 30%); }
+  .earth i { position: absolute; width: 2px; height: 2px; border-radius: 50%; background: var(--gold-bright); box-shadow: 0 0 5px 1px rgba(232, 193, 92, 0.65); opacity: 0.8; }
+
+  .stage { position: fixed; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+           padding: max(clamp(20px, 5vh, 56px), env(safe-area-inset-top)) 20px max(clamp(20px, 4.5vh, 44px), env(safe-area-inset-bottom)); text-align: center; }
+
+  h1 { margin: 0; font-family: var(--display); font-weight: 900; line-height: 1.02; letter-spacing: 0.05em; text-transform: uppercase;
+       font-size: clamp(42px, 11.5vw, 124px);
+       background: linear-gradient(180deg, var(--gold-bright) 0%, var(--gold) 55%, var(--gold-deep) 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
+       text-shadow: 0 0 40px rgba(232, 193, 92, 0.35); filter: drop-shadow(0 0 22px rgba(232, 193, 92, 0.25)); }
+  .signal-line { margin: 8px 0 10px; font-family: var(--display); font-weight: 700; font-style: italic; text-transform: uppercase; letter-spacing: 0.12em;
+                 font-size: clamp(14px, 2.9vw, 26px); text-shadow: 0 0 18px rgba(232, 193, 92, 0.4); }
+  .sub { margin: 0 auto; font-weight: 600; font-size: clamp(17px, 2.4vw, 22px); letter-spacing: 0.04em; color: rgba(245, 217, 138, 0.92); }
+  .punch { margin: 10px auto 0; min-height: 2.6em; max-width: 560px; font-weight: 500; font-style: italic; font-size: clamp(15px, 2vw, 19px); letter-spacing: 0.03em; line-height: 1.3;
+           color: rgba(232, 193, 92, 0.78); transition: opacity 0.6s ease; }
+  .punch.fade { opacity: 0; }
+  .fine { margin: 8px auto 0; max-width: 520px; font-weight: 500; font-size: clamp(12px, 1.5vw, 14px); letter-spacing: 0.04em; color: rgba(232, 193, 92, 0.5); }
+  .telemetry { margin-top: 12px; font-weight: 600; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(232, 193, 92, 0.45); font-variant-numeric: tabular-nums; }
+  .telemetry b { color: var(--gold); font-weight: 600; }
+  .dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 8px var(--gold); vertical-align: 1px; animation: blink 1.6s ease-in-out infinite; }
+  .dot.ok { background: #7bd88f; box-shadow: 0 0 8px #7bd88f; animation: none; }
+
+  .sat-wrap { flex: 1 1 auto; min-height: 120px; width: 100%; display: flex; align-items: center; justify-content: center; }
+  svg.sat { width: clamp(170px, 32vw, 330px); max-height: 100%; overflow: visible; animation: float 7s ease-in-out infinite; }
+  .arc { fill: none; stroke: var(--gold); stroke-width: 3; stroke-linecap: round; opacity: 0; transform-box: fill-box; transform-origin: 50% 0%; animation: ping 3.6s ease-out infinite; }
+  .arc:nth-of-type(2) { animation-delay: 1.2s; } .arc:nth-of-type(3) { animation-delay: 2.4s; }
+
+  .bottom { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .hint { font-weight: 500; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255, 255, 255, 0.4); }
+  button.retry { font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--space); cursor: pointer;
+                 background: linear-gradient(180deg, var(--gold-bright), var(--gold)); border: 1px solid rgba(232, 193, 92, 0.6); border-radius: 4px; padding: 12px 26px;
+                 box-shadow: 0 0 24px rgba(232, 193, 92, 0.25); transition: transform 0.15s ease, box-shadow 0.15s ease; }
+  button.retry:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 0 32px rgba(232, 193, 92, 0.45); }
+  button.retry:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 3px; }
+  button.retry:disabled { opacity: 0.6; cursor: progress; }
+  #status { min-height: 1.4em; font-weight: 600; font-size: 13px; letter-spacing: 0.08em; color: rgba(232, 193, 92, 0.75); font-variant-numeric: tabular-nums; }
+
+  @keyframes float { 0%, 100% { transform: translateY(0) rotate(-1.2deg); } 50% { transform: translateY(-9px) rotate(1.2deg); } }
+  @keyframes ping { 0% { opacity: 0; transform: translateY(0) scale(0.35); } 12% { opacity: 0.95; } 100% { opacity: 0; transform: translateY(92px) scale(1.7); } }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  @media (max-width: 520px) { .wide { display: none; } .telemetry { letter-spacing: 0.12em; } }
+  @media (max-height: 620px) { .fine { display: none; } .hint { display: none; } svg.sat { width: clamp(130px, 22vw, 220px); } h1 { font-size: clamp(34px, 8vw, 80px); } }
+  @media (max-height: 460px) { .punch { min-height: 0; } .telemetry { display: none; } }
+  @media (prefers-reduced-motion: reduce) { svg.sat, .arc, .dot { animation: none !important; } .arc { opacity: 0.35; } .punch { transition: none; } }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas>
+<div class="earth" id="earth" aria-hidden="true"></div>
+
+<main class="stage">
+  <header>
+    <h1>No Signal</h1>
+    <p class="signal-line">Downlink interrupted</p>
+    <p class="sub">Seems there's no internet.</p>
+    <p class="punch" id="punch">Perhaps Vayu needs to enter the satnet industry as well.</p>
+    <p class="fine">If other sites still load, Vayu itself may be unreachable right now. Either way, we keep listening and reconnect on our own.</p>
+    <div class="telemetry">VAYU<span class="wide"> · Geospatial Intelligence</span> · Link <b><span class="dot" id="dot"></span><span id="link">Offline</span></b> · T+<span id="elapsed">00:00</span></div>
+  </header>
+
+  <div class="sat-wrap" aria-hidden="true">
+    <svg class="sat" viewBox="0 0 400 270" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5d98a"/><stop offset="0.55" stop-color="#d4a13a"/><stop offset="1" stop-color="#8f6418"/></linearGradient>
+        <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a4274"/><stop offset="1" stop-color="#101c3a"/></linearGradient>
+        <linearGradient id="dish" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9bec4"/></linearGradient>
+      </defs>
+      <!-- solar wings -->
+      <g stroke="#e8c15c" stroke-opacity="0.55" stroke-width="1">
+        <rect x="6" y="88" width="136" height="64" rx="2" fill="url(#panel)"/>
+        <rect x="258" y="88" width="136" height="64" rx="2" fill="url(#panel)"/>
+        <path d="M28 88v64M50 88v64M72 88v64M94 88v64M116 88v64M6 120h136" fill="none"/>
+        <path d="M280 88v64M302 88v64M324 88v64M346 88v64M368 88v64M258 120h136" fill="none"/>
+      </g>
+      <rect x="142" y="116" width="26" height="8" fill="#b9bec4"/><rect x="232" y="116" width="26" height="8" fill="#b9bec4"/>
+      <!-- bus (gold MLI foil) -->
+      <rect x="164" y="74" width="72" height="92" rx="4" fill="url(#gold)" stroke="#f5d98a" stroke-opacity="0.6"/>
+      <path d="M164 104h72M164 136h72" stroke="#7a560f" stroke-opacity="0.55" fill="none"/>
+      <rect x="214" y="82" width="14" height="14" rx="2" fill="#2a2a2e"/>
+      <!-- whip antennas -->
+      <g stroke="#2a2a2e" stroke-width="2" stroke-linecap="round"><path d="M176 74V46M200 74V34M224 74V46"/></g>
+      <circle cx="200" cy="33" r="3" fill="#e8c15c"/>
+      <!-- main dish aimed at Earth -->
+      <path d="M156 174 Q200 214 244 174 Z" fill="url(#dish)" stroke="#8d939a"/>
+      <path d="M200 166v18" stroke="#2a2a2e" stroke-width="3"/><circle cx="200" cy="190" r="4" fill="#2a2a2e"/>
+      <!-- the downlink that never lands -->
+      <g transform="translate(0 196)">
+        <path class="arc" d="M168 0 Q200 26 232 0"/><path class="arc" d="M168 0 Q200 26 232 0"/><path class="arc" d="M168 0 Q200 26 232 0"/>
+      </g>
+    </svg>
+  </div>
+
+  <div class="bottom">
+    <div class="hint">Vayu will reconnect automatically when your signal returns</div>
+    <button class="retry" id="retry" type="button">Retry connection</button>
+    <div id="status" role="status" aria-live="polite">Listening for signal…</div>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var PUNCHLINES = [
+    "Perhaps Vayu needs to enter the satnet industry as well.",
+    "Our satellites can see your whole continent. Your Wi-Fi, not so much.",
+    "Orbit is fine. It's the last mile that's down.",
+    "Have you tried turning the planet off and on again?",
+    "Somewhere, a ground station is blushing.",
+    "We track ships, storms and markets. Your router is next on the list."
+  ];
+  var PROBE_URL = '/manifest.webmanifest';          // small, always present, never intercepted by the service worker (it only handles page navigations)
+  var SCHEDULE_S = [3, 3, 5, 5, 8, 8, 12, 12, 20];  // seconds between automatic checks; the last value repeats
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var $ = function (id) { return document.getElementById(id); };
+  var t0 = Date.now(), attempts = 0, busy = false, timer = null, nextAt = 0, reconnecting = false;
+
+  // ── stars (canvas); one static frame when motion is reduced ─────────────────
+  var canvas = $('stars'), ctx = canvas.getContext && canvas.getContext('2d'), stars = [], W = 0, H = 0, shoot = null;
+  function resize() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var n = Math.round(Math.min(260, Math.max(90, (W * H) / 5500)));
+    stars = [];
+    for (var i = 0; i < n; i++) stars.push({ x: Math.random() * W, y: Math.random() * H * 0.88, r: Math.random() * 1.25 + 0.25, p: Math.random() * 6.28, s: Math.random() * 0.8 + 0.3, v: Math.random() * 0.02 + 0.004 });
+    if (reduced) draw(0);
+  }
+  function draw(t) {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, W, H);
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i], a = reduced ? 0.7 : 0.35 + 0.65 * Math.abs(Math.sin(t / 1000 * s.s + s.p));
+      ctx.globalAlpha = a; ctx.fillStyle = i % 9 === 0 ? '#f5d98a' : '#ffffff';
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 6.2832); ctx.fill();
+      if (!reduced) { s.x += s.v * 8; if (s.x > W + 2) s.x = -2; }
+    }
+    if (shoot) {
+      shoot.x += shoot.vx; shoot.y += shoot.vy; shoot.life -= 1;
+      var g = ctx.createLinearGradient(shoot.x, shoot.y, shoot.x - shoot.vx * 9, shoot.y - shoot.vy * 9);
+      g.addColorStop(0, 'rgba(245,217,138,0.95)'); g.addColorStop(1, 'rgba(245,217,138,0)');
+      ctx.globalAlpha = 1; ctx.strokeStyle = g; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(shoot.x, shoot.y); ctx.lineTo(shoot.x - shoot.vx * 9, shoot.y - shoot.vy * 9); ctx.stroke();
+      if (shoot.life <= 0) shoot = null;
+    } else if (Math.random() < 0.0035) {
+      shoot = { x: Math.random() * W * 0.7, y: Math.random() * H * 0.3, vx: 9 + Math.random() * 4, vy: 3 + Math.random() * 2, life: 38 };
+    }
+    ctx.globalAlpha = 1;
+  }
+  function loop(t) { draw(t); requestAnimationFrame(loop); }
+  resize(); window.addEventListener('resize', resize);
+  if (!reduced && ctx) requestAnimationFrame(loop);
+
+  // ── city lights on the night side of the limb ─────────────────────────────
+  (function lights() {
+    var earth = $('earth'), size = Math.max(window.innerWidth, window.innerHeight) * 1.7, frag = document.createDocumentFragment();
+    for (var i = 0; i < 70; i++) {
+      var d = document.createElement('i'), ang = (Math.random() - 0.5) * 1.0, depth = Math.pow(Math.random(), 1.8) * size * 0.14 + 6;
+      d.style.left = (size / 2 + Math.sin(ang) * (size / 2 - depth)) + 'px'; d.style.top = (size / 2 - Math.cos(ang) * (size / 2 - depth)) + 'px';
+      d.style.opacity = String(0.35 + Math.random() * 0.6); if (Math.random() < 0.25) { d.style.width = d.style.height = '3px'; }
+      frag.appendChild(d);
+    }
+    earth.appendChild(frag);
+  })();
+
+  // ── punchlines (the first one is the default text; it is not rotated when motion is reduced) ──
+  var pi = 0, punch = $('punch');
+  if (!reduced) setInterval(function () {
+    punch.classList.add('fade');
+    setTimeout(function () { pi = (pi + 1) % PUNCHLINES.length; punch.textContent = PUNCHLINES[pi]; punch.classList.remove('fade'); }, 600);
+  }, 6500);
+
+  // ── clock ─────────────────────────────────────────────────────────────────
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function tick() {
+    var s = Math.floor((Date.now() - t0) / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60);
+    $('elapsed').textContent = (h ? pad(h) + ':' : '') + pad(m % 60) + ':' + pad(s % 60);
+    if (!busy && !reconnecting && nextAt) {
+      var left = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
+      $('status').textContent = attempts ? 'Still no signal · next check in ' + left + 's · attempt ' + (attempts + 1) : 'Listening for signal…';
+    }
+  }
+  setInterval(tick, 500);
+
+  // ── reconnect ─────────────────────────────────────────────────────────────
+  function reload() { if (window.__vayuReload) window.__vayuReload(); else window.location.reload(); }
+  function reconnected() {
+    reconnecting = true; clearTimeout(timer);
+    $('link').textContent = 'Re-established'; $('dot').className = 'dot ok'; $('status').textContent = 'Signal acquired — returning to Mission Control…';
+    setTimeout(reload, 700);
+  }
+  function schedule() {
+    var s = SCHEDULE_S[Math.min(attempts, SCHEDULE_S.length - 1)];
+    nextAt = Date.now() + s * 1000; clearTimeout(timer); timer = setTimeout(probe, s * 1000);
+  }
+  function probe() {
+    if (busy || reconnecting) return;
+    busy = true; $('retry').disabled = true; $('status').textContent = 'Checking for signal…';
+    var ctl = window.AbortController ? new AbortController() : null, to = setTimeout(function () { if (ctl) ctl.abort(); }, 6000);
+    fetch(PROBE_URL + '?probe=' + Date.now(), { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { clearTimeout(to); if (r && r.ok) { reconnected(); } else { throw new Error('bad status'); } })
+      .catch(function () { clearTimeout(to); attempts += 1; busy = false; $('retry').disabled = false; schedule(); tick(); });
+  }
+  $('retry').addEventListener('click', function () { clearTimeout(timer); probe(); });
+  window.addEventListener('online', probe);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) probe(); });
+  schedule();
+})();
+</script>
+</body>
+</html>
