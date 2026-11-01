@@ -2,7 +2,7 @@
  * Per-tier landing-page content for single-product (VITE_LOCKED_TIER) sites.
  * Every claim here is taken from the repo README / docs; keep it that way. If a feature's
  * status changes (e.g. the crop-suitability engine gets a published accuracy figure),
- * update `trust` below in the same commit. A tier with no entry here skips the landing page
+ * update the copy here in the same commit. A tier with no entry here skips the landing page
  * and opens its app directly.
  */
 
@@ -28,6 +28,11 @@ export const TIER_LANDINGS = {
       body: 'Drought and crop-stress scoring, crop-stage tracking, an irrigation advisory and crop suitability that knows Kharif from Rabi \u2014 built on open satellite data, with the source and method shown next to every number.',
       cta: 'Open Vayu Agri',
       secondary: 'See what it does',
+      image: {
+        src: '/images/agri-hero.jpg',
+        alt: 'Vayu Agri screenshot: a drawn district outlined on satellite imagery, with a drought trend chart and the contributing risk indicators beside it',
+        caption: 'Screenshot of the app: a composite risk score for a drawn area, with its contributing indicators and data sources.',
+      },
     },
     capabilities: [
       { title: 'Composite risk score', desc: 'A 0\u2013100 score from drought (NDDI), vegetation decline (NDVI) and soil-moisture deficit (SMAP), weighted 40/35/25 and renormalised if an indicator is unavailable.' },
@@ -42,25 +47,11 @@ export const TIER_LANDINGS = {
       intro: 'A crop is scored in each season it is actually grown, using Directorate of Economics & Statistics area-by-season data \u2014 and the best season is called out in plain language.',
       // months are 0-based (Jan = 0); ranges may wrap the year end.
       rows: [
-        { name: 'Kharif', window: 'Jun\u2013Oct', from: 5, to: 9, color: '#86c98a' },
-        { name: 'Rabi', window: 'Nov\u2013Mar', from: 10, to: 2, color: '#7fb4d6' },
-        { name: 'Zaid', window: 'Mar\u2013Jun', from: 2, to: 5, color: '#d8c27a' },
+        { name: 'Kharif', tag: 'Monsoon', window: 'June to October', from: 5, to: 9, color: '#86c98a' },
+        { name: 'Rabi', tag: 'Winter', window: 'November to March', from: 10, to: 2, color: '#7fb4d6' },
+        { name: 'Zaid', tag: 'Summer', window: 'March to June', from: 2, to: 5, color: '#d8c27a' },
       ],
       note: 'Perennials are scored year-round. For example, jowar is evaluated in both Kharif and Rabi; wheat only in Rabi.',
-    },
-    trust: {
-      title: 'What is checked, and what is not',
-      intro: 'Vayu is built to be checked, not just read. These are the current facts.',
-      done: [
-        'Every result states its source dataset, resolution and formula.',
-        'A held-out validation harness exists: about 60 districts across 22 states, with whole states held out so nearby districts cannot leak between tuning and testing.',
-        'Crop requirements are cited and schema-checked in tests; missing evidence lowers confidence and is never counted against a crop.',
-      ],
-      notYet: [
-        'No accuracy figure for crop suitability is published yet.',
-        'Suitability scores are not calibrated yet, and the response says so. Confidence is a data-completeness heuristic, not a statistical interval.',
-        'The tools have not yet been validated against documented real-world events.',
-      ],
     },
     sources: ['Sentinel-2', 'SMAP', 'GRACE', 'CHIRPS', 'Landsat', 'ERA5-Land', 'OpenLandMap', 'Copernicus DEM', 'Agmarknet (data.gov.in)'],
   },
