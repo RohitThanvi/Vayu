@@ -1556,7 +1556,7 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
   weatherLayers, onToggleWeather, apiUrl, mapRef, satelliteLayers, onToggleSatelliteLayer, satelliteLoadingKey, mapZoom,
   aqiOn, aqiLoading, onToggleAqi,
   sitesOn, onToggleSites,
-  tier, onChangeTier,
+  tier, onChangeTier, tierLocked,
   orbitalShowSatellites, setOrbitalShowSatellites, orbitalShowAircraft, setOrbitalShowAircraft,
   orbitalShowVessels, setOrbitalShowVessels, orbitalVessels,
   orbitalShowAtmosphere, setOrbitalShowAtmosphere, orbitalWindField,
@@ -1819,10 +1819,10 @@ function Sidebar({ tab,setTab, queryText,setQueryText, selMetric,setSelMetric, d
           <div style={{ fontSize:14, fontFamily:S.mono, color:S.text3, letterSpacing:1 }}>
             VAYU v2.0.0
           </div>
-          {tier && (
-            <button onClick={onChangeTier} title="Switch service"
+          {tier && onChangeTier && (
+            <button onClick={onChangeTier} title={tierLocked ? 'Back to the overview page' : 'Switch service'}
               style={{ background:'none', border:'none', color:S.text3, fontFamily:S.mono, fontSize:11, letterSpacing:1, cursor:'pointer', padding:0, textTransform:'uppercase' }}>
-              {tier} — change
+              {tierLocked ? 'overview' : `${tier} — change`}
             </button>
           )}
         </div>
@@ -1871,7 +1871,7 @@ function MapOverlay({ result, isLoading, drawnAOI, isMobile }) {
 }
 
 // ── Root App ──────────────────────────────────────────────────────────────────
-export default function App({ tier = 'full', onChangeTier }) {
+export default function App({ tier = 'full', onChangeTier, tierLocked = false }) {
   const isMobile = useIsMobile(MOBILE_BREAKPOINT);
   const [mobilePanel, setMobilePanel] = useState('map'); // 'map' | 'analyze' | 'intel' | 'tools'
   // Light/dark toggle — applied as a data-theme attribute on <html>,
@@ -2823,7 +2823,7 @@ export default function App({ tier = 'full', onChangeTier }) {
       weatherLayers={weatherLayers} onToggleWeather={handleToggleWeather}
       aqiOn={aqiOn} aqiLoading={aqiLoading} onToggleAqi={handleToggleAqi}
       sitesOn={sitesOn} onToggleSites={() => setSitesOn(s => !s)}
-      tier={tier} onChangeTier={onChangeTier}
+      tier={tier} onChangeTier={onChangeTier} tierLocked={tierLocked}
       satelliteLayers={satelliteLayers} onToggleSatelliteLayer={handleToggleSatelliteLayer}
       onShowSpectraOverlay={showSpectraOverlay} onClearSpectraOverlay={clearSpectraOverlay}
       streetViewMode={streetViewMode} onToggleStreetView={() => setStreetViewMode(v => !v)}

@@ -3,4 +3,5 @@ import { register as registerViews } from './views.test.jsx';
 import { register as registerAlerts } from './alerts.test.jsx';
 import { register as registerBar } from './bar.test.jsx';
 import { register as registerConnection } from './connection.test.jsx';
-export async function main() { registerViews(); registerAlerts(); registerBar(); registerConnection(); return runAll(); }
+import { register as registerTierLanding } from './tierlanding.test.jsx';
+export async function main() { registerViews(); registerAlerts(); registerBar(); registerConnection(); registerTierLanding(); return runAll(); }
