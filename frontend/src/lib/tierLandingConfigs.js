@@ -28,6 +28,8 @@ export const TIER_LANDINGS = {
       body: 'Drought and crop-stress scoring, crop-stage tracking, an irrigation advisory and crop suitability that knows Kharif from Rabi \u2014 built on open satellite data, with the source and method shown next to every number.',
       cta: 'Open Vayu Agri',
       secondary: 'See what it does',
+      // blurred backdrop built from real Sentinel-2 NDVI + satellite basemap (see README: Agri landing page)
+      background: '/images/agri-bg.jpg',
       image: {
         src: '/images/agri-hero.jpg',
         alt: 'Vayu Agri screenshot: a drawn district outlined on satellite imagery, with a drought trend chart and the contributing risk indicators beside it',
