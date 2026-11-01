@@ -476,7 +476,7 @@ The same repo can be deployed as extra, single-product Vercel projects, so a dom
 VITE_LOCKED_TIER=agri      # business | agri | remote_sensing | full
 ```
 
-With it set, the site skips the tier picker, ignores any saved tier, and (if the tier has an entry in `frontend/src/lib/tierLandingConfigs.js`) opens on that product's own 2D landing page; the page title, description and link-preview tags are set at build time. A tier with no landing entry opens its app directly. Leave it unset (as on `vayu-geop.vercel.app`) and nothing changes. Currently only `agri` has a landing page.
+With it set, the site skips the tier picker, ignores any saved tier, and (if the tier has an entry in `frontend/src/lib/tierLandingConfigs.js`) opens on that product's own 2D landing page; the page title, description and link-preview tags are set at build time. A tier with no landing entry opens its app directly. Leave it unset (as on `vayu-geop.vercel.app`) and nothing changes. Currently only `agri` has a landing page. Its hero backdrop `frontend/public/images/agri-bg.jpg` is a blurred composite of Vayu's own Sentinel-2 NDVI output and satellite basemap (not a stock photo); to use a different photo, replace that file (about 1920x1080, already blurred and darkened so text stays readable). The hero screenshot `agri-hero.jpg` is cropped from `screenshots/agri-dashboard.jpg` to show no other tier.
 
 Notes: this hides the other tiers' interface, but their code is still in the JavaScript bundle, so it is a demo-presentation lock, not an access-control boundary. Add each new site's URL to `ALLOWED_ORIGINS_STR` on the backend, or the browser will block its API calls. All sites share one backend and therefore its bandwidth cap. The PWA manifest still says "Vayu".
 
