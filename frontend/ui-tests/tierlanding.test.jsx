@@ -1,5 +1,5 @@
 import { test, mount, click, text, q, qa, buttonWith, eq, ok, has, lacks } from './harness.jsx';
-import TierLanding from '../src/components/TierLanding.jsx';
+import TierLanding, { seasonMonths } from '../src/components/TierLanding.jsx';
 import { KNOWN_TIERS, parseLockedTier, getLockedTier, initialTier } from '../src/lib/tierConfig.js';
 import { TIER_LANDINGS, getTierLanding } from '../src/lib/tierLandingConfigs.js';
 
@@ -25,51 +25,59 @@ export function register() {
     eq(initialTier(null, 'garbage'), null, 'an unknown stored value shows the picker rather than a broken app');
   });
 
-  test('Landing configs: lookup is own-property only; agri has the content + honesty sections', async () => {
+  test('Landing configs: lookup is own-property only; every config is complete', async () => {
     eq(getTierLanding('agri').id, 'agri'); eq(getTierLanding('business'), null); eq(getTierLanding('constructor'), null); eq(getTierLanding('toString'), null);
     for (const [id, c] of Object.entries(TIER_LANDINGS)) {
       eq(c.id, id, 'config id matches its key'); ok(KNOWN_TIERS.includes(id), 'config is for a known tier');
       for (const k of ['bg', 'surface', 'border', 'text', 'accent', 'accentBright', 'onAccent']) ok(c.palette[k], `palette.${k}`);
       ok(c.meta.title && c.meta.description && /^#[0-9a-f]{6}$/i.test(c.meta.themeColor), 'meta complete');
-      ok(c.trust.notYet.length > 0, 'a landing page must state what is NOT validated');
+      ok(c.hero.image.src.startsWith('/') && c.hero.image.alt && c.hero.image.caption, 'hero image has src, alt and caption');
+      for (const r of c.seasons.rows) ok(r.tag && r.window, `season ${r.name} has tag + window`);
       for (const r of c.seasons.rows) ok(r.from >= 0 && r.from <= 11 && r.to >= 0 && r.to <= 11, `season ${r.name} months in range`);
     }
   });
 
-  test('TierLanding (agri): renders product, hero, every capability, and the Open button calls onEnter once', async () => {
+  test('TierLanding (agri): renders product, hero image, every capability; Open buttons call onEnter', async () => {
     let entered = 0;
     const m = await mount(<TierLanding config={AGRI} onEnter={() => { entered++; }} />);
     try {
       const t = text(m.container);
-      has(t, 'Vayu Agri'); has(t, AGRI.hero.highlight); has(t, 'Illustrative tile, not live data');
+      has(t, 'Vayu Agri'); has(t, AGRI.hero.highlight); has(t, AGRI.hero.image.caption);
       for (const cap of AGRI.capabilities) has(t, cap.title);
       eq(q(m.container, '[data-testid="tier-landing"]').dataset.tier, 'agri');
       ok(!q(m.container, 'canvas'), '2D page: no WebGL canvas');
-      ok(qa(m.container, 'svg rect').length >= 64 * 40, 'vegetation tile rendered');
+      const img = q(m.container, 'img[src="/images/agri-hero.jpg"]');
+      ok(img && img.getAttribute('alt').length > 20, 'hero shows the real screenshot with alt text');
+      lacks(t, 'Vayu Business', 'locked page must not advertise other tiers'); lacks(t, 'Remote Sensing'); lacks(t, 'Maritime');
       await click(buttonWith(m.container, AGRI.hero.cta)); eq(entered, 1);
       await click(buttonWith(m.container, 'Open app')); eq(entered, 2);
     } finally { await m.unmount(); }
   });
 
-  test('TierLanding: trust section lists both what is in place and what is NOT validated', async () => {
+  test('TierLanding: trust section is gone (no nav entry, no section)', async () => {
     const m = await mount(<TierLanding config={AGRI} onEnter={() => {}} />);
     try {
-      has(text(q(m.container, '[data-testid="trust-done"]')), 'held-out');
-      const no = text(q(m.container, '[data-testid="trust-not-yet"]'));
-      has(no, 'No accuracy figure'); has(no, 'not calibrated'); has(no, 'documented real-world events');
-      lacks(text(m.container), 'Vayu Business', 'locked page must not advertise other tiers'); lacks(text(m.container), 'Remote Sensing');
+      ok(!buttonWith(m.container, 'Trust'), 'no Trust nav button'); ok(!q(m.container, '[data-testid="trust-done"]'));
+      lacks(text(m.container), 'What is checked');
     } finally { await m.unmount(); }
   });
 
-  test('TierLanding: season bars — wrap-around Rabi is drawn as two segments at the right months', async () => {
+  test('seasonMonths: handles plain and year-wrapping windows', async () => {
+    eq(seasonMonths(5, 9).join(), '5,6,7,8,9'); eq(seasonMonths(10, 2).join(), '10,11,0,1,2'); eq(seasonMonths(2, 5).join(), '2,3,4,5'); eq(seasonMonths(3, 3).join(), '3');
+  });
+
+  test('TierLanding: season cards highlight exactly the right months (Rabi wraps Nov-Mar)', async () => {
     const m = await mount(<TierLanding config={AGRI} onEnter={() => {}} />);
     try {
-      const rects = (name) => qa(m.container, `rect[data-season="${name}"]`);
-      eq(rects('Kharif').length, 1); eq(rects('Zaid').length, 1); eq(rects('Rabi').length, 2, 'Nov-Mar wraps the year end');
-      const w = (r) => parseFloat(r.getAttribute('width')); const x = (r) => parseFloat(r.getAttribute('x'));
-      const [late, early] = rects('Rabi').sort((a, b) => x(b) - x(a));       // Nov-Dec (right), Jan-Mar (left)
-      ok(Math.abs(w(early) / w(late) - 3 / 2) < 0.1, 'Jan-Mar is 3 months wide, Nov-Dec is 2');
-      ok(x(rects('Kharif')[0]) < x(late) && x(early) < x(rects('Kharif')[0]), 'Kharif sits between the two Rabi segments');
+      const active = (name) => qa(m.container, `[data-season-month^="${name}-"]`).map((e) => Number(e.getAttribute('data-season-month').split('-')[1])).sort((a, b) => a - b);
+      eq(active('Kharif').join(), '5,6,7,8,9'); eq(active('Rabi').join(), '0,1,2,10,11'); eq(active('Zaid').join(), '2,3,4,5');
+      for (const name of ['Kharif', 'Rabi', 'Zaid']) {   // the colour must match the marked months, not just the attribute
+        const cells = qa(q(m.container, `[data-testid="season-${name}"]`), 'div').filter((e) => e.style.height === '26px');
+        eq(cells.length, 12, `${name}: 12 month cells`);
+        const lit = cells.map((e, i) => (/255, 255, 255/.test(e.style.background) ? -1 : i)).filter((i) => i >= 0);
+        eq(lit.join(), active(name).join(), `${name}: coloured cells are exactly the active months`);
+      }
+      has(text(q(m.container, '[data-testid="season-Rabi"]')), 'November to March'); has(text(q(m.container, '[data-testid="season-Kharif"]')), 'Monsoon');
       has(text(m.container), 'jowar'); has(text(m.container), 'wheat only in Rabi');
     } finally { await m.unmount(); }
   });
@@ -79,13 +87,13 @@ export function register() {
     proto.scrollIntoView = function () { scrolled.push(this); };
     try {
       let m = await mount(<TierLanding config={AGRI} onEnter={() => {}} />);
-      try { await click(buttonWith(m.container, 'Trust')); eq(scrolled.length, 1, 'Trust nav scrolls once'); has(text(scrolled[0]), 'What is checked'); } finally { await m.unmount(); }
+      try { await click(buttonWith(m.container, 'Seasons')); eq(scrolled.length, 1, 'Seasons nav scrolls once'); has(text(scrolled[0]), 'Season-aware'); } finally { await m.unmount(); }
       await withWidth(500, async () => {
         m = await mount(<TierLanding config={AGRI} onEnter={() => {}} />);
         try {
-          ok(!buttonWith(m.container, 'Trust'), 'desktop nav hidden on mobile');
+          ok(!buttonWith(m.container, 'What it does'), 'desktop nav hidden on mobile');
           await click(q(m.container, '[aria-label="Open menu"]'));
-          await click(buttonWith(m.container, 'Seasons')); eq(scrolled.length, 2);
+          await click(buttonWith(m.container, 'Developer')); eq(scrolled.length, 2);
           ok(q(m.container, '[aria-label="Open menu"]'), 'menu closes after choosing a section');
         } finally { await m.unmount(); }
       });

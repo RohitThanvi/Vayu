@@ -1,68 +1,42 @@
 /**
  * TierLanding.jsx — config-driven, 2D landing page for single-product (locked-tier) sites.
  *
- * Deliberately WebGL-free: the hero is an SVG "satellite vegetation tile" (a deterministic
- * pixel mosaic, like a coarse NDVI scene) instead of the 3D globe + satellite used on the
- * main landing page. Content and palette come from lib/tierLandingConfigs.js.
+ * Deliberately WebGL-free: the hero shows a real screenshot of the product (config.hero.image)
+ * instead of the 3D globe + satellite used on the main landing page. Content and palette come
+ * from lib/tierLandingConfigs.js.
  */
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useIsMobile } from '../hooks/useIsMobile';
 
 const MONO = "'JetBrains Mono','Courier New',monospace";
-const MONTHS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
-const SECTIONS = [['home', 'Home'], ['capabilities', 'What it does'], ['seasons', 'Seasons'], ['trust', 'Trust'], ['developer', 'Developer']];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const SECTIONS = [['home', 'Home'], ['capabilities', 'What it does'], ['seasons', 'Seasons'], ['developer', 'Developer']];
 
-// Deterministic smooth-ish noise (no Math.random: the tile must render identically every time).
-function hash(x, y) {
-  let h = (x * 374761393 + y * 668265263) | 0;
-  h = ((h ^ (h >>> 13)) * 1274126177) | 0;
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
-}
-function fieldValue(cx, cy) {
-  // blend of coarse (parcel-scale) and fine noise, bilinear on the coarse lattice
-  const gx = cx / 4, gy = cy / 4, x0 = Math.floor(gx), y0 = Math.floor(gy), fx = gx - x0, fy = gy - y0;
-  const s = (t) => t * t * (3 - 2 * t);
-  const a = hash(x0, y0), b = hash(x0 + 1, y0), c = hash(x0, y0 + 1), d = hash(x0 + 1, y0 + 1);
-  const coarse = a + (b - a) * s(fx) + (c - a) * s(fy) + (a - b - c + d) * s(fx) * s(fy);
-  return 0.72 * coarse + 0.28 * hash(cx + 91, cy + 17);
-}
-function ramp(v) {
-  // low vegetation (dry soil) -> high vegetation (deep green)
-  const lo = [122, 98, 62], mid = [118, 168, 84], hi = [28, 118, 62];
-  const t = Math.min(1, Math.max(0, (v - 0.15) / 0.75));
-  const [p, q, u] = t < 0.5 ? [lo, mid, t * 2] : [mid, hi, (t - 0.5) * 2];
-  return `rgb(${Math.round(p[0] + (q[0] - p[0]) * u)},${Math.round(p[1] + (q[1] - p[1]) * u)},${Math.round(p[2] + (q[2] - p[2]) * u)})`;
+/** Month indices (0 = Jan) covered by a season, handling windows that wrap the year end (e.g. Nov-Mar). */
+export function seasonMonths(from, to) {
+  const out = [];
+  for (let m = from; ; m = (m + 1) % 12) { out.push(m); if (m === to) break; }
+  return out;
 }
 
-export function VegetationTile({ cols = 64, rows = 40 }) {
-  const cells = useMemo(() => {
-    const out = [];
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) out.push({ c, r, fill: ramp(fieldValue(c, r)) });
-    return out;
-  }, [cols, rows]);
+export function SeasonCard({ row, P }) {
+  const active = new Set(seasonMonths(row.from, row.to));
   return (
-    <svg viewBox={`0 0 ${cols} ${rows}`} preserveAspectRatio="xMidYMid slice" role="img" aria-label="Illustrative satellite vegetation tile"
-      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}>
-      {cells.map((k) => <rect key={`${k.c}-${k.r}`} x={k.c} y={k.r} width="1.02" height="1.02" fill={k.fill} />)}
-    </svg>
-  );
-}
-
-export function SeasonBars({ rows, P, isMobile }) {
-  const W = 480, H = 40 + rows.length * 34, left = isMobile ? 52 : 64, cw = (W - left) / 12;
-  const spans = (row) => (row.from <= row.to ? [[row.from, row.to]] : [[row.from, 11], [0, row.to]]);
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Growing seasons: ${rows.map((r) => `${r.name} ${r.window}`).join(', ')}`} style={{ width: '100%', maxWidth: 560, display: 'block' }}>
-      {MONTHS.map((m, i) => <text key={i} x={left + i * cw + cw / 2} y={16} textAnchor="middle" fontSize="11" fill={P.text3} fontFamily={MONO}>{m}</text>)}
-      {rows.map((row, ri) => (
-        <g key={row.name}>
-          <text x={0} y={52 + ri * 34} fontSize="11.5" fill={P.text2} fontFamily={MONO}>{row.name}</text>
-          {spans(row).map(([a, b], si) => (
-            <rect key={si} data-season={row.name} x={left + a * cw + 1} y={36 + ri * 34} width={(b - a + 1) * cw - 2} height={22} rx={4} fill={row.color} opacity={0.88} />
-          ))}
-        </g>
-      ))}
-    </svg>
+    <div data-testid={`season-${row.name}`} className="tl-card" style={{ background: P.surface, border: `1px solid ${P.border}`, borderRadius: 10, padding: '20px 20px 18px', height: '100%', boxSizing: 'border-box' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+        <div style={{ fontFamily: 'Georgia, serif', fontSize: 22, color: P.text }}>{row.name}</div>
+        <div style={{ fontSize: 10.5, letterSpacing: 2, textTransform: 'uppercase', color: row.color }}>{row.tag}</div>
+      </div>
+      <div style={{ fontSize: 13, color: P.text2, marginBottom: 16 }}>{row.window}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 3 }}>
+        {MONTHS.map((m, i) => (
+          <div key={m} style={{ textAlign: 'center' }}>
+            <div data-season-month={active.has(i) ? `${row.name}-${i}` : undefined} style={{ height: 26, borderRadius: 3, background: active.has(i) ? row.color : 'rgba(255,255,255,0.06)', opacity: active.has(i) ? 0.9 : 1 }} />
+            <div style={{ fontSize: 8.5, marginTop: 5, whiteSpace: 'nowrap', overflow: 'hidden', color: active.has(i) ? P.text2 : P.text4, letterSpacing: 0 }}>{m}</div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -106,9 +80,7 @@ export default function TierLanding({ config, onEnter }) {
         .tl-nav-btn:hover{color:${P.accent}!important}
         .tl-card{transition:border-color .25s ease,transform .25s ease}.tl-card:hover{border-color:${P.accentDim};transform:translateY(-2px)}
         .tl-list li::marker{color:${P.accent}}
-        .tl-scan{position:absolute;top:0;bottom:0;width:22%;background:linear-gradient(90deg,transparent,rgba(185,236,176,0.16),transparent);animation:tl-scan 9s linear infinite;pointer-events:none}
-        @keyframes tl-scan{from{left:-25%}to{left:105%}}
-        @media (prefers-reduced-motion: reduce){.tl-scan{animation:none;display:none}.tl-reveal{transition:none}.tl-card{transition:none}}
+        @media (prefers-reduced-motion: reduce){.tl-reveal{transition:none}.tl-card{transition:none}}
       `}</style>
 
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100, background: 'rgba(8,20,14,0.86)', backdropFilter: 'blur(8px)', borderBottom: `1px solid ${P.border}` }}>
@@ -141,24 +113,26 @@ export default function TierLanding({ config, onEnter }) {
       </div>
 
       {/* Home / hero */}
-      <div ref={setRef('home')} style={{ position: 'relative', minHeight: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
-        <div style={{ position: 'absolute', inset: 0 }}><VegetationTile /><div className="tl-scan" /></div>
-        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(115deg, rgba(8,20,14,0.94) 0%, rgba(8,20,14,0.78) 38%, rgba(8,20,14,0.3) 70%, rgba(8,20,14,0.1) 100%)' }} />
-        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: `linear-gradient(0deg, ${P.bg} 0%, rgba(8,20,14,0) 20%)` }} />
-        <div style={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: 1200, margin: '0 auto', padding: isMobile ? '90px 20px 60px' : '0 28px' }}>
-          <div style={{ maxWidth: 580 }}>
+      <div ref={setRef('home')} style={{ position: 'relative', minHeight: '100vh', overflow: 'hidden', display: 'flex', alignItems: 'center', background: `radial-gradient(ellipse at 80% 42%, rgba(46,110,70,0.38), transparent 62%), radial-gradient(ellipse at 8% 95%, rgba(216,194,122,0.07), transparent 50%), ${P.bg}` }}>
+        <div style={{ width: '100%', maxWidth: 1200, margin: '0 auto', padding: isMobile ? '96px 20px 56px' : '96px 28px 48px', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '0.85fr 1.15fr', gap: isMobile ? 36 : 52, alignItems: 'center', boxSizing: 'border-box' }}>
+          <div>
             <div style={{ fontSize: isMobile ? 10.5 : 12, letterSpacing: isMobile ? 2 : 3, color: P.text3, textTransform: 'uppercase', marginBottom: 16 }}>{config.hero.overline}</div>
-            <h1 style={{ fontFamily: 'Georgia, serif', fontWeight: 400, fontSize: isMobile ? 32 : 50, lineHeight: 1.18, color: P.text, margin: '0 0 22px', textShadow: '0 2px 24px rgba(0,0,0,0.6)' }}>
+            <h1 style={{ fontFamily: 'Georgia, serif', fontWeight: 400, fontSize: isMobile ? 32 : 44, lineHeight: 1.18, color: P.text, margin: '0 0 22px' }}>
               {config.hero.headline}<span style={{ color: P.accent }}>{config.hero.highlight}</span>
             </h1>
-            <p style={{ ...body, fontSize: isMobile ? 12.5 : 13.5, margin: '0 0 34px', maxWidth: 500 }}>{config.hero.body}</p>
+            <p style={{ ...body, fontSize: isMobile ? 12.5 : 13.5, margin: '0 0 34px', maxWidth: 480 }}>{config.hero.body}</p>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               <button onClick={onEnter} style={cta}>{config.hero.cta}</button>
               <button onClick={() => scrollTo('capabilities')} style={ghost}>{config.hero.secondary}</button>
             </div>
           </div>
+          <figure style={{ margin: 0 }}>
+            <div style={{ borderRadius: 12, overflow: 'hidden', border: `1px solid ${P.borderLight}`, boxShadow: '0 24px 70px rgba(0,0,0,0.55)' }}>
+              <img src={config.hero.image.src} alt={config.hero.image.alt} width="1256" height="743" style={{ display: 'block', width: '100%', height: 'auto' }} />
+            </div>
+            <figcaption style={{ marginTop: 12, fontSize: 11, color: P.text3, letterSpacing: 0.5, lineHeight: 1.7 }}>{config.hero.image.caption}</figcaption>
+          </figure>
         </div>
-        <div style={{ position: 'absolute', right: 14, bottom: 12, zIndex: 1, fontSize: 10, color: P.text4, letterSpacing: 1 }}>Illustrative tile, not live data</div>
       </div>
 
       {/* Capabilities */}
@@ -185,36 +159,17 @@ export default function TierLanding({ config, onEnter }) {
 
       {/* Seasons */}
       <div ref={setRef('seasons')} style={{ padding: pad, borderTop: `1px solid ${P.border}` }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 28 : 56, alignItems: 'center' }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
           <Reveal rootRef={scrollRef}>
             <div style={eyebrow}>Seasons</div><div style={h2}>{config.seasons.title}</div>
-            <div style={body}>{config.seasons.intro}</div>
-            <div style={{ ...body, marginTop: 14, color: P.text3, fontSize: 12.5 }}>{config.seasons.note}</div>
+            <div style={{ ...body, maxWidth: 760 }}>{config.seasons.intro}</div>
           </Reveal>
-          <Reveal rootRef={scrollRef} delay={120}>
-            <div style={{ ...card, padding: '22px 22px 14px' }}><SeasonBars rows={config.seasons.rows} P={P} isMobile={isMobile} /></div>
-          </Reveal>
-        </div>
-      </div>
-
-      {/* Trust */}
-      <div ref={setRef('trust')} style={{ padding: pad, borderTop: `1px solid ${P.border}` }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-          <Reveal rootRef={scrollRef}><div style={eyebrow}>Trust</div><div style={h2}>{config.trust.title}</div><div style={{ ...body, marginBottom: 28, maxWidth: 720 }}>{config.trust.intro}</div></Reveal>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16 }}>
-            <Reveal rootRef={scrollRef} fill>
-              <div style={{ ...card, height: '100%', boxSizing: 'border-box' }} data-testid="trust-done">
-                <div style={{ fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: P.accent, marginBottom: 12 }}>In place</div>
-                <ul className="tl-list" style={{ margin: 0, paddingLeft: 18 }}>{config.trust.done.map((t) => <li key={t} style={{ ...body, fontSize: 12.5, marginBottom: 8, color: P.text2 }}>{t}</li>)}</ul>
-              </div>
-            </Reveal>
-            <Reveal rootRef={scrollRef} delay={90} fill>
-              <div style={{ ...card, height: '100%', boxSizing: 'border-box', borderColor: 'rgba(216,194,122,0.4)' }} data-testid="trust-not-yet">
-                <div style={{ fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: P.wheat, marginBottom: 12 }}>Not yet</div>
-                <ul className="tl-list" style={{ margin: 0, paddingLeft: 18 }}>{config.trust.notYet.map((t) => <li key={t} style={{ ...body, fontSize: 12.5, marginBottom: 8, color: P.text2 }}>{t}</li>)}</ul>
-              </div>
-            </Reveal>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 16, marginTop: 28 }}>
+            {config.seasons.rows.map((row, i) => (
+              <Reveal key={row.name} rootRef={scrollRef} delay={i * 90} fill><SeasonCard row={row} P={P} /></Reveal>
+            ))}
           </div>
+          <Reveal rootRef={scrollRef}><div style={{ ...body, marginTop: 22, color: P.text3, fontSize: 12.5, maxWidth: 760 }}>{config.seasons.note}</div></Reveal>
         </div>
       </div>
 
