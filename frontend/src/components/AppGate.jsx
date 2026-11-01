@@ -13,6 +13,9 @@
 import { useState } from 'react';
 import App from '../App.jsx';
 import LandingPage from './LandingPage.jsx';
+import TierLanding from './TierLanding.jsx';
+import { getLockedTier, initialTier } from '../lib/tierConfig.js';
+import { getTierLanding } from '../lib/tierLandingConfigs.js';
 
 const API_URL = import.meta.env.VITE_API_URL !== undefined
   ? import.meta.env.VITE_API_URL
@@ -20,8 +23,14 @@ const API_URL = import.meta.env.VITE_API_URL !== undefined
 
 const TIER_KEY = 'vayu_service_tier';
 
+// Build-time lock (VITE_LOCKED_TIER): single-product demo sites. Unset on the main site.
+const LOCKED_TIER = getLockedTier();
+const LOCKED_LANDING = LOCKED_TIER ? getTierLanding(LOCKED_TIER) : null;
+
 export default function AppGate() {
-  const [tier, setTier] = useState(() => localStorage.getItem(TIER_KEY));
+  const [tier, setTier] = useState(() => initialTier(LOCKED_TIER, localStorage.getItem(TIER_KEY)));
+  // A locked site with a landing config starts on its own landing page; one without opens the app.
+  const [showLanding, setShowLanding] = useState(!!LOCKED_LANDING);
 
   const handleSelectTier = (selected) => {
     localStorage.setItem(TIER_KEY, selected);
@@ -29,15 +38,23 @@ export default function AppGate() {
   };
 
   const handleChangeTier = () => {
+    if (LOCKED_TIER) {            // locked: never clear the tier, "change" just returns to the landing page
+      if (LOCKED_LANDING) setShowLanding(true);
+      return;
+    }
     localStorage.removeItem(TIER_KEY);
     setTier(null);
   };
+
+  if (LOCKED_LANDING && showLanding) {
+    return <TierLanding config={LOCKED_LANDING} onEnter={() => setShowLanding(false)} />;
+  }
 
   if (!tier) {
     return <LandingPage apiUrl={API_URL} onSelectTier={handleSelectTier} />;
   }
 
-  return <App tier={tier} onChangeTier={handleChangeTier} />;
+  return <App tier={tier} onChangeTier={LOCKED_TIER && !LOCKED_LANDING ? undefined : handleChangeTier} tierLocked={!!LOCKED_TIER} />;
 }
 
 // ============================================================================

@@ -468,6 +468,18 @@ DATABASE_URL=postgresql://...
 
 The frontend additionally uses build-time variables: `VITE_API_URL` (backend base URL), `VITE_OWM_API_KEY` (OpenWeatherMap, free tier, for temperature/pressure tiles) and `VITE_MAPILLARY_ACCESS_TOKEN` (free Mapillary token for Street View; without it the toggle shows a clear "token missing" message).
 
+#### Single-product demo sites (locked tier)
+
+The same repo can be deployed as extra, single-product Vercel projects, so a domain expert only ever sees one tier. Create a new Vercel project from this repo (root directory `frontend`) and add the same variables as the main site plus:
+
+```dotenv
+VITE_LOCKED_TIER=agri      # business | agri | remote_sensing | full
+```
+
+With it set, the site skips the tier picker, ignores any saved tier, and (if the tier has an entry in `frontend/src/lib/tierLandingConfigs.js`) opens on that product's own 2D landing page; the page title, description and link-preview tags are set at build time. A tier with no landing entry opens its app directly. Leave it unset (as on `vayu-geop.vercel.app`) and nothing changes. Currently only `agri` has a landing page.
+
+Notes: this hides the other tiers' interface, but their code is still in the JavaScript bundle, so it is a demo-presentation lock, not an access-control boundary. Add each new site's URL to `ALLOWED_ORIGINS_STR` on the backend, or the browser will block its API calls. All sites share one backend and therefore its bandwidth cap. The PWA manifest still says "Vayu".
+
 For local Earth Engine authentication:
 
 ```bash
