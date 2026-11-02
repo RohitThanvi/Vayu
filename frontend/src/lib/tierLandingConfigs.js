@@ -11,9 +11,12 @@ export const TIER_LANDINGS = {
     id: 'agri',
     product: 'Vayu Agri',
     meta: {
-      title: 'Vayu Agri · Satellite crop & drought intelligence',
-      description: 'Satellite-based agricultural risk scoring, crop-stage tracking, irrigation advisory and season-aware crop suitability for India. Every number states its source and method.',
+      title: 'Vayu Agri \u00b7 Satellite crop & drought intelligence',
+      description: 'Satellite crop and drought intelligence for India: risk scoring, crop-stage tracking, irrigation advisory and season-aware crop suitability, with sources shown.',
       themeColor: '#08140e',
+    },
+    seo: {
+      image: { path: '/images/agri-hero.jpg', width: 1256, height: 743, alt: 'Vayu Agri screenshot: a drawn district outlined on satellite imagery, with a drought trend chart and the contributing risk indicators beside it' },
     },
     palette: {
       bg: '#08140e', surface: 'rgba(16,36,26,0.85)', surface2: '#10241a', border: '#2c4a3a', borderLight: '#41674f',

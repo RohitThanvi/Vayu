@@ -935,9 +935,9 @@ export default function LandingPage({ apiUrl, onSelectTier }) {
             <div style={{ fontFamily: S.mono, fontSize: isMobile ? 10.5 : 12, letterSpacing: isMobile ? 2 : 3, color: S.text3, textTransform: 'uppercase', marginBottom: isMobile ? 12 : 16 }}>
               Geospatial &amp; Business Intelligence
             </div>
-            <div style={{ fontFamily: 'Georgia, serif', fontSize: isMobile ? 32 : 50, lineHeight: 1.18, color: S.text, marginBottom: isMobile ? 16 : 22, textShadow: '0 2px 24px rgba(0,0,0,0.6)' }}>
+            <h1 style={{ marginTop: 0, marginLeft: 0, marginRight: 0, fontWeight: 400, fontFamily: 'Georgia, serif', fontSize: isMobile ? 32 : 50, lineHeight: 1.18, color: S.text, marginBottom: isMobile ? 16 : 22, textShadow: '0 2px 24px rgba(0,0,0,0.6)' }}>
               One terminal for <span style={{ color: S.gold }}>everything above and around you.</span>
-            </div>
+            </h1>
             <div style={{ fontFamily: S.mono, fontSize: isMobile ? 12.5 : 13.5, color: S.text2, lineHeight: 1.75, marginBottom: isMobile ? 26 : 34, maxWidth: 480 }}>
               Live satellite analysis, maritime &amp; aviation tracking, commodity
               markets, drought &amp; agricultural risk scoring, and global hazard

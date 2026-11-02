@@ -1,31 +1,33 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { parseLockedTier } from './src/lib/tierConfig.js'
-import { getTierLanding } from './src/lib/tierLandingConfigs.js'
+import { buildSiteSeo } from './src/lib/siteSeo.js'
+import { injectSeo } from './src/lib/seo.js'
 
-const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
-
-// Single-product (locked-tier) builds get their own <title>, description, theme colour and
-// share-preview tags at BUILD time, because link-preview crawlers do not run JavaScript.
-// With VITE_LOCKED_TIER unset (the main site) index.html is left untouched.
-function lockedTierHtml(mode) {
-  const locked = parseLockedTier(loadEnv(mode, process.cwd(), 'VITE_').VITE_LOCKED_TIER || process.env.VITE_LOCKED_TIER)
-  const meta = locked ? getTierLanding(locked)?.meta : null
+// SEO for every build, at BUILD time (link-preview crawlers do not run JavaScript):
+//  - rewrites <title>/description/theme-color and adds canonical, Open Graph, Twitter and JSON-LD tags
+//  - emits robots.txt and sitemap.xml (the site has one indexable URL, "/")
+// The site URL comes from VITE_SITE_URL (use it for a custom domain) or, on Vercel, from
+// VERCEL_PROJECT_PRODUCTION_URL. With neither, absolute-URL features are skipped and a warning is printed
+// (the main site, unlocked, falls back to its known address). Single-product sites (VITE_LOCKED_TIER) get
+// their own title, description, image and site name from lib/tierLandingConfigs.js.
+function seoPlugin(mode) {
+  const env = { ...loadEnv(mode, process.cwd(), ''), ...process.env }
+  const locked = parseLockedTier(env.VITE_LOCKED_TIER)
+  const built = buildSiteSeo({ locked, env })
   return {
-    name: 'vayu-locked-tier-html',
-    transformIndexHtml(html) {
-      if (!meta) return html
-      return html
-        .replace(/<title>[^<]*<\/title>/, `<title>${esc(meta.title)}</title>`)
-        .replace(/(<meta name="description" content=")[^"]*(")/, `$1${esc(meta.description)}$2`)
-        .replace(/(<meta name="theme-color" content=")[^"]*(")/, `$1${esc(meta.themeColor)}$2`)
-        .replace('</title>', `</title>\n    <meta property="og:title" content="${esc(meta.title)}" />\n    <meta property="og:description" content="${esc(meta.description)}" />\n    <meta property="og:type" content="website" />`)
+    name: 'vayu-seo',
+    transformIndexHtml(html) { return injectSeo(html, built.seo) },
+    generateBundle() {
+      if (!built.siteUrl) this.warn('SEO: no site URL (set VITE_SITE_URL, or enable Vercel system env vars). canonical/og:url/og:image and sitemap.xml are skipped.')
+      this.emitFile({ type: 'asset', fileName: 'robots.txt', source: built.robots })
+      if (built.sitemap) this.emitFile({ type: 'asset', fileName: 'sitemap.xml', source: built.sitemap })
     },
   }
 }
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), lockedTierHtml(mode)],
+  plugins: [react(), seoPlugin(mode)],
   server: {
     port: 5173,
     proxy: { '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true } },
