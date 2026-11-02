@@ -478,6 +478,12 @@ VITE_LOCKED_TIER=agri      # business | agri | remote_sensing | full
 
 With it set, the site skips the tier picker, ignores any saved tier, and (if the tier has an entry in `frontend/src/lib/tierLandingConfigs.js`) opens on that product's own 2D landing page; the page title, description and link-preview tags are set at build time. A tier with no landing entry opens its app directly. Leave it unset (as on `vayu-geop.vercel.app`) and nothing changes. Currently only `agri` has a landing page. Its hero backdrop `frontend/public/images/agri-bg.jpg` is a blurred composite of Vayu's own Sentinel-2 NDVI output and satellite basemap (not a stock photo); to use a different photo, replace that file (about 1920x1080, already blurred and darkened so text stays readable). The hero screenshot `agri-hero.jpg` is cropped from `screenshots/agri-dashboard.jpg` to show no other tier.
 
+#### SEO (sitemap, robots, link previews)
+
+Every build writes `robots.txt` and `sitemap.xml` into `dist/` and rewrites `index.html`'s `<head>` (title, description, canonical, Open Graph / Twitter tags, JSON-LD, and a plain-HTML `<noscript>` summary for crawlers that don't run JavaScript). The code is `frontend/src/lib/seo.js` + `siteSeo.js`, wired in `vite.config.js`; it is unit-tested. The app is one client-rendered page, so each site has exactly one indexable URL (`/`) and the sitemap lists that one URL.
+
+The site's address is taken from `VITE_SITE_URL` (set this when you add a custom domain), otherwise from Vercel's `VERCEL_PROJECT_PRODUCTION_URL` (Vercel project setting "Automatically expose System Environment Variables", on by default). The main site falls back to `https://vayu-geop.vercel.app` if neither is set; a locked-tier site never falls back, and without a URL it skips the canonical/`og:url`/`og:image` tags and the sitemap and prints a build warning. Optional `VITE_GOOGLE_SITE_VERIFICATION` replaces the Search Console verification tag (needed on each separate site if you want it as its own Search Console property). Per-tier title, description and share image live in `tierLandingConfigs.js`.
+
 Notes: this hides the other tiers' interface, but their code is still in the JavaScript bundle, so it is a demo-presentation lock, not an access-control boundary. Add each new site's URL to `ALLOWED_ORIGINS_STR` on the backend, or the browser will block its API calls. All sites share one backend and therefore its bandwidth cap. The PWA manifest still says "Vayu".
 
 For local Earth Engine authentication:
