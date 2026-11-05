@@ -13,6 +13,7 @@ from ..services.agri.baseline import compute_seasonal_baseline
 from ..services.agri.rollup import get_rollup
 from ..services.agri.whatsapp import build_twiml_reply, handle_inbound_message
 from ..services.agri.phenology import compute_phenology
+from ..services.agri.crop_stages import supported_crops
 from ..services.agri.irrigation_advisory import compute_irrigation_advisory
 from ..services.agri import crop_suitability
 from ..services import gee_remote_sensing as rs
@@ -54,6 +55,11 @@ class RiskScoreRequest(BaseModel):
     aoi_geojson: Dict[str, Any]
     as_of: Optional[str] = None
     region_id: Optional[str] = None
+
+
+class IrrigationAdvisoryRequest(RiskScoreRequest):
+    crop_id: Optional[str] = None        # optional: one of GET /agri/crop-stages; enables the FAO-56 stage-aware read
+    sowing_date: Optional[str] = None    # YYYY-MM-DD, needed together with crop_id
 
 
 class BaselineRequest(BaseModel):
@@ -320,15 +326,25 @@ async def ndvi_trend(req: PhenologyRequest):
         raise HTTPException(status_code=422, detail=f"NDVI trend failed: {e}")
 
 
-@router.post("/irrigation-advisory", summary="Irrigate now / monitor / hold off, from soil moisture + rainfall context")
-async def irrigation_advisory(req: RiskScoreRequest):
+@router.get("/crop-stages", summary="Crops with FAO-56 stage data for the stage-aware irrigation advisory")
+async def crop_stages():
+    return {"crops": supported_crops(), "source": "FAO-56 Tables 11 and 12; indicative stage lengths, not local calendars",
+            "not_covered": "chickpea, mustard (no FAO-56 stage row), rice (flooded paddy), sugarcane and tree crops"}
+
+
+@router.post("/irrigation-advisory", summary="Irrigate now / monitor / hold off, from root-zone + surface soil moisture, rainfall and (optionally) crop stage")
+async def irrigation_advisory(req: IrrigationAdvisoryRequest):
     try:
-        key = {"aoi": req.aoi_geojson, "as_of": _effective_as_of(req.as_of)}
+        if bool(req.crop_id) != bool(req.sowing_date):
+            raise HTTPException(status_code=422, detail="Send crop_id and sowing_date together (or neither).")
+        key = {"aoi": req.aoi_geojson, "as_of": _effective_as_of(req.as_of), "crop": req.crop_id, "sow": req.sowing_date}
         return await asyncio.to_thread(
-            cached_compute, "agri_irrigation_advisory", key,
-            lambda: compute_irrigation_advisory(aoi=req.aoi_geojson, as_of=req.as_of),
+            cached_compute, "agri_irrigation_advisory_v2", key,
+            lambda: compute_irrigation_advisory(aoi=req.aoi_geojson, as_of=req.as_of, crop_id=req.crop_id, sowing_date=req.sowing_date),
             DEFAULT_TTL_SECONDS,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"irrigation_advisory endpoint failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Irrigation advisory failed: {e}")

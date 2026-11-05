@@ -215,17 +215,62 @@ function PhenologyTab({ apiUrl, drawnAOI }) {
   );
 }
 
-function IrrigationTab({ apiUrl, drawnAOI }) {
+const RZ_STATUS_TEXT = { dry: 'dry', below_normal: 'below normal', adequate: 'adequate', unknown: 'not available' };
+const STAGE_COLORS = ['#7fb4d6', '#86c98a', '#c9a86a', '#b08968'];
+
+// Four FAO-56 stages drawn in proportion to their length, with a marker on today. Pure display.
+export function StageBar({ stage }) {
+  if (!stage || stage.status !== 'ok') return null;
+  return (
+    <div data-testid="stage-bar" style={{ marginTop: 8, maxWidth: 520 }}>
+      <div style={{ display: 'flex', height: 12, borderRadius: 3, overflow: 'hidden', position: 'relative' }}>
+        {stage.calendar.map((c, i) => (
+          <div key={c.stage} title={`${c.label}: ${c.start_date} to ${c.end_date}`} data-stage={c.stage} style={{ flex: c.end_das - c.start_das + 1, background: STAGE_COLORS[i], opacity: c.stage === stage.stage ? 1 : 0.4 }} />
+        ))}
+        <div data-testid="stage-marker" style={{ position: 'absolute', top: 0, bottom: 0, width: 2, background: '#fff', left: `${(stage.das / stage.total_days) * 100}%` }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9.5, color: S.text3, marginTop: 3 }}>
+        <span>sowing {stage.sowing_date}</span><span>day {stage.das} of {stage.total_days}</span>
+      </div>
+    </div>
+  );
+}
+
+export function IrrigationTab({ apiUrl, drawnAOI }) {
   const { run, loading, error, result } = useAgriFetch(apiUrl, 'irrigation-advisory');
+  const [crops, setCrops] = useState([]);
+  const [cropId, setCropId] = useState('');
+  const [sowing, setSowing] = useState('');
+  useEffect(() => {
+    let live = true;
+    fetch(`${apiUrl}/api/v1/agri/crop-stages`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (live && d?.crops) setCrops(d.crops); }).catch(() => {});
+    return () => { live = false; };
+  }, [apiUrl]);
+  const needDate = !!cropId && !sowing;
+  const go = () => { if (!drawnAOI || needDate) return; run({ aoi_geojson: drawnAOI, ...(cropId ? { crop_id: cropId, sowing_date: sowing } : {}) }); };
   const rc = result?.recommendation === 'irrigate_now' ? '#ff7a45' : result?.recommendation === 'hold_off' ? '#2ecc71' : '#c9a86a';
+  const rzv = result?.root_zone, st = result?.crop_stage;
+  const fmt = (v) => (v == null ? 'n/a' : `${v} m³/m³`);
   return (
     <div style={{ display: 'flex', gap: 16 }}>
       <ControlsPanel>
         <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginBottom: 10 }}>
-          Irrigate now / monitor / hold off — SMAP soil moisture cross-checked against CHIRPS rainfall vs. seasonal-normal. A directional regional read, not a field-level prescription.
+          Irrigate now / monitor / hold off — root-zone and surface soil moisture (SMAP) cross-checked against rainfall vs. seasonal-normal, and optionally the crop's growth stage. A directional regional read, not a field-level prescription.
         </div>
-        <RunButton onClick={() => drawnAOI && run({ aoi_geojson: drawnAOI })} disabled={loading || !drawnAOI} loading={loading} label="CHECK IRRIGATION NEED" loadingLabel="CHECKING..." />
+        <div style={{ fontSize: 10.5, color: S.text3, marginBottom: 4 }}>Crop (optional)</div>
+        <select aria-label="Crop" value={cropId} onChange={(e) => setCropId(e.target.value)} style={{ width: '100%', padding: '4px 6px', fontSize: 11, background: S.surface2, color: S.text2, border: `1px solid ${S.border}`, borderRadius: 3, marginBottom: 8 }}>
+          <option value="">No crop — regional read</option>
+          {crops.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        {cropId && (
+          <>
+            <div style={{ fontSize: 10.5, color: S.text3, marginBottom: 4 }}>Sowing date</div>
+            <input aria-label="Sowing date" type="date" value={sowing} onChange={(e) => setSowing(e.target.value)} style={{ width: '100%', padding: '4px 6px', fontSize: 11, background: S.surface2, color: S.text2, border: `1px solid ${S.border}`, borderRadius: 3, marginBottom: 8, boxSizing: 'border-box' }} />
+          </>
+        )}
+        <RunButton onClick={go} disabled={loading || !drawnAOI || needDate} loading={loading} label="CHECK IRRIGATION NEED" loadingLabel="CHECKING..." />
         {!drawnAOI && <div style={{ fontSize: 10, color: '#e0c23c', marginTop: 8 }}>Draw an AOI on the map first.</div>}
+        {needDate && <div style={{ fontSize: 10, color: '#e0c23c', marginTop: 8 }}>Pick the sowing date to use the crop stage.</div>}
         {error && <ErrorNote>{error}</ErrorNote>}
       </ControlsPanel>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -234,12 +279,42 @@ function IrrigationTab({ apiUrl, drawnAOI }) {
           <div>
             <div style={{ padding: '10px 14px', background: S.surface2, border: `1px solid ${rc}`, borderRadius: 6, marginBottom: 12, display: 'inline-block' }}>
               <span style={{ fontSize: 18, fontFamily: S.mono, fontWeight: 700, color: rc, textTransform: 'uppercase' }}>{result.recommendation.replace('_', ' ')}</span>
+              {result.urgency === 'high' && <span data-testid="urgency" style={{ fontSize: 10, marginLeft: 10, color: rc, letterSpacing: 1 }}>HIGH URGENCY</span>}
             </div>
             <div style={{ fontSize: 13, color: S.text2, lineHeight: 1.6, marginBottom: 12, maxWidth: 560 }}>{result.reason}</div>
-            <div style={{ display: 'flex', gap: 24 }}>
-              <StatRow label="Dry-stress share of AOI" value={result.soil_moisture?.dry_stress_pct != null ? `${result.soil_moisture.dry_stress_pct}%` : 'n/a'} />
+            {result.decision_basis?.length > 0 && (
+              <div data-testid="basis" style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.6, marginBottom: 12, maxWidth: 560 }}>
+                {result.decision_basis.map((b) => <div key={b}>• {b}</div>)}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+              <StatRow label="Dry-stress share of AOI (surface)" value={result.soil_moisture?.dry_stress_pct != null ? `${result.soil_moisture.dry_stress_pct}%` : 'n/a'} />
               <StatRow label="Rainfall vs seasonal-normal" value={result.rainfall?.condition || 'n/a'} />
             </div>
+            {rzv && (
+              <div data-testid="root-zone" style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Soil moisture by depth (modelled, ~10 km)</div>
+                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                  <StatRow label="Root zone 0–100 cm, SMAP L4" value={rzv.available ? `${rzv.sm_rootzone_percentile}th percentile · ${RZ_STATUS_TEXT[rzv.status]}` : 'not available'} />
+                  <StatRow label="Surface 0–5 cm, SMAP" value={fmt(rzv.sm_surface_0_5cm)} />
+                  <StatRow label="7–28 cm, ERA5-Land" value={fmt(rzv.era5_layer2_7_28cm)} />
+                  <StatRow label="28–100 cm, ERA5-Land" value={fmt(rzv.era5_layer3_28_100cm)} />
+                </div>
+                <div style={{ fontSize: 10, color: S.text3, lineHeight: 1.5, marginTop: 4, maxWidth: 560 }}>{rzv.depth_note}</div>
+              </div>
+            )}
+            {st && (
+              <div data-testid="crop-stage" style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Crop stage (FAO-56)</div>
+                {st.status === 'ok' ? (
+                  <>
+                    <div style={{ fontSize: 12.5, color: S.text2 }}>{st.crop_name} · {st.stage_label} · day {st.stage_day} of {st.stage_length} · Kc {st.kc} ({Math.round(st.relative_demand * 100)}% of peak demand)</div>
+                    <StageBar stage={st} />
+                    <div style={{ fontSize: 10, color: S.text3, lineHeight: 1.5, marginTop: 4, maxWidth: 560 }}>{st.caveat}</div>
+                  </>
+                ) : <div style={{ fontSize: 11.5, color: S.text3 }}>{st.note}</div>}
+              </div>
+            )}
             <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 8 }}>{result.disclaimer}</div>
           </div>
         )}

@@ -220,7 +220,7 @@ Historical charting for everything above that was previously current-value-only 
 * **Groundwater** — regional groundwater trend from GRACE mascons (coarse, ~300 km grid; read as a regional signal, not a well-level one).
 * **Analysis** — NDVI and groundwater trend charts side by side.
 * **Crop Stage** — green-up / peak / senescence read from the AOI's own NDVI seasonal curve (`phenology.py`), filling the gap that the risk score is crop-agnostic.
-* **Irrigation** — an *irrigate now / monitor / hold off* advisory that cross-checks SMAP soil-moisture dry stress against CHIRPS rainfall-vs-normal. A directional regional read, not a field-level prescription.
+* **Irrigation** — an *irrigate now / monitor / hold off* advisory. It leads with **root-zone** moisture (SMAP L4 `sm_rootzone`, 0-100 cm, and its percentile) and cross-checks the 0-5 cm surface layer and CHIRPS rainfall-vs-normal; a dry surface over an adequate root zone is not treated as an irrigation signal. ERA5-Land layers (7-28 cm and 28-100 cm) are shown for reference. **Depth honesty:** SMAP itself senses only the top ~5 cm; deeper values are model output at ~10 km, and there is no 15-25 cm layer (ERA5-Land's 7-28 cm layer spans it). Optionally pass a crop and sowing date (`crop_id`, `sowing_date`; list at `GET /agri/crop-stages`) for a **stage-aware** read: FAO-56 stage and Kc (Tables 11-12) set how much water the crop is using now, so mid-season dryness is escalated and a dry-down crop in late season is not told to irrigate. Ten crops are covered (wheat, barley, maize, bajra, jowar, groundnut, soybean, cotton, potato, onion); chickpea and mustard (no FAO-56 stage row), rice, sugarcane and tree crops are deliberately not. Thresholds (root zone dry at or below the 20th percentile, below normal at or below the 30th) follow the US Drought Monitor percentile convention and are heuristics, not ICAR norms; FAO stage lengths are indicative values for one region and variety, not local calendars. A directional regional read, not a field-level prescription. The new Earth Engine queries are mock-tested only; they have not run against live Earth Engine.
 * **Crops** — ranked crop suitability for a point or AOI (crop requirements and season windows are India-focused; see below).
 * **ML Extent** — Random Forest crop-extent classification, a thin wrapper over Spectra's ML Classify.
 
@@ -547,6 +547,7 @@ Spectra `tool` values: `spectral_indices`, `spectral_composites`, `terrain`, `lu
 | --- | --- | --- |
 | `POST` | `/risk-score` &middot; `/baseline` &middot; `/drought-dashboard` | Composite risk score / seasonal NDVI baseline / drought dashboard |
 | `POST` | `/crop-suitability` | Ranked, seasonal crop suitability for a point/AOI, with optional soil-test overrides and a mandi-based revenue estimate |
+| `GET` | `/crop-stages` | Crops with FAO-56 stage data for the stage-aware irrigation advisory |
 | `POST` | `/phenology` &middot; `/irrigation-advisory` &middot; `/groundwater-trend` &middot; `/ndvi-trend` &middot; `/crop-extent` | Crop stage / irrigation advisory / groundwater trend / NDVI trend / ML crop extent |
 | `GET/POST` | `/regions` &middot; `DELETE /regions/{id}` | Watchlisted regions |
 | `GET` | `/regions/{id}/alerts` &middot; `/alerts` &middot; `/rollup` | Alert history; officer/district role views |
