@@ -94,7 +94,9 @@ def build_evidence(profile: Dict[str, Any]) -> Dict[str, Any]:
         "texture_name": profile.get("texture_name"), "organic_carbon_gkg": profile.get("organic_carbon_gkg"),
         "slope_pct": profile.get("slope_pct"),
         "drainage": classify_drainage(profile.get("slope_pct"), profile.get("texture_class")),
-        "soil_moisture": None, "remote_sensing": None,        # not sampled by this pipeline (yet)
+        "soil_moisture": None,                                  # not sampled by this pipeline (yet)
+        "remote_sensing": ({"monthly_ndvi": profile["monthly_ndvi"], "basis": profile.get("ndvi_basis"), "source": "MODIS MOD13Q1 v061 NDVI, monthly means"}
+                           if profile.get("monthly_ndvi") and any(v is not None for v in profile["monthly_ndvi"]) else None),
         "lat": profile.get("lat"),
         "slope_basis": profile.get("slope_basis"), "slope_all_deg": profile.get("slope_all_deg"), "cropland_fraction": profile.get("cropland_fraction"),
         # modelled soil-water balance (rain + stored soil water vs PET) for dry-window crops; None if temperature / rain / texture is missing
