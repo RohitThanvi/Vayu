@@ -68,5 +68,13 @@ CONF_PENALTY_HETEROGENEOUS_TERRAIN = 0.10
 SLOPE_MIN_SCORE = 0.5             # ESTIMATE (tune split, 2 values tried): farmers cultivate steep land by terracing / contour farming (Himalayan and Konkan terraces; WOCAT, FAO), so steepness lowers
                                  # a score at most to this level. Effect on the tune split: AUC unchanged, recall +3 pts (hill states +13 pts), false-positive rate +6 pts.
 
+# ---- observed vegetation (NDVI) as SUPPORTING evidence. NOT part of the min() score: NDVI says what the land looks like now (a fallow or
+# differently-cropped field is low-NDVI whatever it could grow), and no ground truth exists yet to calibrate a threshold. It is reported next to
+# every crop, adds a caveat when the season looks bare, and is exposed to the validation harness (ablation_inputs) so it can earn a weight later.
+NDVI_BARE = 0.15                  # ESTIMATE: season-mean MODIS NDVI at/below this reads as essentially bare ground
+NDVI_VIGOROUS = 0.45              # ESTIMATE: season-mean MODIS NDVI at/above this reads as actively growing vegetation
+NDVI_MIN_MONTHS = 2               # fewer valid months than this in the season window -> no NDVI statement
+CONF_PENALTY_NDVI_BARE = 0.05     # ESTIMATE: small, because bare in a season is also what an unirrigated fallow looks like
+
 # ---- irrigation context
 IRRIGATED_SHARE_AUTO = 0.5        # ESTIMATE: irrigation_available=null resolves to True when >= this share of the area's cropland is irrigated (GFSAD1000)

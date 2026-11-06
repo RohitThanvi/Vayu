@@ -152,6 +152,11 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
         for m in range(1, 13)
     ])
 
+    # Observed vegetation: MODIS MOD13Q1 v061 NDVI (250 m, 16-day), monthly means over the same years as the climate. Best-effort, supporting evidence only.
+    modis = ee.ImageCollection("MODIS/061/MOD13Q1").filterDate(f"{y0}-01-01", f"{y1 + 1}-01-01").select("NDVI")
+    ndvi_img = ee.Image.cat([modis.filter(ee.Filter.calendarRange(m, m, "month")).mean().multiply(0.0001).rename(f"n{m}") for m in range(1, 13)])
+    ndvi_crop_img = ndvi_img.updateMask(crop_mask)
+
     def _reduce(img, scale, reducer):
         return img.reduceRegion(reducer=reducer, geometry=region, scale=scale,
                                 maxPixels=1e9, bestEffort=True, tileScale=4).getInfo()
@@ -173,6 +178,8 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
         "gfsad": lambda: _optional(lambda: _reduce(gfsad_img, 1000, ee.Reducer.mean())),
         "rain": lambda: _reduce(rain_img, _RAIN_SCALE_M, ee.Reducer.mean()),
         "temp": lambda: _reduce(temp_img, _TEMP_SCALE_M, ee.Reducer.mean()),
+        "ndvi_crop": lambda: _optional(lambda: _reduce(ndvi_crop_img, 250, ee.Reducer.mean())),
+        "ndvi_all": lambda: _optional(lambda: _reduce(ndvi_img, 250, ee.Reducer.mean())),
     }
     with ThreadPoolExecutor(max_workers=5) as pool:
         futs = {k: pool.submit(fn) for k, fn in jobs.items()}
@@ -187,6 +194,10 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
     tex_code = int(round(tex_code)) if tex_code is not None else None
     rain_m = [rain.get(f"r{m}") for m in range(1, 13)]
     temp_m = [temp.get(f"t{m}") for m in range(1, 13)]
+    nd_crop, nd_all = out.get("ndvi_crop") or {}, out.get("ndvi_all") or {}
+    nd_use_crop = use_crop and all(nd_crop.get(f"n{m}") is not None for m in range(1, 13))
+    nd = nd_crop if nd_use_crop else nd_all
+    ndvi_m = [_r(nd.get(f"n{m}"), 3) for m in range(1, 13)]
 
     return {
         "mode": mode,
@@ -203,6 +214,7 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
         "irrigated_cropland_share": _r((out.get("gfsad") or {}).get("irrigated_cropland_share"), 3),
         "monthly_rain_mm": [_r(v, 1) for v in rain_m],
         "monthly_temp_c": [_r(v, 1) for v in temp_m],
+        "monthly_ndvi": ndvi_m, "ndvi_basis": "cropland" if nd_use_crop else "all land",
         "annual_rain_mm": _r(sum(v for v in rain_m if v is not None), 0) if all(v is not None for v in rain_m) else None,
         "annual_mean_temp_c": _r(statistics.mean(v for v in temp_m if v is not None), 1) if all(v is not None for v in temp_m) else None,
         "climate_years": f"{y0}-{y1}",
@@ -210,6 +222,7 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
             "soil": "OpenLandMap (Hengl 2018), 250m modeled estimate, 0-30cm topsoil — CC-BY-SA-4.0",
             "rainfall": f"CHIRPS daily, {y0}-{y1} monthly means (~5.5km)",
             "temperature": f"ERA5-Land monthly, {y0}-{y1} (~11km), Copernicus Climate Change Service",
+            "ndvi": f"MODIS MOD13Q1 v061 NDVI (250 m), {y0}-{y1} monthly means, over cropland pixels when available (supporting evidence only)",
             "slope": "Copernicus DEM GLO-30 (30m), mean over ESA WorldCover cropland pixels when the AOI has any (else over all land)",
         },
     }
@@ -293,6 +306,7 @@ def score_crops(profile: Dict[str, Any], irrigation_available: Optional[bool] = 
         "profile": {**{k: p[k] for k in ("mode", "ph", "organic_carbon_gkg", "texture_class", "texture_name", "slope_pct",
                                          "annual_rain_mm", "annual_mean_temp_c", "climate_years", "value_source", "sources")},
                     "monthly_rain_mm": p.get("monthly_rain_mm"), "monthly_temp_c": p.get("monthly_temp_c"), "lat": p.get("lat"),
+                    "monthly_ndvi": p.get("monthly_ndvi"), "ndvi_basis": p.get("ndvi_basis"),
                     "slope_basis": p.get("slope_basis"), "slope_all_deg": p.get("slope_all_deg"),
                     "slope_cropland_deg": p.get("slope_cropland_deg"), "cropland_fraction": p.get("cropland_fraction"),
                     "irrigated_cropland_share": p.get("irrigated_cropland_share")},

@@ -215,6 +215,22 @@ def _message(key: str, x: Dict[str, Any], crop: Dict[str, Any], irrigation: bool
     return f"{label} {v}{(' ' + u) if u else ''} vs needed {need}."
 
 
+def ndvi_support(crop: Dict[str, Any], ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Observed greenness in this crop's season window, as SUPPORTING evidence (never part of the min() score; see engine_config NDVI_*).
+    None when no NDVI was sampled or too few of the season's months have values."""
+    rs = ev.get("remote_sensing")
+    if not rs or not rs.get("monthly_ndvi"):
+        return None
+    months = SEASON_MONTHS[crop["season"]]
+    vals = [rs["monthly_ndvi"][m - 1] for m in months if rs["monthly_ndvi"][m - 1] is not None]
+    if len(vals) < cfg.NDVI_MIN_MONTHS:
+        return None
+    mean = sum(vals) / len(vals)
+    status = "vigorous" if mean >= cfg.NDVI_VIGOROUS else ("bare" if mean <= cfg.NDVI_BARE else "partial")
+    return {"mean": round(mean, 3), "peak": round(max(vals), 3), "months_used": len(vals), "status": status, "basis": rs.get("basis"),
+            "score": round(_ramp_lo(mean, cfg.NDVI_BARE, cfg.NDVI_VIGOROUS), 2)}
+
+
 def _ok_message(key: str, x: Dict[str, Any], crop: Dict[str, Any]) -> str:
     if key == "water":
         m = x["model"]
@@ -314,6 +330,18 @@ def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: 
                         "message": f"High-rainfall site ({_fmt(ev['annual_rain_mm'])} mm/yr): humidity / disease pressure is NOT modelled and may reduce real-world suitability.",
                         "source": hs["source"]})
         lines = lines + ["? " + caveats[0]["message"]]
+    nd = ndvi_support(crop, ev)
+    if nd:
+        window = SEASON_SHORT.get(crop["season"], crop["season"])
+        if nd["status"] == "vigorous":
+            lines = lines + [f"✓ Satellite greenness in {window} (MODIS NDVI {nd['mean']}) is consistent with actively growing vegetation here; supporting evidence only, it does not change the score."]
+        elif nd["status"] == "bare":
+            caveats.append({"factor": "observed_vegetation", "scored": False, "source": "MODIS MOD13Q1 NDVI (engine_config.NDVI_BARE, an estimate)",
+                            "message": f"Satellite greenness in {window} is very low (MODIS NDVI {nd['mean']}): the land looks bare in this season. That is also what an unirrigated fallow looks like, so it is not scored, "
+                                       "but this crop's suitability here rests on modelled climate and irrigation, not on observed cropping."})
+            lines = lines + ["? " + caveats[-1]["message"]]
+        else:
+            lines = lines + [f"? Satellite greenness in {window} is partial (MODIS NDVI {nd['mean']}); supporting evidence only."]
     primary = limits[0] if limits else None
     # confidence: completeness / quality of the evidence behind this number (heuristic index, not a statistical interval)
     sa = ev.get("slope_all_deg")
@@ -329,7 +357,8 @@ def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: 
         lines = lines + ["? " + caveats[-1]["message"]]
     conf = 1.0 - cfg.CONF_PENALTY_UNKNOWN_FACTOR * len(unknown) - cfg.CONF_PENALTY_UNMODELLED_RISK * sum(1 for c in caveats if c["factor"] == "humidity_disease") \
            - (cfg.CONF_PENALTY_ASSUMED_SOIL_DEPTH if any(c["factor"] == "soil_depth" for c in caveats) else 0.0) \
-           - (cfg.CONF_PENALTY_HETEROGENEOUS_TERRAIN if any(c["factor"] == "heterogeneous_terrain" for c in caveats) else 0.0)
+           - (cfg.CONF_PENALTY_HETEROGENEOUS_TERRAIN if any(c["factor"] == "heterogeneous_terrain" for c in caveats) else 0.0) \
+           - (cfg.CONF_PENALTY_NDVI_BARE if any(c["factor"] == "observed_vegetation" for c in caveats) else 0.0)
     if ev["drainage"]["inferred"] and f["water"]["model"]["hi_raw"] is not None and f["water"]["model"]["hi_raw"] < 1.0:
         conf -= cfg.CONF_PENALTY_INFERRED_DRAINAGE
     if not crop.get("verified", True):
@@ -348,7 +377,7 @@ def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: 
         "water_score": _r(f["water"]["effective"]), "irrigation_score": _r(m["components"].get("deficit")),
         "season_score": _r(m["components"].get("seasonality")), "soil_score": _r(min(soil) if soil else None),
         "terrain_score": _r(f["slope"]["effective"]), "climate_score": _r(min(clim) if clim else None),
-        "remote_sensing_score": None, "risk_penalty": _r(1.0 - raw), "raw_score": _r(raw), "calibrated_score": _r(calibrated),
+        "remote_sensing_score": None if not nd else nd["score"], "risk_penalty": _r(1.0 - raw), "raw_score": _r(raw), "calibrated_score": _r(calibrated),
     }
     legacy_factors = {}
     for k, x in f.items():
@@ -360,6 +389,9 @@ def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: 
                       "drainage": m["drainage"], "excess_strength": round(m["strength"], 2), "window_rain_mm": _r(m["window_rain_mm"], 0),
                       "balance": None if not m["balance"] else {k: _r(v, 2) for k, v in m["balance"].items()}})
         legacy_factors[k] = d
+    if nd:
+        legacy_factors["ndvi"] = {"score": nd["score"], "effective_score": nd["score"], "severity": "evidence", "value": nd["mean"], "unit": "NDVI",
+                                  "need": f"supporting evidence only ({nd['status']} in season; does not limit the score)", "status": nd["status"], "peak": nd["peak"]}
     lim_key = primary["factor"] if primary else "none"
     return {
         "crop_id": crop["id"], "name": crop["name"], "name_hi": crop["name_hi"], "season": crop["season"],
@@ -377,7 +409,8 @@ def score_crop_v2(crop_in: Dict[str, Any], profile: Dict[str, Any], irrigation: 
         "ablation_inputs": {"temperature": _r(f["temperature"]["raw"], 3), "temperature_hard": bool(hard),
                             "rainfall_amount": _r(rainfall_amount, 3), "water_rainfed": _r(wm_r, 3), "water_irrigated": _r(wm_i, 3),
                             "ph": _r(f["ph"]["raw"], 3), "texture": _r(f["texture"]["raw"], 3),
-                            "organic_carbon": _r(f["organic_carbon"]["raw"], 3), "slope": _r(f["slope"]["raw"], 3)},
+                            "organic_carbon": _r(f["organic_carbon"]["raw"], 3), "slope": _r(f["slope"]["raw"], 3),
+                            "ndvi": None if not nd else nd["score"]},
         "_headroom": round(headroom, 4),
     }
 
