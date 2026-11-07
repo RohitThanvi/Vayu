@@ -627,15 +627,155 @@ function CropExtentTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
   );
 }
 
+const TIER_COLOR = { 1: '#2ecc71', 2: '#c9a86a', 3: '#7fb4d6', 4: '#ff7a45' };
+const SECTION_ORDER = [['planting_material', 'Planting material'], ['land_and_planting', 'Land preparation and planting'], ['irrigation', 'Irrigation'], ['nutrition_organic', 'Nutrition (organic)'],
+  ['pests_diseases_organic', 'Pests and diseases (organic and cultural only)'], ['monitoring', 'Monitoring'], ['harvest_postharvest', 'Harvest, yield and post-harvest'], ['risks_costs', 'Risks and costs']];
+
+// One guidance line with its provenance: linked source keys when cited, a plain "general knowledge" tag when not.
+export function BasisLine({ line }) {
+  return (
+    <div style={{ marginBottom: 6, fontSize: 12, color: S.text2, lineHeight: 1.55 }}>
+      <span>• {line.text}</span>{' '}
+      {line.basis === 'cited'
+        ? line.sources.map((x) => <a key={x.key} href={x.url} target="_blank" rel="noreferrer" data-testid="src-link" style={{ fontSize: 10, color: S.accent, marginRight: 4 }}>[{x.key}]</a>)
+        : <span data-testid="general-tag" style={{ fontSize: 10, color: '#e0c23c', border: '1px solid #e0c23c55', borderRadius: 3, padding: '0 4px' }}>general knowledge, not verified</span>}
+    </div>
+  );
+}
+
+export function PathwayTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
+  const { run, loading, error, result } = useAgriFetch(apiUrl, 'pathway-report');
+  const [crops, setCrops] = useState([]);
+  const [cropId, setCropId] = useState('');
+  const [lat, setLat] = useState('');
+  const [lon, setLon] = useState('');
+  const [picking, setPicking] = useState(false);
+  const [irrigated, setIrrigated] = useState(false);
+  const [ph, setPh] = useState('');
+  useEffect(() => {
+    let live = true;
+    fetch(`${apiUrl}/api/v1/agri/pathway-crops`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (live && d?.crops) setCrops(d.crops); }).catch(() => {});
+    return () => { live = false; };
+  }, [apiUrl]);
+  const onMapClick = useCallback((la, lo) => { setLat(la.toFixed(5)); setLon(lo.toFixed(5)); setPicking(false); }, []);
+  useEffect(() => {
+    if (!picking || !onSetPointPickHandler) return undefined;
+    onSetPointPickHandler(() => onMapClick);
+    return () => onSetPointPickHandler(null);
+  }, [picking, onMapClick, onSetPointPickHandler]);
+  const hasPoint = lat !== '' && lon !== '' && !Number.isNaN(parseFloat(lat)) && !Number.isNaN(parseFloat(lon));
+  const canRun = !!cropId && (hasPoint || !!drawnAOI);
+  const submit = () => {
+    const body = { crop_id: cropId, irrigation_available: irrigated };
+    if (ph !== '' && !Number.isNaN(parseFloat(ph))) body.ph_override = parseFloat(ph);
+    if (hasPoint) { body.lat = parseFloat(lat); body.lon = parseFloat(lon); } else { body.aoi_geojson = drawnAOI; }
+    run(body);
+  };
+  const download = () => {
+    try {
+      const url = URL.createObjectURL(new Blob([result.manual_markdown], { type: 'text/markdown' }));
+      const a = document.createElement('a'); a.href = url; a.download = `${result.crop.id}-manual.md`; a.click(); URL.revokeObjectURL(url);
+    } catch { /* download unsupported in this environment */ }
+  };
+  const v = result?.verdict, ft = result?.first_timer, tc = v ? (TIER_COLOR[v.tier] || S.text3) : S.text3;
+  const applying = (v?.triggered || []).filter((g) => !g.addressed);
+  const addressed = (v?.triggered || []).filter((g) => g.addressed);
+  return (
+    <div style={{ display: 'flex', gap: 16 }}>
+      <ControlsPanel width={260}>
+        <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginBottom: 10 }}>
+          Can this crop grow on your land, what to do about what is missing, and how to grow it. Organic and cultural methods only.
+        </div>
+        <select aria-label="Crop" value={cropId} onChange={(e) => setCropId(e.target.value)} style={{ ...inputStyle, marginBottom: 8 }}>
+          <option value="">Choose a crop…</option>
+          {crops.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+          <input aria-label="Latitude" style={inputStyle} placeholder="lat" value={lat} onChange={(e) => setLat(e.target.value)} />
+          <input aria-label="Longitude" style={inputStyle} placeholder="lon" value={lon} onChange={(e) => setLon(e.target.value)} />
+        </div>
+        <button onClick={() => setPicking((x) => !x)} style={{ width: '100%', marginBottom: 8, background: picking ? 'rgba(126,184,212,0.2)' : 'none', border: `1px solid ${S.border2}`, color: picking ? S.accent : S.text3, fontFamily: S.mono, fontSize: 10.5, padding: '5px 8px', borderRadius: 4, cursor: 'pointer' }}>
+          {picking ? 'CLICK THE MAP…' : 'PICK POINT ON MAP'}
+        </button>
+        <div style={{ fontSize: 10.5, color: S.text3, marginBottom: 4 }}>Do you have reliable irrigation?</div>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+          {[[true, 'Yes'], [false, 'No']].map(([val, label]) => (
+            <button key={label} onClick={() => setIrrigated(val)} aria-pressed={irrigated === val} style={{ padding: '3px 12px', fontSize: 10.5, cursor: 'pointer', borderRadius: 3, border: `1px solid ${irrigated === val ? S.accent : S.border}`, background: irrigated === val ? 'rgba(201,168,106,0.15)' : 'transparent', color: irrigated === val ? S.accent : S.text2 }}>{label}</button>
+          ))}
+        </div>
+        <input aria-label="Soil pH (optional)" style={{ ...inputStyle, marginBottom: 8 }} placeholder="Your soil-test pH (optional)" value={ph} onChange={(e) => setPh(e.target.value)} />
+        <RunButton onClick={submit} disabled={loading || !canRun} loading={loading} label="SHOW ME HOW" loadingLabel="BUILDING YOUR GUIDE..." />
+        {!canRun && <div style={{ fontSize: 10, color: '#e0c23c', marginTop: 8 }}>Choose a crop and a location (type it, pick on the map, or draw an area).</div>}
+        {error && <ErrorNote>{error}</ErrorNote>}
+      </ControlsPanel>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {!result && !loading && <div style={{ fontSize: 11.5, color: S.text3, fontStyle: 'italic', marginTop: 20 }}>Choose a crop and a location to get a guide for your land.</div>}
+        {result && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
+              <span style={{ fontSize: 16, color: S.text, fontWeight: 600 }}>{result.crop.name}</span>
+              {v && <span data-testid="tier" style={{ fontSize: 12, fontFamily: S.mono, color: tc, border: `1px solid ${tc}`, borderRadius: 4, padding: '2px 8px' }}>{v.tier_label}</span>}
+            </div>
+            {v && <div style={{ fontSize: 13, color: S.text2, lineHeight: 1.6, maxWidth: 640, marginBottom: 10 }}>{v.why}</div>}
+            {ft && (
+              <div data-testid="first-timer" style={{ fontSize: 11.5, color: S.text3, marginBottom: 12, maxWidth: 640 }}>
+                For a first-timer: difficulty {ft.difficulty}/5 · capital {ft.capital} · risk {ft.risk} · first return {ft.time_to_first_fruit}. {ft.why}
+              </div>
+            )}
+            {v?.checks?.length > 0 && (
+              <table data-testid="checks" style={{ borderCollapse: 'collapse', fontSize: 11.5, marginBottom: 12 }}>
+                <thead><tr>{['Your land', 'Your value', 'Crop needs', 'Result'].map((h) => <th key={h} style={{ textAlign: 'left', color: S.text3, fontWeight: 400, padding: '2px 14px 2px 0' }}>{h}</th>)}</tr></thead>
+                <tbody>{v.checks.map((k) => (
+                  <tr key={k.factor}><td style={{ padding: '2px 14px 2px 0', color: S.text2 }}>{k.factor}</td><td style={{ padding: '2px 14px 2px 0', color: S.text2 }}>{k.your_value ?? 'n/a'}</td><td style={{ padding: '2px 14px 2px 0', color: S.text3 }}>{k.crop_range}</td>
+                    <td style={{ padding: '2px 0', color: k.status === 'ok' ? '#2ecc71' : k.status === 'gap' ? '#ff7a45' : S.text3 }}>{k.status}</td></tr>
+                ))}</tbody>
+              </table>
+            )}
+            {(v?.cautions || []).map((c) => <div key={c} data-testid="caution" style={{ fontSize: 11.5, color: '#e0c23c', marginBottom: 6, maxWidth: 640 }}>⚠ {c}</div>)}
+            {result.controlled && (
+              <div data-testid="controlled" style={{ fontSize: 12, color: S.text2, margin: '10px 0', maxWidth: 640 }}>
+                <b>What you would need to build:</b> {result.controlled.what}. {result.controlled.season}
+              </div>
+            )}
+            {v && v.tier !== 3 && (
+              <div data-testid="applies" style={{ margin: '12px 0' }}>
+                <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>What to do for your land</div>
+                {applying.length === 0 && <div style={{ fontSize: 12, color: S.text2 }}>Nothing in the checks needs special action.{addressed.length ? ' Your irrigation covers the rainfall gap.' : ''}</div>}
+                {applying.map((g) => <div key={g.if} style={{ marginBottom: 6, fontSize: 12, color: S.text2, lineHeight: 1.55 }}><b style={{ color: g.severity === 'blocking' ? '#ff7a45' : S.accent }}>{g.if.replace('_', ' ')}:</b> {g.do}{g.basis === 'general' && <span style={{ fontSize: 10, color: '#e0c23c' }}> (general knowledge, not verified)</span>}</div>)}
+              </div>
+            )}
+            {result.controlled && result.gap_actions.length > 0 && (
+              <div style={{ margin: '12px 0' }}>
+                <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>What to plan for</div>
+                {result.gap_actions.map((g) => <div key={g.if} style={{ marginBottom: 6, fontSize: 12, color: S.text2, lineHeight: 1.55 }}><b>{g.if.replace(/_/g, ' ')}:</b> {g.do}</div>)}
+              </div>
+            )}
+            <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, margin: '14px 0 4px' }}>How to grow it</div>
+            {SECTION_ORDER.map(([key, title]) => (
+              <details key={key} data-testid={`sec-${key}`} style={{ marginBottom: 6 }}>
+                <summary style={{ fontSize: 12.5, color: S.text, cursor: 'pointer' }}>{title}</summary>
+                <div style={{ padding: '6px 0 2px 10px' }}>{(result.guide[key] || []).map((ln, i) => <BasisLine key={`${key}-${i}`} line={ln} />)}</div>
+              </details>
+            ))}
+            <div data-testid="policy" style={{ fontSize: 11, color: S.text3, lineHeight: 1.5, margin: '12px 0 6px', maxWidth: 640 }}>{result.chemical_policy}</div>
+            <button onClick={download} style={{ background: 'none', border: `1px solid ${S.border2}`, color: S.accent, fontFamily: S.mono, fontSize: 10.5, padding: '5px 10px', borderRadius: 4, cursor: 'pointer', marginRight: 8 }}>DOWNLOAD THIS GUIDE (.md)</button>
+            <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 8, maxWidth: 640 }}>{result.disclaimer}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function AgriIntelBar({ apiUrl, drawnAOI, pointPickActive, onSetPointPickHandler, isMobile }) {
   const [open, setOpen] = useState(true);
-  const [view, setView] = useState('groundwater'); // 'groundwater' | 'analysis' | 'phenology' | 'irrigation' | 'cropextent' | 'cropsuit'
+  const [view, setView] = useState('groundwater'); // 'groundwater' | 'analysis' | 'phenology' | 'irrigation' | 'cropextent' | 'cropsuit' | 'pathway'
 
   // Stop any active point-picking if the user collapses the bar or
   // switches away from the ML Extent tab — no reason to keep the map in
   // crosshair mode for a tab that's no longer visible.
   useEffect(() => {
-    if ((!open || (view !== 'cropextent' && view !== 'cropsuit')) && pointPickActive) onSetPointPickHandler?.(null);
+    if ((!open || (view !== 'cropextent' && view !== 'cropsuit' && view !== 'pathway')) && pointPickActive) onSetPointPickHandler?.(null);
   }, [open, view]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -652,7 +792,7 @@ export default function AgriIntelBar({ apiUrl, drawnAOI, pointPickActive, onSetP
 
       {open && (
         <div style={{ display: 'flex', gap: 2, padding: '6px 16px 0', borderBottom: `1px solid ${S.border}`, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-          {[['groundwater', 'Groundwater'], ['analysis', 'Analysis'], ['phenology', 'Crop Stage'], ['irrigation', 'Irrigation'], ['cropextent', 'ML Extent'], ['cropsuit', 'Crops']].map(([id, label]) => (
+          {[['groundwater', 'Groundwater'], ['analysis', 'Analysis'], ['phenology', 'Crop Stage'], ['irrigation', 'Irrigation'], ['cropextent', 'ML Extent'], ['cropsuit', 'Crops'], ['pathway', 'Grow It']].map(([id, label]) => (
             <button key={id} onClick={() => setView(id)} style={{
               background: 'none', border: 'none', borderBottom: view === id ? `2px solid ${S.accent}` : '2px solid transparent',
               color: view === id ? S.accent : S.text3, fontFamily: S.mono, fontSize: 11.5, letterSpacing: 1, textTransform: 'uppercase',
@@ -671,6 +811,7 @@ export default function AgriIntelBar({ apiUrl, drawnAOI, pointPickActive, onSetP
           {view === 'phenology' && <PhenologyTab apiUrl={apiUrl} drawnAOI={drawnAOI} />}
           {view === 'irrigation' && <IrrigationTab apiUrl={apiUrl} drawnAOI={drawnAOI} />}
           {view === 'cropsuit' && <CropSuitabilityTab apiUrl={apiUrl} drawnAOI={drawnAOI} onSetPointPickHandler={onSetPointPickHandler} />}
+          {view === 'pathway' && <PathwayTab apiUrl={apiUrl} drawnAOI={drawnAOI} onSetPointPickHandler={onSetPointPickHandler} />}
           {view === 'cropextent' && <CropExtentTab apiUrl={apiUrl} drawnAOI={drawnAOI} pointPickActive={pointPickActive} onSetPointPickHandler={onSetPointPickHandler} />}
         </div>
       )}
