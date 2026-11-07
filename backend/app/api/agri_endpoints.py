@@ -15,7 +15,7 @@ from ..services.agri.whatsapp import build_twiml_reply, handle_inbound_message
 from ..services.agri.phenology import compute_phenology
 from ..services.agri.crop_stages import supported_crops
 from ..services.agri.irrigation_advisory import compute_irrigation_advisory
-from ..services.agri import crop_suitability
+from ..services.agri import crop_pathways, crop_suitability
 from ..services import gee_remote_sensing as rs
 from ..services.gee_cache import cached_compute, DEFAULT_TTL_SECONDS
 
@@ -55,6 +55,15 @@ class RiskScoreRequest(BaseModel):
     aoi_geojson: Dict[str, Any]
     as_of: Optional[str] = None
     region_id: Optional[str] = None
+
+
+class PathwayReportRequest(BaseModel):
+    crop_id: str
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    aoi_geojson: Optional[Dict[str, Any]] = None
+    irrigation_available: bool = False
+    ph_override: Optional[float] = None       # farmer's own soil-test pH, replaces the modelled value
 
 
 class IrrigationAdvisoryRequest(RiskScoreRequest):
@@ -324,6 +333,48 @@ async def ndvi_trend(req: PhenologyRequest):
     except Exception as e:
         logger.error(f"ndvi_trend endpoint failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"NDVI trend failed: {e}")
+
+
+@router.get("/pathway-crops", summary="High-value crops covered by the pathway guide (sourced, organic-only)")
+async def pathway_crops():
+    return {"crops": crop_pathways.list_crops(), "chemical_policy": crop_pathways.CHEMICAL_POLICY}
+
+
+@router.get("/pathway-manual/{crop_id}", summary="The grow-it manual for one crop (no location needed); format=markdown|json")
+async def pathway_manual(crop_id: str, format: str = "markdown"):
+    if crop_id not in crop_pathways.BY_ID:
+        raise HTTPException(status_code=404, detail=f"Unknown crop '{crop_id}'. See GET /agri/pathway-crops.")
+    report = crop_pathways.build_report(crop_id)
+    if format == "json":
+        return report
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(crop_pathways.render_markdown(report), media_type="text/markdown; charset=utf-8")
+
+
+@router.post("/pathway-report", summary="Can this crop grow at this location, what is missing, what to do, and how to grow it")
+async def pathway_report(req: PathwayReportRequest):
+    from ..services.gee_cache import cached_compute
+    if req.crop_id not in crop_pathways.BY_ID:
+        raise HTTPException(status_code=404, detail=f"Unknown crop '{req.crop_id}'. See GET /agri/pathway-crops.")
+    if not req.aoi_geojson and (req.lat is None or req.lon is None):
+        raise HTTPException(status_code=422, detail="Provide lat+lon or aoi_geojson.")
+    try:
+        key = {"lat": req.lat, "lon": req.lon, "aoi": req.aoi_geojson}
+        profile = await asyncio.to_thread(
+            cached_compute, "agri_crop_profile", key,
+            lambda: crop_suitability.sample_location_profile(lat=req.lat, lon=req.lon, aoi=req.aoi_geojson), 86400 * 7)
+        climate = crop_pathways.climate_from_profile(profile)
+        if req.ph_override is not None:
+            climate["ph"] = req.ph_override
+        report = crop_pathways.build_report(req.crop_id, climate, irrigated=bool(req.irrigation_available))
+        report["location_climate"] = {k: (None if v is None else round(v, 1)) for k, v in climate.items()}
+        report["manual_markdown"] = crop_pathways.render_markdown(report)
+        return report
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"pathway_report endpoint failed: {e}", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Pathway report failed: {e}")
 
 
 @router.get("/crop-stages", summary="Crops with FAO-56 stage data for the stage-aware irrigation advisory")
