@@ -6,4 +6,5 @@ import { register as registerConnection } from './connection.test.jsx';
 import { register as registerTierLanding } from './tierlanding.test.jsx';
 import { register as registerSeo } from './seo.test.jsx';
 import { register as registerIrrigation } from './irrigation.test.jsx';
-export async function main() { registerViews(); registerAlerts(); registerBar(); registerConnection(); registerTierLanding(); registerSeo(); registerIrrigation(); return runAll(); }
+import { register as registerPathway } from './pathway.test.jsx';
+export async function main() { registerViews(); registerAlerts(); registerBar(); registerConnection(); registerTierLanding(); registerSeo(); registerIrrigation(); registerPathway(); return runAll(); }
