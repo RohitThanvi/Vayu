@@ -44,6 +44,26 @@ from . import suitability_engine as _engine
 logger = logging.getLogger(__name__)
 
 _POINT_BUFFER_M = 300          # ~1 OpenLandMap pixel around a tapped point
+# ERA5-Land (temperature) and CHIRPS (rain) are land-only and coarse (11 km / 5.5 km): a coastal, island, lake-edge or border point can fall on a masked pixel and return
+# nothing. Rather than give up, widen the search until every month has data (smallest radius wins) and SAY SO. Soil has the same failure over water/built-up pixels, at a
+# much smaller scale.
+_CLIMATE_SEARCH_RADII_M = (0, 12_000, 25_000, 50_000, 100_000)
+_SOIL_SEARCH_RADII_M = (0, 1_000, 3_000, 8_000)
+
+
+def pick_nearest_valid(results, radii, keys):
+    """results[i] is the reduceRegion dict for radii[i]. Returns (dict, radius_m) for the first radius where EVERY key has a value, else ({}, None)."""
+    for r, d in zip(radii, results or []):
+        if d and all(d.get(k) is not None for k in keys):
+            return d, r
+    return {}, None
+
+
+def reduce_with_nearest_fallback(ee, img, region, scale, keys, radii):
+    """One Earth Engine round trip evaluates every radius at once; the smallest complete one is used. radius 0 = the requested region itself."""
+    dicts = [img.reduceRegion(reducer=ee.Reducer.mean(), geometry=region if r == 0 else region.buffer(r), scale=scale, maxPixels=1e9, bestEffort=True, tileScale=4) for r in radii]
+    return pick_nearest_valid(ee.List(dicts).getInfo(), radii, keys)
+
 _MIN_CROPLAND_FRACTION = 0.0005  # share of cropland below which slope falls back to the all-land mean (was 0.01, which sent Uttarkashi / Sikkim back to the mountain-wide mean although they hold hundreds of hectares of cropland)
 _SOIL_SCALE_M = 250            # OpenLandMap native
 _RAIN_SCALE_M = 5566           # CHIRPS native
@@ -170,14 +190,14 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
             return {}
 
     jobs = {
-        "soil": lambda: _reduce(soil_img, _SOIL_SCALE_M, ee.Reducer.mean()),
+        "soil": lambda: reduce_with_nearest_fallback(ee, soil_img, region, _SOIL_SCALE_M, ["ph", "oc_gkg"], _SOIL_SEARCH_RADII_M),
         "tex": lambda: _reduce(tex_img, _SOIL_SCALE_M, ee.Reducer.mode()),
         "slope": lambda: _reduce(slope_img, _DEM_SCALE_M, ee.Reducer.mean()),
         "slope_crop": lambda: _optional(lambda: _reduce(slope_crop_img, _DEM_SCALE_M, ee.Reducer.mean())),
         "crop_frac": lambda: _optional(lambda: _reduce(crop_frac_img, _DEM_SCALE_M, ee.Reducer.mean())),
         "gfsad": lambda: _optional(lambda: _reduce(gfsad_img, 1000, ee.Reducer.mean())),
-        "rain": lambda: _reduce(rain_img, _RAIN_SCALE_M, ee.Reducer.mean()),
-        "temp": lambda: _reduce(temp_img, _TEMP_SCALE_M, ee.Reducer.mean()),
+        "rain": lambda: reduce_with_nearest_fallback(ee, rain_img, region, _RAIN_SCALE_M, [f"r{m}" for m in range(1, 13)], _CLIMATE_SEARCH_RADII_M),
+        "temp": lambda: reduce_with_nearest_fallback(ee, temp_img, region, _TEMP_SCALE_M, [f"t{m}" for m in range(1, 13)], _CLIMATE_SEARCH_RADII_M),
         "ndvi_crop": lambda: _optional(lambda: _reduce(ndvi_crop_img, 250, ee.Reducer.mean())),
         "ndvi_all": lambda: _optional(lambda: _reduce(ndvi_img, 250, ee.Reducer.mean())),
     }
@@ -185,7 +205,17 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
         futs = {k: pool.submit(fn) for k, fn in jobs.items()}
         out = {k: f.result() for k, f in futs.items()}
 
-    soil, tex, slope, rain, temp = out["soil"] or {}, out["tex"] or {}, out["slope"] or {}, out["rain"] or {}, out["temp"] or {}
+    (soil, soil_r), (rain, rain_r), (temp, temp_r) = out["soil"], out["rain"], out["temp"]
+    tex, slope = out["tex"] or {}, out["slope"] or {}
+    climate_km = max([r for r in (rain_r, temp_r) if r is not None], default=None)
+    climate_km = None if climate_km is None else round(climate_km / 1000.0, 0)
+    notes = []
+    if climate_km:
+        notes.append(f"No climate data exists at the exact spot (water or coast pixel), so rainfall and temperature are land averages within about {int(climate_km)} km.")
+    if soil_r:
+        notes.append(f"Soil values are averaged within about {round(soil_r / 1000.0, 1)} km because the exact spot has no soil data (built-up or water).")
+    if rain_r is None and temp_r is None and not (rain or temp):
+        notes.append("No rainfall or temperature data was found within 100 km of this location.")
     slope_crop, crop_frac = (out["slope_crop"] or {}).get("slope_cropland_deg"), (out["crop_frac"] or {}).get("cropland_fraction")
     slope_all = slope.get("slope_deg")
     use_crop = slope_crop is not None and crop_frac is not None and crop_frac >= _MIN_CROPLAND_FRACTION
@@ -218,6 +248,7 @@ def sample_location_profile(lat: Optional[float] = None, lon: Optional[float] = 
         "annual_rain_mm": _r(sum(v for v in rain_m if v is not None), 0) if all(v is not None for v in rain_m) else None,
         "annual_mean_temp_c": _r(statistics.mean(v for v in temp_m if v is not None), 1) if all(v is not None for v in temp_m) else None,
         "climate_years": f"{y0}-{y1}",
+        "climate_search_km": climate_km, "soil_search_km": None if not soil_r else round(soil_r / 1000.0, 1), "climate_note": " ".join(notes) or None,
         "sources": {
             "soil": "OpenLandMap (Hengl 2018), 250m modeled estimate, 0-30cm topsoil — CC-BY-SA-4.0",
             "rainfall": f"CHIRPS daily, {y0}-{y1} monthly means (~5.5km)",
@@ -307,6 +338,7 @@ def score_crops(profile: Dict[str, Any], irrigation_available: Optional[bool] = 
                                          "annual_rain_mm", "annual_mean_temp_c", "climate_years", "value_source", "sources")},
                     "monthly_rain_mm": p.get("monthly_rain_mm"), "monthly_temp_c": p.get("monthly_temp_c"), "lat": p.get("lat"),
                     "monthly_ndvi": p.get("monthly_ndvi"), "ndvi_basis": p.get("ndvi_basis"),
+                    "climate_note": p.get("climate_note"), "climate_search_km": p.get("climate_search_km"), "soil_search_km": p.get("soil_search_km"),
                     "slope_basis": p.get("slope_basis"), "slope_all_deg": p.get("slope_all_deg"),
                     "slope_cropland_deg": p.get("slope_cropland_deg"), "cropland_fraction": p.get("cropland_fraction"),
                     "irrigated_cropland_share": p.get("irrigated_cropland_share")},

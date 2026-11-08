@@ -337,7 +337,7 @@ const cropLimitText = (c) => {
 const CROP_TEXTURES = ['Clay', 'Silty clay', 'Sandy clay', 'Clay loam', 'Silty clay loam', 'Sandy clay loam', 'Loam', 'Silt loam', 'Sandy loam', 'Silt', 'Loamy sand', 'Sand'];
 const inputStyle = { width: '100%', boxSizing: 'border-box', background: S.surface2, border: `1px solid ${S.border2}`, color: S.text, fontFamily: S.mono, fontSize: 11.5, padding: '5px 7px', borderRadius: 4 };
 
-function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
+export function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
   const [lat, setLat] = useState('');
   const [lon, setLon] = useState('');
   const [picking, setPicking] = useState(false);
@@ -431,6 +431,7 @@ function CropSuitabilityTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
               <StatRow label="Rain / yr" value={p.annual_rain_mm != null ? `${p.annual_rain_mm} mm` : 'n/a'} />
               <StatRow label="Mean temp" value={p.annual_mean_temp_c != null ? `${p.annual_mean_temp_c} °C` : 'n/a'} />
             </div>
+            {p.climate_note && <div data-testid="climate-note" style={{ fontSize: 11, color: '#e0c23c', marginBottom: 8, maxWidth: 640 }}>⚠ {p.climate_note}</div>}
             {result.crops.map(c => {
               const rc = CROP_RATING_COLOR[cropCategory(c)];
               const isOpen = open === c.crop_id;
