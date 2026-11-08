@@ -34,7 +34,8 @@ def climate_from_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
     """Collapse a sampled location profile (crop_suitability.sample_location_profile) to the few numbers the pathway checks use."""
     t = [v for v in (profile.get("monthly_temp_c") or []) if v is not None]
     return {"tmean_c": (sum(t) / len(t)) if t else profile.get("annual_mean_temp_c"), "coldest_month_c": min(t) if t else None, "hottest_month_c": max(t) if t else None,
-            "annual_rain_mm": profile.get("annual_rain_mm"), "ph": profile.get("ph")}
+            "annual_rain_mm": profile.get("annual_rain_mm"), "ph": profile.get("ph"),
+            "climate_search_km": profile.get("climate_search_km"), "climate_note": profile.get("climate_note")}
 
 
 def _check(factor, value, rng, status, note=""):
@@ -93,6 +94,8 @@ def assess(crop_id: str, climate: Dict[str, Any], irrigated: bool = False) -> Di
     if not fit.get("frost_tolerant"):
         cautions.append("Monthly averages can hide cold nights and short heat waves. For this frost-sensitive crop, check the lowest winter temperatures your village has actually seen before you plant.")
     cautions += [t for t, _b, _k in crop.get("site_cautions", [])]
+    if climate.get("climate_note"):
+        cautions.insert(0, climate["climate_note"])
     if tmean is not None and not (fit["tmean_c"][0] <= tmean <= fit["tmean_c"][1]):
         cautions.append(f"Your annual mean temperature ({round(tmean, 1)} C) is outside the crop's usual {fit['tmean_c'][0]}-{fit['tmean_c'][1]} C range.")
     open_gaps = [g for g in triggered if not g["addressed"]]

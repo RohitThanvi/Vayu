@@ -367,7 +367,7 @@ async def pathway_report(req: PathwayReportRequest):
         if req.ph_override is not None:
             climate["ph"] = req.ph_override
         report = crop_pathways.build_report(req.crop_id, climate, irrigated=bool(req.irrigation_available))
-        report["location_climate"] = {k: (None if v is None else round(v, 1)) for k, v in climate.items()}
+        report["location_climate"] = {k: (round(v, 1) if isinstance(v, (int, float)) else v) for k, v in climate.items()}
         report["manual_markdown"] = crop_pathways.render_markdown(report)
         return report
     except ValueError as e:

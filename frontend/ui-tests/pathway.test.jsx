@@ -1,6 +1,6 @@
 import { act } from 'react';
 import { test, mount, flush, click, route, text, q, qa, buttonWith, eq, ok, has, lacks } from './harness.jsx';
-import { PathwayTab, BasisLine } from '../src/components/AgriIntelBar.jsx';
+import { PathwayTab, BasisLine, CropSuitabilityTab } from '../src/components/AgriIntelBar.jsx';
 
 const CROPS = { crops: [{ id: 'dragon_fruit', name: 'Dragon fruit (Kamalam)' }, { id: 'saffron', name: 'Saffron' }], chemical_policy: 'x' };
 const line = (text, basis, keys = []) => ({ text, basis, sources: keys.map((k) => ({ key: k, url: `https://example.org/${k}` })) });
@@ -102,5 +102,16 @@ export function register() {
   test('BasisLine: a cited line with no usable source still renders without a general tag', async () => {
     const m = await mount(<BasisLine line={line('Only text', 'cited', [])} />);
     try { has(text(m.container), 'Only text'); eq(qa(m.container, '[data-testid="general-tag"]').length, 0); eq(qa(m.container, '[data-testid="src-link"]').length, 0); } finally { await m.unmount(); }
+  });
+
+  test('Crops tab: tells the farmer when climate came from nearby land instead of the exact spot', async () => {
+    const prof = (note) => ({ crops: [], profile: { ph: 7, organic_carbon_gkg: 5, texture_name: 'Loam', annual_rain_mm: 600, annual_mean_temp_c: 25, climate_note: note, value_source: { ph: 'modeled', organic_carbon_gkg: 'modeled', texture: 'modeled' } } });
+    const NOTE = 'No climate data exists at the exact spot (water or coast pixel), so rainfall and temperature are land averages within about 25 km.';
+    route('/agri/crop-suitability', prof(NOTE));
+    let m = await mount(<CropSuitabilityTab apiUrl="" drawnAOI={AOI} />);
+    try { await click(buttonWith(m.container, 'FIND SUITABLE CROPS')); await flush(20); has(text(q(m.container, '[data-testid="climate-note"]')), 'land averages within about 25 km'); } finally { await m.unmount(); }
+    route('/agri/crop-suitability', prof(null));
+    m = await mount(<CropSuitabilityTab apiUrl="" drawnAOI={AOI} />);
+    try { await click(buttonWith(m.container, 'FIND SUITABLE CROPS')); await flush(20); has(text(m.container), 'Soil pH'); ok(!q(m.container, '[data-testid="climate-note"]'), 'no note when the exact spot had data'); } finally { await m.unmount(); }
   });
 }
