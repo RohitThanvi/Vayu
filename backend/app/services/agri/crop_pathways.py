@@ -38,8 +38,8 @@ def climate_from_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
             "climate_search_km": profile.get("climate_search_km"), "climate_note": profile.get("climate_note")}
 
 
-def _check(factor, value, rng, status, note=""):
-    return {"factor": factor, "your_value": None if value is None else round(value, 1), "crop_range": rng, "status": status, "note": note}
+def _check(factor, value, rng, status, note="", gauge=None, unit=""):
+    return {"factor": factor, "your_value": None if value is None else round(value, 1), "crop_range": rng, "status": status, "note": note, "gauge": gauge, "unit": unit}
 
 
 def assess(crop_id: str, climate: Dict[str, Any], irrigated: bool = False) -> Dict[str, Any]:
@@ -61,36 +61,36 @@ def assess(crop_id: str, climate: Dict[str, Any], irrigated: bool = False) -> Di
             triggered.append({**g, "addressed": addressed, "severity": severity or g["severity"]})
 
     if cold is None:
-        checks.append(_check("coldest month mean temperature", None, f">{fit['cold_month_min_c']} C", "unknown")); unknown += 1
+        checks.append(_check("coldest month mean temperature", None, f">{fit['cold_month_min_c']} C", "unknown", gauge=(fit["cold_month_min_c"], fit["tmean_c"][1]), unit=" C")); unknown += 1
     elif cold <= fit["cold_month_min_c"]:
         hard = cold <= fit.get("cold_month_block_c", -999)
         checks.append(_check("coldest month mean temperature", cold, f">{fit['cold_month_min_c']} C", "gap",
-                             "hard-freeze territory for this crop (limit is general knowledge)" if hard else "cooler than the crop likes")); trip("frost", severity="blocking" if hard else None)
+                             "hard-freeze territory for this crop (limit is general knowledge)" if hard else "cooler than the crop likes", gauge=(fit["cold_month_min_c"], fit["tmean_c"][1]), unit=" C")); trip("frost", severity="blocking" if hard else None)
     else:
-        checks.append(_check("coldest month mean temperature", cold, f">{fit['cold_month_min_c']} C", "ok"))
+        checks.append(_check("coldest month mean temperature", cold, f">{fit['cold_month_min_c']} C", "ok", gauge=(fit["cold_month_min_c"], fit["tmean_c"][1]), unit=" C"))
     if hot is None:
-        checks.append(_check("hottest month mean temperature", None, f"<{fit['hot_month_max_c']} C", "unknown")); unknown += 1
+        checks.append(_check("hottest month mean temperature", None, f"<{fit['hot_month_max_c']} C", "unknown", gauge=(fit["tmean_c"][0], fit["hot_month_max_c"]), unit=" C")); unknown += 1
     elif hot >= fit["hot_month_max_c"]:
         hard = hot >= fit.get("hot_month_block_c", 999)
-        checks.append(_check("hottest month mean temperature", hot, f"<{fit['hot_month_max_c']} C", "gap", "extreme heat for this crop (limit is general knowledge)" if hard else "hotter than the crop likes")); trip("heat", severity="blocking" if hard else None)
+        checks.append(_check("hottest month mean temperature", hot, f"<{fit['hot_month_max_c']} C", "gap", "extreme heat for this crop (limit is general knowledge)" if hard else "hotter than the crop likes", gauge=(fit["tmean_c"][0], fit["hot_month_max_c"]), unit=" C")); trip("heat", severity="blocking" if hard else None)
     else:
-        checks.append(_check("hottest month mean temperature", hot, f"<{fit['hot_month_max_c']} C", "ok"))
+        checks.append(_check("hottest month mean temperature", hot, f"<{fit['hot_month_max_c']} C", "ok", gauge=(fit["tmean_c"][0], fit["hot_month_max_c"]), unit=" C"))
     lo, hi = fit["rain_mm"]
     if rain is None:
-        checks.append(_check("annual rainfall", None, f"{lo}-{hi} mm", "unknown")); unknown += 1
+        checks.append(_check("annual rainfall", None, f"{lo}-{hi} mm", "unknown", gauge=(lo, hi), unit=" mm")); unknown += 1
     elif rain < lo:
-        checks.append(_check("annual rainfall", rain, f"{lo}-{hi} mm", "gap", "irrigation available: counted as addressed" if irrigated else "needs irrigation")); trip("dry", addressed=bool(irrigated))
+        checks.append(_check("annual rainfall", rain, f"{lo}-{hi} mm", "gap", "irrigation available: counted as addressed" if irrigated else "needs irrigation", gauge=(lo, hi), unit=" mm")); trip("dry", addressed=bool(irrigated))
     elif rain > hi:
-        checks.append(_check("annual rainfall", rain, f"{lo}-{hi} mm", "gap", "more rain than the crop's usual range: drainage and disease management")); trip("wet")
+        checks.append(_check("annual rainfall", rain, f"{lo}-{hi} mm", "gap", "more rain than the crop's usual range: drainage and disease management", gauge=(lo, hi), unit=" mm")); trip("wet")
     else:
-        checks.append(_check("annual rainfall", rain, f"{lo}-{hi} mm", "ok"))
+        checks.append(_check("annual rainfall", rain, f"{lo}-{hi} mm", "ok", gauge=(lo, hi), unit=" mm"))
     plo, phi = fit["ph"]
     if ph is None:
-        checks.append(_check("soil pH", None, f"{plo}-{phi}", "unknown", "not available; get a soil test"))
+        checks.append(_check("soil pH", None, f"{plo}-{phi}", "unknown", "not available; get a soil test", gauge=(plo, phi)))
     elif not (plo <= ph <= phi):
-        checks.append(_check("soil pH", ph, f"{plo}-{phi}", "gap", "modelled soil pH; confirm with a soil test")); trip("ph")
+        checks.append(_check("soil pH", ph, f"{plo}-{phi}", "gap", "modelled soil pH; confirm with a soil test", gauge=(plo, phi))); trip("ph")
     else:
-        checks.append(_check("soil pH", ph, f"{plo}-{phi}", "ok", "modelled soil pH; confirm with a soil test"))
+        checks.append(_check("soil pH", ph, f"{plo}-{phi}", "ok", "modelled soil pH; confirm with a soil test", gauge=(plo, phi)))
     if not fit.get("frost_tolerant"):
         cautions.append("Monthly averages can hide cold nights and short heat waves. For this frost-sensitive crop, check the lowest winter temperatures your village has actually seen before you plant.")
     cautions += [t for t, _b, _k in crop.get("site_cautions", [])]

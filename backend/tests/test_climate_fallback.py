@@ -84,4 +84,7 @@ def test_pathway_report_endpoint_survives_a_string_note_and_returns_it(monkeypat
     monkeypatch.setattr(cs, "sample_location_profile", lambda **k: prof)
     r = asyncio.run(a.pathway_report(a.PathwayReportRequest(crop_id="moringa", lat=17.123, lon=73.456)))
     assert r["location_climate"]["climate_note"] == NOTE and r["location_climate"]["climate_search_km"] == 25.0
-    assert r["verdict"]["cautions"][0] == NOTE and NOTE in r["manual_markdown"]
+    assert r["verdict"]["cautions"][0] == NOTE and "manual_markdown" not in r
+    from app.services.agri import pathway_pdf
+    content = pathway_pdf.build_content(r, prof, location_label=r["location_label"])
+    assert any(NOTE == p["text"] for p in content["priorities"]), "the farmer sees the note among their priorities"
