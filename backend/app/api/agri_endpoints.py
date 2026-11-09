@@ -15,7 +15,7 @@ from ..services.agri.whatsapp import build_twiml_reply, handle_inbound_message
 from ..services.agri.phenology import compute_phenology
 from ..services.agri.crop_stages import supported_crops
 from ..services.agri.irrigation_advisory import compute_irrigation_advisory
-from ..services.agri import crop_pathways, crop_suitability
+from ..services.agri import crop_pathways, crop_suitability, pathway_pdf, pathway_plan
 from ..services import gee_remote_sensing as rs
 from ..services.gee_cache import cached_compute, DEFAULT_TTL_SECONDS
 
@@ -64,6 +64,7 @@ class PathwayReportRequest(BaseModel):
     aoi_geojson: Optional[Dict[str, Any]] = None
     irrigation_available: bool = False
     ph_override: Optional[float] = None       # farmer's own soil-test pH, replaces the modelled value
+    area_acres: Optional[float] = None        # plot size, sizes the planting plan (default 1 acre)
 
 
 class IrrigationAdvisoryRequest(RiskScoreRequest):
@@ -340,25 +341,32 @@ async def pathway_crops():
     return {"crops": crop_pathways.list_crops(), "chemical_policy": crop_pathways.CHEMICAL_POLICY}
 
 
-@router.get("/pathway-manual/{crop_id}", summary="The grow-it manual for one crop (no location needed); format=markdown|json")
-async def pathway_manual(crop_id: str, format: str = "markdown"):
+@router.get("/pathway-manual/{crop_id}", summary="The general (not location-specific) grow-it guide for one crop, as a PDF")
+async def pathway_manual(crop_id: str):
+    from fastapi.responses import Response
     if crop_id not in crop_pathways.BY_ID:
         raise HTTPException(status_code=404, detail=f"Unknown crop '{crop_id}'. See GET /agri/pathway-crops.")
-    report = crop_pathways.build_report(crop_id)
-    if format == "json":
-        return report
-    from fastapi.responses import PlainTextResponse
-    return PlainTextResponse(crop_pathways.render_markdown(report), media_type="text/markdown; charset=utf-8")
+    pdf = await asyncio.to_thread(pathway_pdf.make_pathway_pdf, crop_pathways.build_report(crop_id), None, location_label="General guide (no location chosen)")
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="Vayu_{crop_id}_guide.pdf"'})
 
 
-@router.post("/pathway-report", summary="Can this crop grow at this location, what is missing, what to do, and how to grow it")
-async def pathway_report(req: PathwayReportRequest):
+def _aoi_centre(aoi):
+    try:
+        ring = aoi["coordinates"][0] if aoi.get("type") == "Polygon" else aoi["features"][0]["geometry"]["coordinates"][0]
+        return sum(p[1] for p in ring) / len(ring), sum(p[0] for p in ring) / len(ring)
+    except Exception:
+        return None
+
+
+async def _pathway_inputs(req):
+    """Shared by the JSON report and the PDF: validate, sample the location (cached), apply the farmer's pH, build the report."""
     from ..services.gee_cache import cached_compute
     if req.crop_id not in crop_pathways.BY_ID:
         raise HTTPException(status_code=404, detail=f"Unknown crop '{req.crop_id}'. See GET /agri/pathway-crops.")
     if not req.aoi_geojson and (req.lat is None or req.lon is None):
         raise HTTPException(status_code=422, detail="Provide lat+lon or aoi_geojson.")
     try:
+        area = pathway_plan.clean_area(req.area_acres)
         key = {"lat": req.lat, "lon": req.lon, "aoi": req.aoi_geojson}
         profile = await asyncio.to_thread(
             cached_compute, "agri_crop_profile", key,
@@ -367,14 +375,37 @@ async def pathway_report(req: PathwayReportRequest):
         if req.ph_override is not None:
             climate["ph"] = req.ph_override
         report = crop_pathways.build_report(req.crop_id, climate, irrigated=bool(req.irrigation_available))
-        report["location_climate"] = {k: (round(v, 1) if isinstance(v, (int, float)) else v) for k, v in climate.items()}
-        report["manual_markdown"] = crop_pathways.render_markdown(report)
-        return report
+        label = pathway_pdf._loc_label(req.lat, req.lon, _aoi_centre(req.aoi_geojson) if req.aoi_geojson else None)
+        return profile, climate, report, area, label
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        logger.error(f"pathway_report endpoint failed: {e}", exc_info=True)
+        logger.error(f"pathway inputs failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Pathway report failed: {e}")
+
+
+@router.post("/pathway-report", summary="Can this crop grow at this location, what is missing, what to do, and how to grow it (JSON)")
+async def pathway_report(req: PathwayReportRequest):
+    profile, climate, report, area, label = await _pathway_inputs(req)
+    report["location_climate"] = {k: (round(v, 1) if isinstance(v, (int, float)) else v) for k, v in climate.items()}
+    report["location_label"] = label
+    report["plan"] = pathway_plan.compute_plan(req.crop_id, area)
+    report["planting_window"] = pathway_plan.planting_window(req.crop_id, profile.get("monthly_rain_mm"), profile.get("monthly_temp_c"))
+    return report
+
+
+@router.post("/pathway-report/pdf", summary="The same personalised guide as a PDF with diagrams, sized to the farmer's plot")
+async def pathway_report_pdf(req: PathwayReportRequest):
+    from fastapi.responses import Response
+    profile, climate, report, area, label = await _pathway_inputs(req)
+    try:
+        pdf = await asyncio.to_thread(pathway_pdf.make_pathway_pdf, report, profile, location_label=label, area_acres=area)
+    except Exception as e:
+        logger.error(f"pathway pdf failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not build the PDF guide.")
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="Vayu_{req.crop_id}_guide.pdf"'})
 
 
 @router.get("/crop-stages", summary="Crops with FAO-56 stage data for the stage-aware irrigation advisory")

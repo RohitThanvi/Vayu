@@ -653,6 +653,10 @@ export function PathwayTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
   const [picking, setPicking] = useState(false);
   const [irrigated, setIrrigated] = useState(false);
   const [ph, setPh] = useState('');
+  const [area, setArea] = useState('');
+  const [lastBody, setLastBody] = useState(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState('');
   useEffect(() => {
     let live = true;
     fetch(`${apiUrl}/api/v1/agri/pathway-crops`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (live && d?.crops) setCrops(d.crops); }).catch(() => {});
@@ -665,18 +669,25 @@ export function PathwayTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
     return () => onSetPointPickHandler(null);
   }, [picking, onMapClick, onSetPointPickHandler]);
   const hasPoint = lat !== '' && lon !== '' && !Number.isNaN(parseFloat(lat)) && !Number.isNaN(parseFloat(lon));
-  const canRun = !!cropId && (hasPoint || !!drawnAOI);
+  const areaNum = parseFloat(area);
+  const areaBad = area !== '' && !(areaNum > 0 && areaNum <= 1000);
+  const canRun = !!cropId && (hasPoint || !!drawnAOI) && !areaBad;
   const submit = () => {
     const body = { crop_id: cropId, irrigation_available: irrigated };
     if (ph !== '' && !Number.isNaN(parseFloat(ph))) body.ph_override = parseFloat(ph);
+    if (area !== '' && !areaBad) body.area_acres = areaNum;
     if (hasPoint) { body.lat = parseFloat(lat); body.lon = parseFloat(lon); } else { body.aoi_geojson = drawnAOI; }
-    run(body);
+    setLastBody(body); setPdfError(''); run(body);
   };
-  const download = () => {
+  const downloadPdf = async () => {
+    if (!lastBody) return;
+    setPdfBusy(true); setPdfError('');
     try {
-      const url = URL.createObjectURL(new Blob([result.manual_markdown], { type: 'text/markdown' }));
-      const a = document.createElement('a'); a.href = url; a.download = `${result.crop.id}-manual.md`; a.click(); URL.revokeObjectURL(url);
-    } catch { /* download unsupported in this environment */ }
+      const r = await fetch(`${apiUrl}/api/v1/agri/pathway-report/pdf`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lastBody) });
+      if (!r.ok) { let msg = 'Could not build the PDF guide.'; try { const j = await r.json(); if (j?.detail) msg = typeof j.detail === 'string' ? j.detail : msg; } catch { /* keep default */ } throw new Error(msg); }
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement('a'); a.href = url; a.download = `Vayu_${result.crop.id}_guide.pdf`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch (e) { setPdfError(e?.message || 'Could not build the PDF guide.'); } finally { setPdfBusy(false); }
   };
   const v = result?.verdict, ft = result?.first_timer, tc = v ? (TIER_COLOR[v.tier] || S.text3) : S.text3;
   const applying = (v?.triggered || []).filter((g) => !g.addressed);
@@ -705,6 +716,8 @@ export function PathwayTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
           ))}
         </div>
         <input aria-label="Soil pH (optional)" style={{ ...inputStyle, marginBottom: 8 }} placeholder="Your soil-test pH (optional)" value={ph} onChange={(e) => setPh(e.target.value)} />
+        <input aria-label="Land area in acres (optional)" style={{ ...inputStyle, marginBottom: 8, borderColor: areaBad ? '#ff7a45' : undefined }} placeholder="Your land in acres (optional)" value={area} onChange={(e) => setArea(e.target.value)} />
+        {areaBad && <div data-testid="area-bad" style={{ fontSize: 10, color: '#ff7a45', marginBottom: 8 }}>Enter a land area above 0 and up to 1000 acres.</div>}
         <RunButton onClick={submit} disabled={loading || !canRun} loading={loading} label="SHOW ME HOW" loadingLabel="BUILDING YOUR GUIDE..." />
         {!canRun && <div style={{ fontSize: 10, color: '#e0c23c', marginTop: 8 }}>Choose a crop and a location (type it, pick on the map, or draw an area).</div>}
         {error && <ErrorNote>{error}</ErrorNote>}
@@ -751,6 +764,20 @@ export function PathwayTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
                 {result.gap_actions.map((g) => <div key={g.if} style={{ marginBottom: 6, fontSize: 12, color: S.text2, lineHeight: 1.55 }}><b>{g.if.replace(/_/g, ' ')}:</b> {g.do}</div>)}
               </div>
             )}
+            {result.plan && (
+              <div data-testid="plan" style={{ margin: '12px 0' }}>
+                <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Your planting plan for {result.plan.area_acres} acre{result.plan.area_acres === 1 ? '' : 's'}</div>
+                <table style={{ borderCollapse: 'collapse', fontSize: 11.5 }}><tbody>{result.plan.rows.map((r) => (
+                  <tr key={r.label}><td style={{ padding: '2px 16px 2px 0', color: S.text2 }}>{r.label}</td><td style={{ padding: '2px 0', color: S.text, fontWeight: 600 }}>{r.value}</td></tr>
+                ))}</tbody></table>
+                <div style={{ fontSize: 10, color: S.text3, marginTop: 4, maxWidth: 640 }}>{result.plan.note}</div>
+              </div>
+            )}
+            {result.planting_window && result.planting_window.rain_in_window_mm != null && (
+              <div data-testid="window" style={{ fontSize: 12, color: S.text2, margin: '8px 0', maxWidth: 640 }}>
+                <b>Planting window for your land:</b> {result.planting_window.month_names[0]} to {result.planting_window.month_names[result.planting_window.month_names.length - 1]} brings about {Math.round(result.planting_window.rain_in_window_mm)} mm of rain and averages {result.planting_window.mean_temp_in_window_c} °C. <span style={{ color: S.text3 }}>{result.planting_window.caution}</span>
+              </div>
+            )}
             <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, margin: '14px 0 4px' }}>How to grow it</div>
             {SECTION_ORDER.map(([key, title]) => (
               <details key={key} data-testid={`sec-${key}`} style={{ marginBottom: 6 }}>
@@ -759,7 +786,8 @@ export function PathwayTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
               </details>
             ))}
             <div data-testid="policy" style={{ fontSize: 11, color: S.text3, lineHeight: 1.5, margin: '12px 0 6px', maxWidth: 640 }}>{result.chemical_policy}</div>
-            <button onClick={download} style={{ background: 'none', border: `1px solid ${S.border2}`, color: S.accent, fontFamily: S.mono, fontSize: 10.5, padding: '5px 10px', borderRadius: 4, cursor: 'pointer', marginRight: 8 }}>DOWNLOAD THIS GUIDE (.md)</button>
+            <button onClick={downloadPdf} disabled={pdfBusy} style={{ background: 'none', border: `1px solid ${S.border2}`, color: S.accent, fontFamily: S.mono, fontSize: 10.5, padding: '5px 10px', borderRadius: 4, cursor: pdfBusy ? 'wait' : 'pointer', marginRight: 8 }}>{pdfBusy ? 'PREPARING YOUR PDF...' : 'DOWNLOAD YOUR GUIDE (PDF)'}</button>
+            {pdfError && <div data-testid="pdf-error" style={{ fontSize: 11, color: '#ff7a45', marginTop: 6 }}>{pdfError}</div>}
             <div style={{ fontSize: 10.5, color: S.text3, lineHeight: 1.5, marginTop: 8, maxWidth: 640 }}>{result.disclaimer}</div>
           </div>
         )}

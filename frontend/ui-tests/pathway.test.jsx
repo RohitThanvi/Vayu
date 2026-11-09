@@ -114,4 +114,68 @@ export function register() {
     m = await mount(<CropSuitabilityTab apiUrl="" drawnAOI={AOI} />);
     try { await click(buttonWith(m.container, 'FIND SUITABLE CROPS')); await flush(20); has(text(m.container), 'Soil pH'); ok(!q(m.container, '[data-testid="climate-note"]'), 'no note when the exact spot had data'); } finally { await m.unmount(); }
   });
+
+  const PLAN = { area_acres: 2.5, area_ha: 1.012, count: 1124, plant_noun: 'plants', rows: [{ label: 'Plants at 3 m x 3 m', value: 'about 1,124', basis: 'arithmetic', src: ['S2'] }, { label: 'Farmyard manure or compost at planting', value: '11 to 17 tonnes', basis: 'arithmetic', src: ['S1'] }], note: 'Sums of the cited amounts for your plot size.' };
+  const WINDOW = { months: [7, 8, 9, 10], month_names: ['Jul', 'Aug', 'Sep', 'Oct'], note: 'July to October', rain_in_window_mm: 660, mean_temp_in_window_c: 26.8, caution: 'Check with your KVK.' };
+
+  test('Pathway: plot size is optional, validated, and sent; the plan and planting window for THIS land are shown', async () => {
+    route('/agri/pathway-crops', CROPS); route('/agri/pathway-report', { ...REPORT, plan: PLAN, planting_window: WINDOW }); const s = spy();
+    const m = await mount(<PathwayTab apiUrl="" drawnAOI={null} />);
+    try {
+      await flush(20); await setField(q(m.container, 'select[aria-label="Crop"]'), 'dragon_fruit'); await setField(q(m.container, 'input[aria-label="Latitude"]'), '26.9'); await setField(q(m.container, 'input[aria-label="Longitude"]'), '75.8');
+      const area = q(m.container, 'input[aria-label="Land area in acres (optional)"]');
+      for (const bad of ['0', '-3', 'abc', '1001']) { await setField(area, bad); ok(q(m.container, '[data-testid="area-bad"]'), `${bad} flagged`); ok(buttonWith(m.container, 'SHOW ME HOW').disabled, `${bad} blocks submit`); }
+      await setField(area, '2.5'); ok(!q(m.container, '[data-testid="area-bad"]')); ok(!buttonWith(m.container, 'SHOW ME HOW').disabled);
+      await click(buttonWith(m.container, 'SHOW ME HOW')); await flush(20);
+      eq(JSON.stringify(s.bodies.at(-1)), JSON.stringify({ crop_id: 'dragon_fruit', irrigation_available: false, area_acres: 2.5, lat: 26.9, lon: 75.8 }));
+      const plan = text(q(m.container, '[data-testid="plan"]')); has(plan, 'Your planting plan for 2.5 acres'); has(plan, 'about 1,124'); has(plan, '11 to 17 tonnes'); has(plan, 'Sums of the cited amounts');
+      const w = text(q(m.container, '[data-testid="window"]')); has(w, 'Jul to Oct'); has(w, '660 mm'); has(w, '26.8'); has(w, 'Check with your KVK');
+    } finally { await m.unmount(); s.restore(); }
+  });
+
+  test('Pathway: without a plan or window (saffron, no cited months) neither block is drawn, and blank area is not sent', async () => {
+    route('/agri/pathway-crops', CROPS); route('/agri/pathway-report', { ...SAFFRON, plan: null, planting_window: null }); const s = spy();
+    const m = await mount(<PathwayTab apiUrl="" drawnAOI={null} />);
+    try { await go(m); ok(!q(m.container, '[data-testid="plan"]') && !q(m.container, '[data-testid="window"]')); ok(!('area_acres' in s.bodies.at(-1))); } finally { await m.unmount(); s.restore(); }
+  });
+
+  test('Pathway: a planting window whose local rainfall is unknown is not shown as "0 mm"', async () => {
+    route('/agri/pathway-crops', CROPS); route('/agri/pathway-report', { ...REPORT, plan: PLAN, planting_window: { ...WINDOW, rain_in_window_mm: null, mean_temp_in_window_c: null } });
+    const m = await mount(<PathwayTab apiUrl="" drawnAOI={null} />);
+    try { await go(m); ok(q(m.container, '[data-testid="plan"]'), 'plan still shown'); ok(!q(m.container, '[data-testid="window"]'), 'no window line without local data'); lacks(text(m.container), '0 mm of rain'); } finally { await m.unmount(); }
+  });
+
+  const pdfFetch = (status = 200, detail) => {
+    const prev = globalThis.fetch, calls = [];
+    globalThis.fetch = (u, init) => { if (String(u).includes('/pathway-report/pdf')) { calls.push({ u: String(u), body: JSON.parse(init.body), method: init.method }); return Promise.resolve({ ok: status === 200, status, blob: async () => new Blob(['%PDF-1.4'], { type: 'application/pdf' }), json: async () => ({ detail }) }); } return prev(u, init); };
+    return { calls, restore: () => { globalThis.fetch = prev; } };
+  };
+  const stubDownload = () => {
+    const A = window.HTMLAnchorElement.prototype, prevClick = A.click, prevC = URL.createObjectURL, prevR = URL.revokeObjectURL, names = [];
+    A.click = function () { names.push(this.download); }; URL.createObjectURL = () => 'blob:x'; URL.revokeObjectURL = () => {};
+    return { names, restore: () => { A.click = prevClick; URL.createObjectURL = prevC; URL.revokeObjectURL = prevR; } };
+  };
+
+  test('Pathway: the PDF button posts the SAME inputs the farmer entered and downloads a named PDF', async () => {
+    route('/agri/pathway-crops', CROPS); route('/agri/pathway-report', { ...REPORT, plan: PLAN, planting_window: WINDOW }); const s = spy(), f = pdfFetch(), dl = stubDownload();
+    const m = await mount(<PathwayTab apiUrl="" drawnAOI={null} />);
+    try {
+      await flush(20); await setField(q(m.container, 'select[aria-label="Crop"]'), 'dragon_fruit'); await setField(q(m.container, 'input[aria-label="Latitude"]'), '26.9'); await setField(q(m.container, 'input[aria-label="Longitude"]'), '75.8');
+      await setField(q(m.container, 'input[aria-label="Land area in acres (optional)"]'), '4'); await click(buttonWith(m.container, 'Yes')); await click(buttonWith(m.container, 'SHOW ME HOW')); await flush(20);
+      ok(!buttonWith(m.container, '.md'), 'no Markdown download any more'); await click(buttonWith(m.container, 'DOWNLOAD YOUR GUIDE (PDF)')); await flush(30);
+      eq(f.calls.length, 1); eq(f.calls[0].method, 'POST'); has(f.calls[0].u, '/api/v1/agri/pathway-report/pdf');
+      eq(JSON.stringify(f.calls[0].body), JSON.stringify({ crop_id: 'dragon_fruit', irrigation_available: true, area_acres: 4, lat: 26.9, lon: 75.8 }), 'same body as the report request');
+      eq(dl.names.join(), 'Vayu_dragon_fruit_guide.pdf'); ok(!q(m.container, '[data-testid="pdf-error"]'));
+    } finally { await m.unmount(); s.restore(); f.restore(); dl.restore(); }
+  });
+
+  test('Pathway: a failed PDF request shows the server message and the guide stays on screen', async () => {
+    route('/agri/pathway-crops', CROPS); route('/agri/pathway-report', REPORT); const f = pdfFetch(422, 'Land area must be more than 0.'), dl = stubDownload();
+    const m = await mount(<PathwayTab apiUrl="" drawnAOI={null} />);
+    try {
+      await go(m); await click(buttonWith(m.container, 'DOWNLOAD YOUR GUIDE (PDF)')); await flush(30);
+      has(text(q(m.container, '[data-testid="pdf-error"]')), 'Land area must be more than 0.'); eq(dl.names.length, 0, 'nothing downloaded'); ok(q(m.container, '[data-testid="tier"]'), 'the on-screen guide is still there');
+      ok(!buttonWith(m.container, 'PREPARING'), 'button is usable again');
+    } finally { await m.unmount(); f.restore(); dl.restore(); }
+  });
 }

@@ -350,3 +350,64 @@ CROPS.append({
                 "S8": "https://aicrps.res.in/Extension Pamphlets/Ginger/English/Ginger and Turmeric cultivation Practices in Nagaland.pdf",
                 "S9": "https://en.vikaspedia.in/viewcontent/agriculture/crop-production/package-of-practices/spices/turmeric?lgn=en"},
 })
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+# Structured numbers for the PERSONALISED guide (planting plan sized to the farmer's plot, planting window overlaid on local climate, which diagrams to show).
+# Every number below is one already cited in the guide text above (source keys alongside); `plan` lines are arithmetic on those numbers, never new claims.
+# ---------------------------------------------------------------------------------------------------------------------------------
+EXTRAS = {
+    "dragon_fruit": {
+        "plan": {"spacing_m": (3.0, 3.0), "spacing_src": ["S2"], "plant_noun": "plants",
+                 "per_plant": [("Posts with a ring on top (one per plant)", 1, 1, "posts", ["S2"]), ("Farmyard manure or compost at planting", 10, 15, "kg", ["S1"])], "per_ha": []},
+        "planting_months": None,
+        "diagrams": {"land_and_planting": [("trellis_post", {}), ("spacing_grid", {})], "irrigation": [("drip_layout", {})], "nutrition_organic": [("mulch_ring", {})],
+                     "pests_diseases_organic": [("ipm_cycle", {}), ("scouting_path", {})]},
+    },
+    "moringa": {
+        "plan": {"spacing_m": (2.5, 2.5), "spacing_src": ["S1"], "plant_noun": "trees",
+                 "per_plant": [("Compost or farmyard manure per pit", 15, 15, "kg", ["S1"])], "per_ha": [("Seed (about 500 g per hectare)", 0.5, 0.5, "kg", ["S1"])]},
+        "planting_months": {"months": [7, 8, 9, 10], "src": ["S1"], "note": "TNAU: July to October"},
+        "diagrams": {"land_and_planting": [("pit_planting", {"size": "45 x 45 x 45 cm"}), ("spacing_grid", {})], "irrigation": [("drip_layout", {})],
+                     "pests_diseases_organic": [("ipm_cycle", {}), ("scouting_path", {})]},
+    },
+    "oyster_mushroom": {
+        "plan": {"spacing_m": None, "spacing_src": [], "plant_noun": "bags", "example_units": 20,
+                 "per_plant": [("Spawn (about 250 g for every 2 bags, so about 125 g per bag)", 125, 125, "g", ["S2"])], "per_ha": []},
+        "planting_months": {"months": [10, 11, 12, 1, 2, 3], "src": ["S1"], "note": "plains: roughly October to March (ICAR NEH); hills March to October"},
+        "diagrams": {"land_and_planting": [("mushroom_room", {})], "pests_diseases_organic": [("ipm_cycle", {})]},
+    },
+    "lemongrass": {
+        "plan": {"spacing_m": (0.45, 0.45), "spacing_src": ["S4"], "plant_noun": "hills",
+                 "per_plant": [("Root slips (2-3 per hill)", 2, 3, "slips", ["S1"])], "per_ha": [("Farmyard manure or compost before planting (about 10 tonnes per hectare)", 10000, 10000, "kg", ["S1"])]},
+        "planting_months": {"months": [6, 7], "src": ["S1", "S4"], "note": "June to July (last week of May in some regions)"},
+        "diagrams": {"land_and_planting": [("ridge_planting", {}), ("spacing_grid", {})], "nutrition_organic": [("mulch_ring", {})], "pests_diseases_organic": [("ipm_cycle", {})]},
+    },
+    "saffron": {
+        "plan": None,
+        "planting_months": {"months": [7], "src": ["S3", "S7"], "note": "corms planted 15-30 July (Kashmir package)"},
+        "diagrams": {"land_and_planting": [("controlled_room", {})], "pests_diseases_organic": [("ipm_cycle", {})]},
+    },
+    "avocado": {
+        "plan": {"spacing_m": (6.0, 6.0), "spacing_src": ["S1"], "plant_noun": "trees",
+                 "per_plant": [("Planting pit 1 m x 1 m x 1 m, filled with farmyard manure and topsoil (1:1)", 1, 1, "pits", ["S1"])], "per_ha": []},
+        "planting_months": {"months": [6, 7, 9], "src": ["S1"], "note": "June-July or September, depending on rainfall"},
+        "diagrams": {"land_and_planting": [("pit_planting", {"size": "1 x 1 x 1 m"}), ("spacing_grid", {}), ("windbreak", {})], "irrigation": [("drip_layout", {})],
+                     "pests_diseases_organic": [("ipm_cycle", {}), ("scouting_path", {})]},
+    },
+    "pomegranate": {
+        "plan": {"spacing_m": (3.0, 3.0), "spacing_src": ["S1"], "plant_noun": "trees", "per_plant": [], "per_ha": []},
+        "planting_months": {"months": [6, 7, 8, 2, 3], "src": ["S9"], "note": "monsoon (June-August) or February-March"},
+        "diagrams": {"land_and_planting": [("spacing_grid", {})], "irrigation": [("drip_layout", {})], "nutrition_organic": [("mulch_ring", {})],
+                     "pests_diseases_organic": [("ipm_cycle", {}), ("scouting_path", {})]},
+    },
+    "turmeric": {
+        "plan": {"spacing_m": (0.5, 0.25), "spacing_src": ["S1", "S4"], "plant_noun": "rhizome pieces",
+                 "per_plant": [], "per_ha": [("Seed rhizomes (about 2,000-2,500 kg per hectare)", 2000, 2500, "kg", ["S1"]), ("Farmyard manure or compost (30-40 tonnes per hectare)", 30000, 40000, "kg", ["S1"]),
+                                               ("Green-leaf mulch (12-15 tonnes per hectare)", 12000, 15000, "kg", ["S1", "S5"])]},
+        "planting_months": {"months": [4, 5], "src": ["S1", "S4"], "note": "April to May with pre-monsoon showers (Kerala and west coast; other regions follow local advice)"},
+        "diagrams": {"land_and_planting": [("raised_bed", {}), ("spacing_grid", {})], "nutrition_organic": [("mulch_ring", {})], "pests_diseases_organic": [("ipm_cycle", {}), ("scouting_path", {})]},
+    },
+}
+for _c in CROPS:
+    _c.update(EXTRAS[_c["id"]])

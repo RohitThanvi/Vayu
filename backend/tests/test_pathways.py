@@ -149,8 +149,8 @@ def test_endpoints_list_manual_and_404():
     from app.api import agri_endpoints as a
     from fastapi import HTTPException
     assert len(asyncio.run(a.pathway_crops())["crops"]) == 8
-    r = asyncio.run(a.pathway_manual("saffron")); assert r.status_code == 200 and b"# Saffron: how to grow it" in r.body
-    assert asyncio.run(a.pathway_manual("saffron", format="json"))["crop"]["id"] == "saffron"
+    r = asyncio.run(a.pathway_manual("saffron")); assert r.status_code == 200 and r.media_type == "application/pdf" and r.body.startswith(b"%PDF") and r.body.rstrip().endswith(b"%%EOF")
+    assert "Vayu_saffron_guide.pdf" in r.headers["content-disposition"]
     with pytest.raises(HTTPException) as e:
         asyncio.run(a.pathway_manual("nope"))
     assert e.value.status_code == 404
