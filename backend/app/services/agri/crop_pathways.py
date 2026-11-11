@@ -13,9 +13,14 @@ ones, not a local variety trial; this is not a prediction of yield or profit. Co
 """
 from typing import Any, Dict, List, Optional
 
+from . import engine_config as cfg
 from .pathway_data import CROPS
 
 BY_ID = {c["id"]: c for c in CROPS}
+# Modelled rainfall (CHIRPS ~5.5 km) and soil pH (250 m model) are approximate. A value just outside a crop's range (within 10 percent of the rainfall limit, or 0.3 pH units)
+# is reported as "edge", not as a gap: telling a farmer to "drain first" over 28 mm in 1,500 would be false precision. Both margins are general-knowledge choices.
+RAIN_EDGE_FRACTION = 0.10
+PH_EDGE = 0.3
 TIER_LABELS = {1: "Open-field suitable", 2: "Open-field with help", 3: "Controlled environment", 4: "Not realistic here", None: "Cannot assess"}
 SECTION_TITLES = [("planting_material", "Planting material"), ("land_and_planting", "Land preparation and planting"), ("irrigation", "Irrigation"),
                   ("nutrition_organic", "Nutrition (organic)"), ("pests_diseases_organic", "Pests and diseases (organic and cultural only)"),
@@ -35,11 +40,12 @@ def climate_from_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
     t = [v for v in (profile.get("monthly_temp_c") or []) if v is not None]
     return {"tmean_c": (sum(t) / len(t)) if t else profile.get("annual_mean_temp_c"), "coldest_month_c": min(t) if t else None, "hottest_month_c": max(t) if t else None,
             "annual_rain_mm": profile.get("annual_rain_mm"), "ph": profile.get("ph"),
+            "texture_name": profile.get("texture_name"), "texture_class": profile.get("texture_class"),
             "climate_search_km": profile.get("climate_search_km"), "climate_note": profile.get("climate_note")}
 
 
 def _check(factor, value, rng, status, note="", gauge=None, unit=""):
-    return {"factor": factor, "your_value": None if value is None else round(value, 1), "crop_range": rng, "status": status, "note": note, "gauge": gauge, "unit": unit}
+    return {"factor": factor, "your_value": round(value, 1) if isinstance(value, (int, float)) else value, "crop_range": rng, "status": status, "note": note, "gauge": gauge, "unit": unit}
 
 
 def assess(crop_id: str, climate: Dict[str, Any], irrigated: bool = False) -> Dict[str, Any]:
@@ -78,6 +84,8 @@ def assess(crop_id: str, climate: Dict[str, Any], irrigated: bool = False) -> Di
     lo, hi = fit["rain_mm"]
     if rain is None:
         checks.append(_check("annual rainfall", None, f"{lo}-{hi} mm", "unknown", gauge=(lo, hi), unit=" mm")); unknown += 1
+    elif lo * (1 - RAIN_EDGE_FRACTION) <= rain < lo or hi < rain <= hi * (1 + RAIN_EDGE_FRACTION):
+        checks.append(_check("annual rainfall", rain, f"{lo}-{hi} mm", "edge", "just outside the usual range, within the margin of error of modelled rainfall: not treated as a gap", gauge=(lo, hi), unit=" mm"))
     elif rain < lo:
         checks.append(_check("annual rainfall", rain, f"{lo}-{hi} mm", "gap", "irrigation available: counted as addressed" if irrigated else "needs irrigation", gauge=(lo, hi), unit=" mm")); trip("dry", addressed=bool(irrigated))
     elif rain > hi:
@@ -87,10 +95,20 @@ def assess(crop_id: str, climate: Dict[str, Any], irrigated: bool = False) -> Di
     plo, phi = fit["ph"]
     if ph is None:
         checks.append(_check("soil pH", None, f"{plo}-{phi}", "unknown", "not available; get a soil test", gauge=(plo, phi)))
+    elif plo - PH_EDGE <= ph < plo or phi < ph <= phi + PH_EDGE:
+        checks.append(_check("soil pH", ph, f"{plo}-{phi}", "edge", "just outside the range, within the margin of error of modelled soil pH: confirm with a soil test", gauge=(plo, phi)))
     elif not (plo <= ph <= phi):
         checks.append(_check("soil pH", ph, f"{plo}-{phi}", "gap", "modelled soil pH; confirm with a soil test", gauge=(plo, phi))); trip("ph")
     else:
         checks.append(_check("soil pH", ph, f"{plo}-{phi}", "ok", "modelled soil pH; confirm with a soil test", gauge=(plo, phi)))
+    if fit.get("heavy_soil_gap"):
+        tc, tn = climate.get("texture_class"), climate.get("texture_name")
+        if tc is None:
+            checks.append(_check("soil texture", None, "drains freely or is medium; heavy clay needs drainage work", "unknown", "not available; check your soil"))
+        elif tc in cfg.POOR_DRAINING_TEXTURES:
+            checks.append(_check("soil texture", tn, "drains freely or is medium; heavy clay needs drainage work", "gap", "modelled soil texture (250 m); confirm in your field")); trip("heavy_soil")
+        else:
+            checks.append(_check("soil texture", tn, "drains freely or is medium; heavy clay needs drainage work", "ok", "modelled soil texture (250 m); confirm in your field"))
     if not fit.get("frost_tolerant"):
         cautions.append("Monthly averages can hide cold nights and short heat waves. For this frost-sensitive crop, check the lowest winter temperatures your village has actually seen before you plant.")
     cautions += [t for t, _b, _k in crop.get("site_cautions", [])]

@@ -214,7 +214,7 @@ def range_gauge(value: Optional[float], lo: float, hi: float, unit: str = "", w=
     _t(d, X(lo), 1, f"{lo:g}", 6, MUTED, "middle"); _t(d, X(hi), 1, f"{hi:g}{unit}", 6, MUTED, "middle")
     if value is None:
         _t(d, w / 2, 19, "no data", 6.8, MUTED, "middle"); return d
-    col = TIER_COLORS[1] if status == "ok" else RED; x = X(value)
+    col = TIER_COLORS[1] if status == "ok" else (TIER_COLORS[2] if status == "edge" else RED); x = X(value)
     d.add(Polygon([x - 4, 24, x + 4, 24, x, 17], fillColor=col, strokeColor=None)); d.add(Line(x, 10, x, 17, strokeColor=col, strokeWidth=1.2))
     return d
 
@@ -226,16 +226,25 @@ def climate_chart(temp: Sequence[Optional[float]], rain: Sequence[Optional[float
     tv = [v for v in temp if v is not None]; rv = [v for v in rain if v is not None]
     if not tv and not rv:
         _t(d, w / 2, h / 2, "No monthly climate data for this location", 9, MUTED, "middle"); return d
-    tlo = min(tv + [x for x in (cold_limit, band[0] if band else None) if x is not None] or [0]) - 3; thi = max(tv + [x for x in (hot_limit, band[1] if band else None) if x is not None] or [30]) + 3
+    # The temperature axis depends on THIS PLACE only (never on the crop), so one location draws the same curve in every crop's guide.
+    # The crop's band and limits are clipped to it; a limit that falls off the chart is labelled at the edge instead of stretching the axis.
+    tlo, thi = (min(tv) - 3, max(tv) + 3) if tv else (0.0, 40.0)
+    if thi - tlo < 20: mid = (thi + tlo) / 2; tlo, thi = mid - 10, mid + 10
     rmax = max(rv + [10]) * 1.15; bw = cw / 12
     TY = lambda v: y0 + (v - tlo) / (thi - tlo) * ch; RY = lambda v: y0 + v / rmax * ch
     d.add(Rect(x0, y0, cw, ch, fillColor=WHITE, strokeColor=LINE, strokeWidth=0.6))
     for m in (window_months or []): d.add(Rect(x0 + (m - 1) * bw, y0, bw, ch, fillColor=colors.HexColor("#FFF2CC"), strokeColor=None))
-    if band: d.add(Rect(x0, TY(band[0]), cw, TY(band[1]) - TY(band[0]), fillColor=colors.HexColor("#DCEFE0"), strokeColor=None))
+    if band and band[1] > tlo and band[0] < thi:
+        b0, b1 = max(band[0], tlo), min(band[1], thi); d.add(Rect(x0, TY(b0), cw, TY(b1) - TY(b0), fillColor=colors.HexColor("#DCEFE0"), strokeColor=None))
     for m, v in enumerate(rain):
         if v is not None: d.add(Rect(x0 + m * bw + bw * 0.18, y0, bw * 0.64, RY(v) - y0, fillColor=colors.HexColor("#9CC6E6"), strokeColor=None))
+    off_chart = 0
     for lim, lab in ((cold_limit, "cool limit"), (hot_limit, "hot limit")):
-        if lim is not None: d.add(Line(x0, TY(lim), x0 + cw, TY(lim), strokeColor=RED, strokeWidth=0.8, strokeDashArray=[3, 2])); _t(d, x0 + cw + 3, TY(lim) - 2, f"{lab} {lim:g}", 6.2, RED)
+        if lim is None: continue
+        if tlo <= lim <= thi:
+            d.add(Line(x0, TY(lim), x0 + cw, TY(lim), strokeColor=RED, strokeWidth=0.8, strokeDashArray=[3, 2])); _t(d, x0 + cw + 3, TY(lim) - 2, f"{lab} {lim:g}", 6.2, RED)
+        else:
+            up = lim > thi; off_chart += 1; _t(d, x0 + 4, y0 + ch - 7 - 8 * (off_chart - 1), f"{lab} {lim:g} C is {'above' if up else 'below'} this chart", 6.2, RED)
     pts = [(x0 + (m + 0.5) * bw, TY(v)) for m, v in enumerate(temp) if v is not None]
     if len(pts) > 1: d.add(PolyLine([c for p in pts for c in p], strokeColor=colors.HexColor("#D9742B"), strokeWidth=1.8))
     for p in pts: d.add(Circle(p[0], p[1], 2.2, fillColor=colors.HexColor("#D9742B"), strokeColor=WHITE, strokeWidth=0.5))
@@ -247,6 +256,21 @@ def climate_chart(temp: Sequence[Optional[float]], rain: Sequence[Optional[float
     lx = x0
     for col, lab in ((colors.HexColor("#D9742B"), "your monthly temperature"), (colors.HexColor("#9CC6E6"), "your monthly rainfall"), (colors.HexColor("#DCEFE0"), "crop's comfortable temperature"), (colors.HexColor("#FFF2CC"), "planting window")):
         d.add(Rect(lx, h - 14, 8, 6, fillColor=col, strokeColor=LINE, strokeWidth=0.4)); _t(d, lx + 11, h - 13, lab, 6.5, MUTED); lx += 22 + len(lab) * 3.1
+    return d
+
+
+def greenness_strip(values: Sequence[Optional[float]], w=500, h=40):
+    """12 cells, month by month, coloured by satellite NDVI (brown = bare, green = dense vegetation); the value is printed under each cell. Context, not a verdict."""
+    d = Drawing(w, h); x0, cw = 40, (w - 84) / 12
+    ramp = [(0.05, colors.HexColor("#A98557")), (0.2, colors.HexColor("#D9C27A")), (0.4, colors.HexColor("#9CCB7A")), (0.6, colors.HexColor("#4FA867")), (0.8, colors.HexColor("#1F7A44"))]
+    def col(v):
+        if v is None: return colors.HexColor("#E9EEEA")
+        for lim, c in ramp:
+            if v <= lim: return c
+        return ramp[-1][1]
+    for m in range(12):
+        v = values[m] if m < len(values) else None
+        d.add(Rect(x0 + m * cw + 1, 16, cw - 2, 16, fillColor=col(v), strokeColor=None)); _t(d, x0 + (m + 0.5) * cw, 6, "-" if v is None else f"{v:.2f}", 6.5, MUTED, "middle"); _t(d, x0 + (m + 0.5) * cw, 35, MONTHS[m], 6.5, MUTED, "middle")
     return d
 
 

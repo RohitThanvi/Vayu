@@ -131,7 +131,7 @@ def test_blocking_gap_leads_the_priorities_and_the_climate_note_comes_first():
     cold = copy.deepcopy(LOCATIONS["himalayan_cold"]); cold["climate_note"] = "No climate data exists at the exact spot (water or coast pixel), so x."
     p = content("dragon_fruit", cold)["priorities"]
     assert p[0]["title"] == "About your climate numbers" and p[1]["title"].startswith("Stop and think: Cold weather")
-    assert [x["title"] for x in p][-3:] == ["Talk to your KVK first", "Start small", "Line up a buyer before you scale"] and len(p) <= 8
+    assert [x["title"] for x in p][-3:] == ["Talk to your KVK first", "Start small", "Line up a buyer before you scale"] and len(p) <= 9
 
 
 def test_controlled_crops_get_the_build_first_advice():
@@ -267,3 +267,90 @@ def test_a_long_location_label_never_overlaps_the_date_on_the_cover():
     assert "Prepared on 2026-11-08" in first and "Prepared for:" in first
     assert not [ln for ln in first.splitlines() if "Prepared for" in ln and "Prepared on" in ln], "label and date must be on different lines"
     assert "..." in first or "Jaipur" in first
+
+
+# ---------------- v2: edge tolerance, soil texture, window labels, consistent chart, greenness, wording ----------------
+from reportlab.graphics.shapes import PolyLine, Polygon
+
+
+def assess(cid, **kw): return cp.assess(cid, {"tmean_c": 27.0, "coldest_month_c": 24.0, "hottest_month_c": 31.0, "annual_rain_mm": 1000.0, "ph": 6.5, **kw})
+def status(v, factor): return next(c["status"] for c in v["checks"] if c["factor"] == factor)
+
+
+def test_values_just_outside_the_range_are_edge_not_gap():
+    for rain, want in ((1528, "edge"), (1650, "edge"), (1651, "gap"), (450, "edge"), (449, "gap"), (1000, "ok")):
+        assert status(assess("dragon_fruit", annual_rain_mm=rain), "annual rainfall") == want, rain
+    for ph, want in ((7.3, "edge"), (7.31, "gap"), (5.2, "edge"), (5.19, "gap"), (6.5, "ok")):
+        assert status(assess("dragon_fruit", ph=ph), "soil pH") == want, ph
+    v = assess("dragon_fruit", annual_rain_mm=1528); assert v["tier"] == 1 and v["triggered"] == [] and "not treated as a gap" in next(c["note"] for c in v["checks"] if c["status"] == "edge")
+
+
+def test_heavy_clay_triggers_the_drainage_action_for_open_field_crops_only():
+    CLAY, LOAM = {"texture_name": "Clay", "texture_class": 1}, {"texture_name": "Loam", "texture_class": 7}
+    for cid in ("dragon_fruit", "moringa", "lemongrass", "avocado", "pomegranate", "turmeric"):
+        f = cp.BY_ID[cid]["fit"]; ok_env = {"annual_rain_mm": sum(f["rain_mm"]) / 2, "ph": sum(f["ph"]) / 2}      # everything else comfortably inside the crop's range
+        v = assess(cid, **CLAY, **ok_env); assert v["tier"] == 2 and [g["if"] for g in v["triggered"]] == ["heavy_soil"] and status(v, "soil texture") == "gap", cid
+        assert status(assess(cid, **LOAM, **ok_env), "soil texture") == "ok" and assess(cid, **LOAM, **ok_env)["tier"] == 1, cid
+    assert status(assess("dragon_fruit"), "soil texture") == "unknown" and assess("dragon_fruit")["tier"] == 1, "unknown texture is not a gap"
+    for cid in ("saffron", "oyster_mushroom"): assert not any(c["factor"] == "soil texture" for c in cp.assess(cid, {**CLAY})["checks"])
+    assert next(c["your_value"] for c in assess("dragon_fruit", **CLAY)["checks"] if c["factor"] == "soil texture") == "Clay"
+
+
+def test_texture_comes_from_the_sampled_profile():
+    prof = copy.deepcopy(RJ); prof["texture_name"], prof["texture_class"] = "Silty clay", 2
+    assert cp.climate_from_profile(prof)["texture_name"] == "Silty clay" and "heavy_soil" in [g["if"] for g in report_for("avocado", prof)["verdict"]["triggered"]]
+
+
+def test_month_labels_handle_single_wrapping_and_split_seasons():
+    assert [pl.month_label(m) for m in ([7], [7, 8, 9, 10], [10, 11, 12, 1, 2, 3], [6, 7, 8, 2, 3], [4, 5], list(range(1, 13)))] == ["Jul", "Jul to Oct", "Oct to Mar", "Feb to Mar and Jun to Aug", "Apr to May", "Jan to Dec"]
+    assert pl.planting_window("saffron", RAIN, TEMP)["label"] == "Jul" and pl.planting_window("pomegranate", RAIN, TEMP)["label"] == "Feb to Mar and Jun to Aug"
+
+
+def test_a_single_month_window_is_not_written_as_jul_to_jul():
+    prof = copy.deepcopy(RJ); lead = " ".join(content("saffron", prof)["sections"][1]["leads"])
+    assert "(Jul)" in lead and "Jul to Jul" not in lead
+
+
+def _curve(temp, band, cold, hot):
+    d = dg.climate_chart(temp, [10.0] * 12, band, cold, hot)
+    return [tuple(round(x, 3) for x in o.points) for o in d.contents if isinstance(o, PolyLine) and len(o.points) == 24]
+
+
+def test_one_place_draws_the_same_curve_whichever_crop_is_chosen():
+    temp = RJ["monthly_temp_c"]
+    base = _curve(temp, None, None, None)
+    assert len(base) == 1 and _curve(temp, (20, 30), 5, 38) == base == _curve(temp, (20, 35), 0, 45) == _curve(temp, (25, 40), 10, 50)
+
+
+def test_limits_off_the_chart_are_labelled_not_allowed_to_stretch_the_axis():
+    d = dg.climate_chart([24.0] * 12, [10.0] * 12, (20, 30), 5, 38)
+    strings = [o.text for o in d.contents if hasattr(o, "text")]
+    assert any("cool limit 5 C is below this chart" in s for s in strings) and any("hot limit 38 C is above this chart" in s for s in strings)
+    assert dg.climate_chart([30.0] * 12, [10.0] * 12, (50, 60), None, None).width > 0, "a band wholly off the chart must not raise"
+    assert not any("this chart" in getattr(o, "text", "") for o in dg.climate_chart([10, 25] * 6, [5.0] * 12, (20, 30), 8, 27).contents), "limits inside the axis are drawn, not labelled off-chart"
+
+
+def test_edge_gauge_is_amber_not_red():
+    def marker_colour(status): return next(o.fillColor for o in dg.range_gauge(7.2, 5.5, 7.0, status=status).contents if isinstance(o, Polygon))
+    assert marker_colour("edge") == dg.TIER_COLORS[2] and marker_colour("gap") == dg.RED and marker_colour("ok") == dg.TIER_COLORS[1]
+
+
+def test_greenness_strip_needs_enough_months_and_draws_twelve_cells():
+    ndvi = [0.18, 0.2, 0.16, 0.12, 0.1, 0.14, 0.32, 0.5, 0.45, 0.3, 0.22, 0.19]
+    assert content("moringa", {**copy.deepcopy(RJ), "monthly_ndvi": ndvi, "ndvi_basis": "cropland"})["greenness"] == {"values": ndvi, "basis": "cropland"}
+    assert content("moringa", {**copy.deepcopy(RJ), "monthly_ndvi": [None] * 11 + [0.3]})["greenness"] is None and content("moringa", RJ)["greenness"] is None
+    assert len([o for o in dg.greenness_strip(ndvi).contents if hasattr(o, "fillColor") and getattr(o, "height", 0) == 16]) == 12 and dg.greenness_strip([None] * 12).width > 0
+
+
+def test_soil_test_priority_is_for_open_field_crops_and_ph_edge_gets_its_own_lead():
+    assert "Get your soil tested" in [p["title"] for p in content("moringa", RJ)["priorities"]] and "Get your soil tested" not in [p["title"] for p in content("saffron", RJ)["priorities"]]
+    prof = copy.deepcopy(RJ); prof["annual_rain_mm"] = 1528.0
+    assert "within the margin of error of modelled rainfall" in " ".join(content("dragon_fruit", prof)["sections"][2]["leads"])
+    assert "just outside the crop's range" in " ".join(content("dragon_fruit", RJ, ph=7.2)["sections"][3]["leads"])
+
+
+@pytest.mark.skipif(not HAS_PDFTOTEXT, reason="pdftotext (poppler) not installed")
+def test_pdf_wording_fixes_kashmir_capital_and_greenness_caption():
+    prof = {**copy.deepcopy(RJ), "monthly_ndvi": [0.2] * 12, "ndvi_basis": "cropland"}
+    t = text_of(pp.make_pathway_pdf(report_for("saffron", prof), prof, location_label="X", generated_on="2026-11-10"))
+    assert "Kashmir's" in t and "kashmir's" not in t and "How green the land around you is" in t and "does not decide whether this crop suits your land" in t
