@@ -59,6 +59,17 @@ def compute_plan(crop_id: str, area_acres: Optional[float] = None) -> Optional[D
             "note": "Sums of the cited per-plant and per-hectare amounts for your plot size. Real needs vary with soil and variety; confirm with your KVK."}
 
 
+def month_label(months: List[int]) -> str:
+    """'Jul', 'Jul to Oct', 'Oct to Mar' (wraps the year end), 'Feb to Mar and Jun to Aug' (split seasons)."""
+    runs: List[List[int]] = []
+    for m in sorted(set(months)):
+        if runs and m == runs[-1][1] + 1: runs[-1][1] = m
+        else: runs.append([m, m])
+    if len(runs) > 1 and runs[0][0] == 1 and runs[-1][1] == 12:
+        runs[0][0] = runs[-1][0]; runs.pop()
+    return " and ".join(MONTH_NAMES[a - 1] if a == b else f"{MONTH_NAMES[a - 1]} to {MONTH_NAMES[b - 1]}" for a, b in runs)
+
+
 def planting_window(crop_id: str, monthly_rain_mm: Optional[List[Optional[float]]], monthly_temp_c: Optional[List[Optional[float]]]) -> Optional[Dict[str, Any]]:
     """The crop's cited planting months overlaid on THIS location's own climate: average rain and temperature across the window."""
     pm = BY_ID[crop_id].get("planting_months")
@@ -70,5 +81,5 @@ def planting_window(crop_id: str, monthly_rain_mm: Optional[List[Optional[float]
         if len(vals) != len(ms):
             return None
         return round(sum(vals) / (1 if total else len(vals)), 1) if not total else round(sum(vals), 0)
-    return {"months": ms, "month_names": [MONTH_NAMES[m - 1] for m in ms], "note": pm["note"], "src": pm["src"], "rain_in_window_mm": avg(monthly_rain_mm, total=True),
+    return {"months": ms, "month_names": [MONTH_NAMES[m - 1] for m in ms], "label": month_label(ms), "note": pm["note"], "src": pm["src"], "rain_in_window_mm": avg(monthly_rain_mm, total=True),
             "mean_temp_in_window_c": avg(monthly_temp_c), "caution": "The planting window comes from the source's region; your local calendar may differ. Check with your KVK."}

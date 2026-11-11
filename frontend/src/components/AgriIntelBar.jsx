@@ -741,7 +741,7 @@ export function PathwayTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
                 <thead><tr>{['Your land', 'Your value', 'Crop needs', 'Result'].map((h) => <th key={h} style={{ textAlign: 'left', color: S.text3, fontWeight: 400, padding: '2px 14px 2px 0' }}>{h}</th>)}</tr></thead>
                 <tbody>{v.checks.map((k) => (
                   <tr key={k.factor}><td style={{ padding: '2px 14px 2px 0', color: S.text2 }}>{k.factor}</td><td style={{ padding: '2px 14px 2px 0', color: S.text2 }}>{k.your_value ?? 'n/a'}</td><td style={{ padding: '2px 14px 2px 0', color: S.text3 }}>{k.crop_range}</td>
-                    <td style={{ padding: '2px 0', color: k.status === 'ok' ? '#2ecc71' : k.status === 'gap' ? '#ff7a45' : S.text3 }}>{k.status}</td></tr>
+                    <td style={{ padding: '2px 0', color: k.status === 'ok' ? '#2ecc71' : k.status === 'gap' ? '#ff7a45' : k.status === 'edge' ? '#c9a86a' : S.text3 }}>{k.status}</td></tr>
                 ))}</tbody>
               </table>
             )}
@@ -775,7 +775,7 @@ export function PathwayTab({ apiUrl, drawnAOI, onSetPointPickHandler }) {
             )}
             {result.planting_window && result.planting_window.rain_in_window_mm != null && (
               <div data-testid="window" style={{ fontSize: 12, color: S.text2, margin: '8px 0', maxWidth: 640 }}>
-                <b>Planting window for your land:</b> {result.planting_window.month_names[0]} to {result.planting_window.month_names[result.planting_window.month_names.length - 1]} brings about {Math.round(result.planting_window.rain_in_window_mm)} mm of rain and averages {result.planting_window.mean_temp_in_window_c} °C. <span style={{ color: S.text3 }}>{result.planting_window.caution}</span>
+                <b>Planting window for your land:</b> ({result.planting_window.label}) brings about {Math.round(result.planting_window.rain_in_window_mm)} mm of rain and averages {result.planting_window.mean_temp_in_window_c} °C. <span style={{ color: S.text3 }}>{result.planting_window.caution}</span>
               </div>
             )}
             <div style={{ fontSize: 10.5, color: S.text3, textTransform: 'uppercase', letterSpacing: 0.5, margin: '14px 0 4px' }}>How to grow it</div>

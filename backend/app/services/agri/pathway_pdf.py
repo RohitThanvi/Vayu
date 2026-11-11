@@ -45,7 +45,12 @@ def pdf_safe(s: Any) -> str:
 def _p(s): return escape(pdf_safe(s))
 
 
-GAP_TITLES = {"ph": "Soil pH", "dry": "Low rainfall", "wet": "Too much rain", "frost": "Cold weather", "heat": "Heat", "not_kashmir_climate": "Climate", "indoor_climate_control": "Climate control", "dry_air": "Dry air"}
+def _cap1(s: str) -> str:
+    """Upper-case the first letter only (str.capitalize() would lower-case 'Kashmir')."""
+    return s[:1].upper() + s[1:]
+
+
+GAP_TITLES = {"heavy_soil": "Heavy soil", "ph": "Soil pH", "dry": "Low rainfall", "wet": "Too much rain", "frost": "Cold weather", "heat": "Heat", "not_kashmir_climate": "Climate", "indoor_climate_control": "Climate control", "dry_air": "Dry air"}
 
 
 def gap_title(kind): return GAP_TITLES.get(kind, kind.replace("_", " ").capitalize())
@@ -67,11 +72,16 @@ def _leads(verdict, window) -> Dict[str, List[str]]:
     """One-line 'for your land' sentences placed inside the guide sections, built from the farmer's own numbers."""
     out: Dict[str, List[str]] = {k: [] for k, _ in SECTION_TITLES}
     if window and window.get("rain_in_window_mm") is not None:
-        out["land_and_planting"].append(f"In your climate the planting window ({window['month_names'][0]} to {window['month_names'][-1]}) brings about {window['rain_in_window_mm']:.0f} mm of rain and averages {window['mean_temp_in_window_c']} C.")
+        out["land_and_planting"].append(f"In your climate the planting window ({window['label']}) brings about {window['rain_in_window_mm']:.0f} mm of rain and averages {window['mean_temp_in_window_c']} C.")
     if verdict:
         rain, ph = _check(verdict, "annual rainfall"), _check(verdict, "soil pH")
         trig = {g["if"]: g for g in verdict.get("triggered", [])}
-        if rain and rain["your_value"] is not None:
+        tex = _check(verdict, "soil texture")
+        if tex and tex["status"] == "gap":
+            out["land_and_planting"].append(f"Your soil is modelled as {str(tex['your_value']).lower()}, which drains slowly. Drainage comes first: build raised beds or mounds and mix in compost.")
+        if rain and rain["status"] == "edge":
+            out["irrigation"].append(f"Your rainfall (about {rain['your_value']:.0f} mm a year) is just outside this crop's usual {rain['crop_range']}, within the margin of error of modelled rainfall. Treat it as inside the range and watch the first season.")
+        elif rain and rain["your_value"] is not None:
             if "dry" in trig and not trig["dry"]["addressed"]:
                 out["irrigation"].append(f"Your area gets about {rain['your_value']:.0f} mm of rain a year, below this crop's usual {rain['crop_range']}. Irrigation matters more for you than for the average grower.")
             elif "dry" in trig:
@@ -84,6 +94,8 @@ def _leads(verdict, window) -> Dict[str, List[str]]:
         if ph:
             if ph["your_value"] is None:
                 out["nutrition_organic"].append("We could not read your soil pH. Get a soil test before adding anything to the soil.")
+            elif ph["status"] == "edge":
+                out["nutrition_organic"].append(f"Your soil pH (about {ph['your_value']}) is just outside the crop's range of {ph['crop_range']}, within the margin of error of the modelled value. A soil test will settle it.")
             elif ph["status"] == "gap":
                 out["nutrition_organic"].append(f"Your soil pH is about {ph['your_value']} and the crop prefers {ph['crop_range']}. Get a soil test and build organic matter with compost.")
             else:
@@ -105,10 +117,19 @@ def _priorities(report, verdict) -> List[Dict[str, Any]]:
                           "src": [{"key": k, "url": report["sources"].get(k, "")} for k in g["src"] if k in report["sources"]]})
     if report["crop"]["setting"] == "controlled":
         items.append({"title": "Build only after you have seen one working", "text": "Visit or train with an operating unit before you spend money on a room, equipment or planting material.", "basis": "general", "src": []})
+    if report["crop"]["setting"] != "controlled":
+        items.append({"title": "Get your soil tested", "text": "Satellite and model data estimate soil pH and texture only roughly, and cannot see nutrients, salinity or soil health. Get a proper soil test (pH, organic carbon, nutrients, salinity) from your KVK or the state soil-testing laboratory; the Soil Health Card scheme provides this.", "basis": "general", "src": []})
     items.append({"title": "Talk to your KVK first", "text": "Take this guide to your nearest Krishi Vigyan Kendra and ask for their local advice and trusted planting material.", "basis": "general", "src": []})
     items.append({"title": "Start small", "text": "Plant or build a small trial first. Learn the crop on your own land, then expand from what actually worked.", "basis": "general", "src": []})
     items.append({"title": "Line up a buyer before you scale", "text": "Know who will buy, in what form and grade, and how it will reach them.", "basis": "general", "src": []})
-    return items[:8]
+    return items[:9]
+
+
+def _greenness(profile):
+    v = profile.get("monthly_ndvi")
+    if v and len([x for x in v if x is not None]) >= 6:
+        return {"values": v, "basis": profile.get("ndvi_basis")}
+    return None
 
 
 def build_content(report: Dict[str, Any], profile: Optional[Dict[str, Any]] = None, *, location_label: str = "Location not given", area_acres: Optional[float] = None,
@@ -133,7 +154,7 @@ def build_content(report: Dict[str, Any], profile: Optional[Dict[str, Any]] = No
             "first_timer": report["first_timer"], "verdict": verdict, "controlled": report.get("controlled"),
             "chart": {"temp": temp, "rain": rain, "band": list(fit["tmean_c"]) if fit else None, "cold_limit": fit["cold_month_min_c"] if fit else None,
                       "hot_limit": fit["hot_month_max_c"] if fit else None, "window_months": window["months"] if window else None} if (temp or rain) else None,
-            "window": window, "plan": plan, "priorities": _priorities(report, verdict), "gap_actions": report["gap_actions"], "sections": sections,
+            "window": window, "greenness": _greenness(profile), "plan": plan, "priorities": _priorities(report, verdict), "gap_actions": report["gap_actions"], "sections": sections,
             "sources": report["sources"], "chemical_policy": report["chemical_policy"], "disclaimer": report["disclaimer"]}
 
 
@@ -235,19 +256,23 @@ def render_pdf(c: Dict[str, Any]) -> bytes:
     if c["chart"]:
         ch = c["chart"]; S += [Paragraph("Your own climate month by month, against what this crop likes", st["h2"]), _fit(dg.climate_chart(ch["temp"] or [None] * 12, ch["rain"] or [None] * 12, ch["band"], ch["cold_limit"], ch["hot_limit"], ch["window_months"]), W), Spacer(1, 4)]
         if c["window"]: S.append(Paragraph(f"<b>For your land:</b> {_p(c['window']['note'])}. {_p(c['window']['caution'])}", st["small"]))
+    if c["greenness"]:
+        S += [Paragraph("How green the land around you is, month by month", st["h2"]), _fit(dg.greenness_strip(c["greenness"]["values"]), W),
+              Paragraph("Satellite NDVI (MODIS, " + _p(c["greenness"]["basis"] or "area average") + "): brown is bare ground, dark green is dense plants. It shows what is growing around you now, whether crop, forest or fallow, so it "
+                        "tells you your local growing seasons. It does not decide whether this crop suits your land.", st["small"])]
     if v and v["checks"]:
         S.append(Paragraph("Your land against the crop's needs", st["h2"]))
         rows = [[Paragraph(f"<b>{_p(h)}</b>", st["cell"]) for h in ("Check", "Your value", "Where you sit", "Crop's range", "Result")]]
         for k in v["checks"]:
-            val = "not available" if k["your_value"] is None else f"{k['your_value']}{k['unit']}"
+            val = "not available" if k["your_value"] is None else (k["your_value"] if isinstance(k["your_value"], str) else f"{k['your_value']}{k['unit']}")
             g = dg.range_gauge(k["your_value"], k["gauge"][0], k["gauge"][1], (k["unit"] or "").strip(), w=150, status=k["status"]) if k.get("gauge") else ""
-            col = {"ok": "#2E9E5B", "gap": "#C8553D"}.get(k["status"], "#5C6B63")
+            col = {"ok": "#2E9E5B", "gap": "#C8553D", "edge": "#B07A10"}.get(k["status"], "#5C6B63")
             rows.append([Paragraph(_p(k["factor"]), st["cell"]), Paragraph(_p(val), st["cell"]), g, Paragraph(_p(k["crop_range"]), st["cell"]), Paragraph(f'<font color="{col}"><b>{_p(k["status"])}</b></font>', st["cell"])])
         t = Table(rows, colWidths=[W * 0.27, W * 0.15, 158, W * 0.14, W * 0.09], repeatRows=1)
         t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, LINE), ("BACKGROUND", (0, 0), (-1, 0), PALE), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
         S.append(t)
     for caution in (v or {}).get("cautions", []): S.append(Paragraph(f"<b>Watch out:</b> {_p(caution)}", st["lead"]))
-    if c["controlled"]: S += [Paragraph("What you would need to build", st["h2"]), Paragraph(f"{_p(c['controlled']['what'].capitalize())}. {_p(c['controlled']['season'])}", st["b"])]
+    if c["controlled"]: S += [Paragraph("What you would need to build", st["h2"]), Paragraph(f"{_p(_cap1(c['controlled']['what']))}. {_p(c['controlled']['season'])}", st["b"])]
     S += [_Outline("Your priorities", "priorities"), Paragraph("Your priorities", st["h1"]), Paragraph("Ordered by what matters most on your land.", st["small"]), Spacer(1, 4)]
     for i, it in enumerate(c["priorities"], 1):
         tag = (' <font size="7" color="#2E7D4F">[' + ", ".join(s["key"] for s in it["src"]) + "]</font>") if it["src"] else (' <font size="7" color="#B07A10">(general knowledge)</font>' if it["basis"] == "general" else "")

@@ -116,7 +116,7 @@ export function register() {
   });
 
   const PLAN = { area_acres: 2.5, area_ha: 1.012, count: 1124, plant_noun: 'plants', rows: [{ label: 'Plants at 3 m x 3 m', value: 'about 1,124', basis: 'arithmetic', src: ['S2'] }, { label: 'Farmyard manure or compost at planting', value: '11 to 17 tonnes', basis: 'arithmetic', src: ['S1'] }], note: 'Sums of the cited amounts for your plot size.' };
-  const WINDOW = { months: [7, 8, 9, 10], month_names: ['Jul', 'Aug', 'Sep', 'Oct'], note: 'July to October', rain_in_window_mm: 660, mean_temp_in_window_c: 26.8, caution: 'Check with your KVK.' };
+  const WINDOW = { months: [7, 8, 9, 10], month_names: ['Jul', 'Aug', 'Sep', 'Oct'], label: 'Jul to Oct', note: 'July to October', rain_in_window_mm: 660, mean_temp_in_window_c: 26.8, caution: 'Check with your KVK.' };
 
   test('Pathway: plot size is optional, validated, and sent; the plan and planting window for THIS land are shown', async () => {
     route('/agri/pathway-crops', CROPS); route('/agri/pathway-report', { ...REPORT, plan: PLAN, planting_window: WINDOW }); const s = spy();
@@ -129,7 +129,7 @@ export function register() {
       await click(buttonWith(m.container, 'SHOW ME HOW')); await flush(20);
       eq(JSON.stringify(s.bodies.at(-1)), JSON.stringify({ crop_id: 'dragon_fruit', irrigation_available: false, area_acres: 2.5, lat: 26.9, lon: 75.8 }));
       const plan = text(q(m.container, '[data-testid="plan"]')); has(plan, 'Your planting plan for 2.5 acres'); has(plan, 'about 1,124'); has(plan, '11 to 17 tonnes'); has(plan, 'Sums of the cited amounts');
-      const w = text(q(m.container, '[data-testid="window"]')); has(w, 'Jul to Oct'); has(w, '660 mm'); has(w, '26.8'); has(w, 'Check with your KVK');
+      const w = text(q(m.container, '[data-testid="window"]')); has(w, '(Jul to Oct)'); has(w, '660 mm'); has(w, '26.8'); has(w, 'Check with your KVK');
     } finally { await m.unmount(); s.restore(); }
   });
 
@@ -143,6 +143,28 @@ export function register() {
     route('/agri/pathway-crops', CROPS); route('/agri/pathway-report', { ...REPORT, plan: PLAN, planting_window: { ...WINDOW, rain_in_window_mm: null, mean_temp_in_window_c: null } });
     const m = await mount(<PathwayTab apiUrl="" drawnAOI={null} />);
     try { await go(m); ok(q(m.container, '[data-testid="plan"]'), 'plan still shown'); ok(!q(m.container, '[data-testid="window"]'), 'no window line without local data'); lacks(text(m.container), '0 mm of rain'); } finally { await m.unmount(); }
+  });
+
+
+  test('Pathway: a one-month or split-season window uses its label, never "first to last month"', async () => {
+    route('/agri/pathway-crops', CROPS);
+    for (const [label, months, names, forbidden] of [['Jul', [7], ['Jul'], 'Jul to Jul'], ['Feb to Mar and Jun to Aug', [6, 7, 8, 2, 3], ['Jun', 'Jul', 'Aug', 'Feb', 'Mar'], 'Jun to Mar']]) {
+      route('/agri/pathway-report', { ...REPORT, plan: PLAN, planting_window: { ...WINDOW, label, months, month_names: names } });
+      const m = await mount(<PathwayTab apiUrl="" drawnAOI={null} />);
+      try { await go(m); const w = text(q(m.container, '[data-testid="window"]')); has(w, `(${label})`); lacks(w, forbidden); } finally { await m.unmount(); }
+    }
+  });
+
+  test('Pathway: an "edge" result is amber, a gap red, ok green; soil texture shows its name', async () => {
+    route('/agri/pathway-crops', CROPS);
+    route('/agri/pathway-report', { ...REPORT, verdict: { ...REPORT.verdict, checks: [{ factor: 'annual rainfall', your_value: 1528, crop_range: '500-1500 mm', status: 'edge', note: '' }, { factor: 'soil pH', your_value: 8.1, crop_range: '5.5-7.0', status: 'gap', note: '' }, { factor: 'coldest month mean temperature', your_value: 20, crop_range: '>5 C', status: 'ok', note: '' }, { factor: 'soil texture', your_value: 'Clay loam', crop_range: 'drains freely or is medium', status: 'gap', note: '' }] } });
+    const m = await mount(<PathwayTab apiUrl="" drawnAOI={null} />);
+    try {
+      await go(m);
+      const cell = (factor) => [...qa(m.container, '[data-testid="checks"] tbody tr')].find((r) => r.children[0].textContent === factor).children[3].style.color;
+      eq(cell('annual rainfall'), 'rgb(201, 168, 106)'); eq(cell('soil pH'), 'rgb(255, 122, 69)'); eq(cell('coldest month mean temperature'), 'rgb(46, 204, 113)');
+      has(text(q(m.container, '[data-testid="checks"]')), 'Clay loam');
+    } finally { await m.unmount(); }
   });
 
   const pdfFetch = (status = 200, detail) => {
