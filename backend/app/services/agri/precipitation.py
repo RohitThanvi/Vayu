@@ -132,6 +132,7 @@ def compute_precipitation_context(
         "recent_days": recent_days,
         "historical_mean_mm": round(hist_mean, 1),
         "years_used": len(historical_totals),
+        "historical_totals_mm": [round(v, 1) for v in historical_totals],
         "anomaly_pct": anomaly_pct,
         "condition": condition,
         "resolution_note": "CHIRPS ~5.5km grid — regional rainfall estimate, not a rain-gauge-precise "
