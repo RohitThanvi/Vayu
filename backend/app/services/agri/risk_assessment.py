@@ -222,3 +222,153 @@ def risk_class(stress: Optional[float], vuln: Optional[float]) -> Dict[str, Any]
     i = min(max(RISK_ORDER.index(lvl) + shift, 0), len(RISK_ORDER) - 1)
     return {"class": RISK_ORDER[i], "stress_class": lvl, "vulnerability_class": vc, "shift": shift,
             "rule": f"Stress class {lvl}" + (f", moved {'up' if shift > 0 else 'down'} one step because land vulnerability is {vc.lower()}." if shift else f", unchanged (vulnerability {vc.lower()}).")}
+
+
+# ----------------------------------------------------------------------------------------------------------- land context: vulnerability and soil condition
+SLOPE_CLASSES = [(1, "nearly level", 0), (3, "very gently sloping", 10), (5, "gently sloping", 25), (10, "moderately sloping", 45), (15, "strongly sloping", 65), (25, "moderately steep", 80),
+                 (33, "steep", 90), (50, "very steep", 100), (float("inf"), "extremely steep", 100)]
+ARIDITY_CLASSES = [(0.05, "hyper-arid", 100), (0.20, "arid", 85), (0.50, "semi-arid", 60), (0.65, "dry sub-humid", 30), (float("inf"), "humid", 0)]
+OC_CLASSES = [(0.50, "low", 80), (0.75, "medium", 40), (float("inf"), "high", 10)]            # Soil Health Card limits, percent
+GW_TREND_POINTS = {"declining": 80.0, "decreasing": 80.0, "stable": 25.0, "rising": 0.0, "increasing": 0.0}
+AWC_MAX, AWC_MIN = max(AWC_MM_PER_M.values()), min(AWC_MM_PER_M.values())
+
+
+def _band(value, table):
+    for limit, label, pts in table:
+        if value < limit or limit == float("inf"): return label, pts
+    return table[-1][1], table[-1][2]
+
+
+def aridity_index(profile: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """UNEP aridity index = annual rainfall / annual PET (Thornthwaite from the monthly temperatures). Thornthwaite under-estimates PET in hot dry air, so this can flatter arid sites."""
+    temps, rain = profile.get("monthly_temp_c"), profile.get("annual_rain_mm")
+    if not temps or len(temps) != 12 or any(t is None for t in temps) or rain is None: return None
+    try:
+        pet = sum(thornthwaite_pet(temps, profile.get("lat") if profile.get("lat") is not None else 20.0))
+    except Exception:
+        return None
+    if not pet or pet <= 0: return None
+    ai = round(rain / pet, 2); label, pts = _band(ai, ARIDITY_CLASSES)
+    return {"value": ai, "class": label, "points": pts, "annual_pet_mm": round(pet, 0)}
+
+
+def vulnerability(profile: Dict[str, Any], gw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    f: List[Dict[str, Any]] = []
+    tc = profile.get("texture_class")
+    if tc in AWC_MM_PER_M:
+        awc = AWC_MM_PER_M[tc]; pts = round(max(0.0, min(100.0, 100.0 * (AWC_MAX - awc) / (AWC_MAX - AWC_MIN))))
+        f.append({"id": "awc", "name": "Soil water-holding capacity", "value": f"{awc} mm per m ({profile.get('texture_name') or TEXTURE_NAMES.get(tc, 'texture ' + str(tc))})", "class": "low capacity" if pts >= 66 else ("moderate" if pts >= 33 else "high capacity"),
+                  "points": pts, "source": "awc, openlandmap", "note": "Less water held between rains means drought bites sooner. Rated against the span of USDA texture classes."})
+    oc = profile.get("organic_carbon_gkg")
+    if oc is not None:
+        pct = round(oc / 10.0, 2); label, pts = _band(pct, OC_CLASSES)
+        f.append({"id": "oc", "name": "Soil organic carbon", "value": f"{pct} %", "class": label, "points": pts, "source": "shc, openlandmap", "note": "Organic matter holds water and nutrients. Soil Health Card limits: low <0.50, medium 0.50-0.75, high >0.75 percent."})
+    sl = profile.get("slope_pct")
+    if sl is not None:
+        label, pts = _band(sl, SLOPE_CLASSES)
+        f.append({"id": "slope", "name": "Slope", "value": f"{round(sl, 1)} %", "class": label, "points": pts, "source": "aislus", "note": "Steeper land sheds rain as runoff and erodes; AIS&LUS classes."})
+    ai = aridity_index(profile)
+    if ai:
+        f.append({"id": "aridity", "name": "Climatic aridity (P/PET)", "value": f"{ai['value']} (PET about {int(ai['annual_pet_mm'])} mm)", "class": ai["class"], "points": ai["points"], "source": "unep",
+                  "note": "Annual rainfall over annual potential evapotranspiration (Thornthwaite); UNEP classes."})
+    tr = str((gw or {}).get("trend") or "").lower()
+    if gw and gw.get("status") == "ok" and tr in GW_TREND_POINTS:
+        f.append({"id": "gw_trend", "name": "Groundwater-storage trend", "value": f"{tr} ({gw.get('slope_cm_per_year')} cm/yr)", "class": tr, "points": GW_TREND_POINTS[tr], "source": "grace",
+                  "note": "A regional (~300 km) signal over a short record; low reliability."})
+    pts = [x["points"] for x in f]
+    score = round(sum(pts) / len(pts), 1) if pts else None
+    return {"score": score, "class": vuln_class(score), "factors": f, "factors_used": len(f), "of": 5}
+
+
+def soil_condition(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Descriptive panel in Soil Health Card terms. NOT scored: pH and salinity are fertility constraints, not drought vulnerability."""
+    ph, oc, tc, sl = profile.get("ph"), profile.get("organic_carbon_gkg"), profile.get("texture_class"), profile.get("slope_pct")
+    rows: List[Dict[str, Any]] = []
+    if ph is not None:
+        cls = "acidic" if ph < 6.5 else ("neutral" if ph <= 7.0 else "alkaline")
+        extra = " Below about 5.5 (strongly acidic) phosphorus is often locked up and aluminium or manganese can be toxic (general knowledge)." if ph < 5.5 else (
+            " Above about 8.5 sodicity (high exchangeable sodium) is possible and should be tested for (general knowledge)." if ph > 8.5 else "")
+        rows.append({"id": "ph", "name": "Soil reaction (pH)", "value": round(ph, 1), "class": cls, "source": "shc, openlandmap", "interpretation": f"Soil Health Card reading: {cls}." + extra, "scored": False})
+    if oc is not None:
+        pct = round(oc / 10.0, 2); label, _ = _band(pct, OC_CLASSES)
+        rows.append({"id": "oc", "name": "Organic carbon", "value": f"{pct} %", "class": label, "source": "shc, openlandmap", "interpretation": f"Soil Health Card rating: {label}. Build it with compost, crop residue and green manure.", "scored": True})
+    if tc is not None:
+        drain = "poorly drained (heavy)" if tc in cfg.POOR_DRAINING_TEXTURES else ("freely drained (light)" if tc in cfg.FREE_DRAINING_TEXTURES else "moderately drained")
+        rows.append({"id": "texture", "name": "Texture and drainage", "value": profile.get("texture_name") or TEXTURE_NAMES.get(tc, str(tc)), "class": drain, "source": "awc, openlandmap",
+                     "interpretation": f"Holds about {AWC_MM_PER_M.get(tc, 'n/a')} mm of plant-available water per metre; {drain}.", "scored": True})
+    if sl is not None:
+        label, _ = _band(sl, SLOPE_CLASSES)
+        rows.append({"id": "slope", "name": "Slope", "value": f"{round(sl, 1)} %", "class": label, "source": "aislus", "interpretation": f"AIS&LUS class: {label}.", "scored": True})
+    return {"properties": rows, "not_measurable": ["salinity (electrical conductivity)", "nitrogen, phosphorus, potassium and micronutrients", "soil biology and structure", "compaction and crusting"],
+            "advice": "These cannot be sensed from space. Get a soil test (nutrients, pH, organic carbon, salinity) from a KVK or the state soil-testing laboratory; the Soil Health Card scheme provides it.",
+            "model_note": CITATIONS["openlandmap"]}
+
+
+def climate_panel(profile: Dict[str, Any]) -> Dict[str, Any]:
+    t = [x for x in (profile.get("monthly_temp_c") or []) if x is not None]
+    ai = aridity_index(profile)
+    return {"annual_rain_mm": profile.get("annual_rain_mm"), "annual_mean_temp_c": profile.get("annual_mean_temp_c"), "coldest_month_c": min(t) if t else None, "hottest_month_c": max(t) if t else None,
+            "aridity": ai, "monthly_rain_mm": profile.get("monthly_rain_mm"), "monthly_temp_c": profile.get("monthly_temp_c"), "monthly_ndvi": profile.get("monthly_ndvi"), "years": profile.get("climate_years"),
+            "note": profile.get("climate_note")}
+
+
+# ----------------------------------------------------------------------------------------------------------- assembly (pure) and orchestration
+def assemble_assessment(x: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the full assessment from already-fetched inputs. Pure: all network work happens in compute_risk_assessment."""
+    err = x.get("errors") or {}; profile = x.get("profile") or {}
+    inds = [ind_vhi(x.get("vdi"), err.get("vdi")), ind_ndvi(x.get("baseline"), err.get("baseline")), ind_rain(x.get("prec"), err.get("prec")), ind_rootzone(x.get("rz"), err.get("rz")),
+            ind_groundwater(x.get("gw"), err.get("gw"))]
+    fam = family_scores(inds); stress = combine(fam); sens = sensitivity(fam); conf = confidence(inds)
+    vuln = vulnerability(profile, x.get("gw")) if profile else {"score": None, "class": "unknown", "factors": [], "factors_used": 0, "of": 5}
+    risk = risk_class(stress, vuln["score"])
+    ok = sorted([i for i in inds if i["status"] == "ok"], key=lambda i: -(i["stress"] or 0))
+    drivers = [f"{i['name']}: {i['class']}" for i in ok if (i["stress"] or 0) >= 40][:3]
+    calm = [i["name"] for i in ok if (i["stress"] or 0) == 0]
+    v1 = x.get("v1") or {}
+    return {"as_of": x.get("as_of"), "stress": {"score": stress, "class": stress_level(stress), "families": {f: {"label": FAMILY_LABEL[f], "score": fam[f]} for f in FAMILIES}},
+            "vulnerability": vuln, "risk": risk, "confidence": conf, "sensitivity": sens, "indicators": inds,
+            "summary": {"drivers": drivers, "no_signal": calm, "unavailable": [f"{i['name']} ({i['reason']})" for i in inds if i["status"] != "ok"]},
+            "soil_condition": soil_condition(profile) if profile else None, "climate": climate_panel(profile) if profile else None,
+            "legacy": {"risk_score": v1.get("risk_score"), "band": v1.get("band"), "confidence": v1.get("confidence"), "note": "The original 3-indicator score (drought extent, vegetation loss, soil-moisture), kept for alerts and the watchlist."} if v1 else None,
+            "errors": err, "citations": CITATIONS, "limitations": LIMITATIONS,
+            "methodology": ["Each stress indicator is compared with its own multi-year history and placed in a standard class (US Drought Monitor percentile bands; Kogan VHI classes).",
+                            "Classes are scaled to 0-100 stress points: 20 per US Drought Monitor category, 25 per VHI class (a convention).",
+                            "Indicators are averaged within each family, then families are averaged with equal weights over the families that are available.",
+                            "Land vulnerability is the mean of documented ordinal ratings (water-holding capacity, organic carbon, slope, aridity, groundwater trend).",
+                            "Risk class = stress class moved one step up for high vulnerability, one step down for low vulnerability.",
+                            "Sensitivity: the stress score is recomputed under four alternative weightings and with each family left out; the range is reported."]}
+
+
+def _safe(fn, *a, **k):
+    try:
+        return fn(*a, **k), None
+    except Exception as e:
+        logger.warning(f"risk assessment source failed ({getattr(fn, '__name__', fn)}): {e}")
+        return None, str(e)[:200]
+
+
+def compute_risk_assessment(aoi: Dict[str, Any], as_of: Optional[str] = None, profile: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Gather every source concurrently (each can fail on its own), then assemble. Earth Engine paths are mock-tested only from the dev sandbox."""
+    from ..gee_remote_sensing import compute_vegetation_drought_index
+    from . import crop_suitability
+    from .baseline import compute_seasonal_baseline
+    from .groundwater import compute_groundwater_trend
+    from .precipitation import compute_precipitation_context
+    from .risk_scoring import compute_risk_score
+    from .root_zone import fetch_root_zone, summarize_root_zone
+    end = datetime.strptime(as_of, "%Y-%m-%d") if as_of else datetime.utcnow()
+    start = max(end - timedelta(days=60), datetime(end.year, 1, 1))
+    if (end - start).days < 20: end, start = datetime(end.year - 1, 12, 31), datetime(end.year - 1, 11, 1)
+    e, s0, e0 = end.strftime("%Y-%m-%d"), start.strftime("%Y-%m-%d"), as_of or datetime.utcnow().strftime("%Y-%m-%d")
+    jobs = {"v1": (compute_risk_score, (), {"aoi": aoi, "as_of": as_of}), "vdi": (compute_vegetation_drought_index, (), {"aoi": aoi, "start_date": s0, "end_date": e}),
+            "baseline": (compute_seasonal_baseline, (), {"aoi": aoi, "as_of": e0, "years_back": 8}), "prec": (compute_precipitation_context, (), {"aoi": aoi, "as_of": e0, "recent_days": 90, "years_back": 30}),
+            "rz": (lambda **k: summarize_root_zone(fetch_root_zone(**k)), (), {"aoi": aoi, "as_of": e0}), "gw": (compute_groundwater_trend, (), {"aoi": aoi})}
+    if profile is None: jobs["profile"] = (crop_suitability.sample_location_profile, (), {"lat": None, "lon": None, "aoi": aoi})
+    out: Dict[str, Any] = {"as_of": e0, "errors": {}}
+    with ThreadPoolExecutor(max_workers=7) as pool:
+        futs = {k: pool.submit(_safe, fn, *a, **kw) for k, (fn, a, kw) in jobs.items()}
+        for k, fu in futs.items():
+            val, er = fu.result(); out[k] = val
+            if er: out["errors"][k] = er
+    if profile is not None: out["profile"] = profile
+    return assemble_assessment(out)
