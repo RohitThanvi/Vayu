@@ -1,6 +1,6 @@
 import { test, mount, flush, click, route, resetNet, text, q, qa, buttonWith, eq, ok, has, lacks } from './harness.jsx';
 import AgriPanel from '../src/components/AgriPanel.jsx';
-import { fmt } from '../src/components/RiskAssessmentPanel.jsx';
+import { fmt } from '../src/lib/riskFormat.js';
 import FX from './fixtures/risk_assessment.json';
 
 const AOI = { type: 'Polygon', coordinates: [[[75, 26], [75.1, 26], [75.1, 26.1], [75, 26.1], [75, 26]]] };

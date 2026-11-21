@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { fmt } from '../lib/riskFormat.js';
 
 // Detailed risk assessment (v2) for the Agri Score tab: stress indicators, land vulnerability, soil condition, sensitivity, confidence,
 // each with its source, plus the full PDF report. Sits BELOW the original score card, which is unchanged (alerts still use it).
@@ -12,7 +13,6 @@ const RISK_COLORS = ['#4a7c59', '#c9933a', '#c96a3a', '#8b2020'];   // Low, Mode
 const RISK_ORDER = ['Low', 'Moderate', 'High', 'Very high'];
 const riskColor = (cls) => { const i = RISK_ORDER.indexOf(cls); return i < 0 ? S.text3 : RISK_COLORS[i]; };
 
-export const fmt = (v, nd = 1) => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(nd).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1') : 'n/a');
 
 const Label = ({ children }) => <div style={{ fontSize: 11, fontFamily: S.mono, letterSpacing: 1.5, textTransform: 'uppercase', color: S.text3, marginTop: 4 }}>{children}</div>;
 const Box = ({ children, color, testid }) => <div data-testid={testid} style={{ background: S.surface2, border: `1px solid ${color || S.border}`, padding: '9px 11px', fontSize: 13, color: S.text2, lineHeight: 1.55 }}>{children}</div>;
