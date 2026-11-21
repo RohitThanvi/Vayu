@@ -3,7 +3,8 @@
 import { TERRARIUM_MAX_ZOOM } from './elevation.js';
 
 export const TERRAIN_SAMPLES = 65;
-export const zoomForLevel = (level) => Math.max(level, 0);
+// Cesium's geographic level L has ~2x finer sample spacing than Mercator zoom L-1 needs, so zoom = L oversamples slightly (no aliasing). Beyond the data's finest zoom the same tiles are reused.
+export const zoomForLevel = (level) => Math.min(Math.max(level, 0), TERRARIUM_MAX_ZOOM);
 
 export function createTerrainProvider(Cesium, sampler, { samples = TERRAIN_SAMPLES, credit } = {}) {
   const tilingScheme = new Cesium.GeographicTilingScheme(), deg = Cesium.Math.toDegrees;
