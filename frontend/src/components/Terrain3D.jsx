@@ -31,7 +31,7 @@ export default function Terrain3D({ center, zoom, onClose }) {
             const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.drawImage(bmp, 0, 0); return ctx.getImageData(0, 0, 256, 256).data;
           } finally { aborters.delete(ctl); }
         };
-        const sampler = createElevationSampler({ fetchTile, cacheSize: QUALITY[quality].elevationCache }), img = imageryConfig(import.meta.env), q0 = QUALITY[quality];
+        const sampler = createElevationSampler({ fetchTile, cacheSize: QUALITY[quality].elevationCache }), img = imageryConfig(import.meta.env);
         setImgInfo({ source: img.source, attribution: img.attribution }); if (img.warning) setNotes((n) => [...n, img.warning]);
         viewer = new Cesium.Viewer(host.current, {
           baseLayer: false, terrainProvider: createTerrainProvider(Cesium, sampler, { credit: TERRAIN_ATTRIBUTION }), requestRenderMode: true,

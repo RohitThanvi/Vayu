@@ -304,6 +304,33 @@ Vessels are auto-categorized (Tanker, Cargo/Bulk, Passenger, Fishing, Auxiliary)
   <br /><sub>Orbital tab — live global aircraft positions on a 3D globe, with per-aircraft telemetry.</sub>
 </p>
 
+### Optional 3D view
+
+An optional, **off-by-default** 3D map overlay (CesiumJS). Set `VITE_ENABLE_3D_VIEW=1` on the frontend build and a **3D VIEW** button appears (bottom-left); it opens a full-screen 3D view of whatever the 2D map is showing (same centre and zoom), with orbit/zoom, a Low / Balanced / High quality switch, a time-of-day (sun) slider and Reset view. Nothing is downloaded until the button is clicked, the 2D map is never touched, and if the device has no WebGL the view says so and returns to the map. Code: `frontend/src/lib/view3d/` (pure, tested modules) and `components/Terrain3D.jsx` + `View3DLauncher.jsx`.
+
+**Free, commercially usable data only.** No Cesium ion (its free tier is non-commercial only), no Google Photorealistic 3D Tiles (paid), no OpenStreetMap tile servers (their policy forbids heavy use). Every source below is keyless; the view prints the attribution each one requires.
+
+| Layer | Source | Notes |
+|---|---|---|
+| Terrain | AWS/Mapzen Terrain Tiles (Terrarium PNG) | about 30 m resolution; decoded in the browser into a Cesium heightmap |
+| Relief shading | computed in the browser from that terrain (Horn hillshade) | needed because Cesium's custom heightmap terrain has no vertex normals |
+| Buildings | OpenFreeMap vector tiles (OpenMapTiles schema, OpenStreetMap data), zoom 14 | tile URL read from OpenFreeMap's TileJSON at run time (it changes with each planet build) |
+| Imagery | EOX Sentinel-2 cloudless **2016** (about 10 m) | automatic fallback to NASA GIBS MODIS (about 250 m) if its tiles fail |
+| Engine | CesiumJS 1.147.0 from jsDelivr, pinned, with Subresource Integrity hashes | regenerate both hashes when bumping the version (`loadCesium.js`) |
+
+**What it is, honestly.** A clean stylised 3D map, not photorealistic and not "game graphics": the realism of Google's 3D tiles comes from photogrammetry that has no free equivalent. Building heights come from OSM height/levels tags where mapped; unmapped buildings get a 5 m placeholder (the view says so). Terrain is about 30 m, so small relief is smoothed. Imagery is from 2016, so recent construction and land-use change are not shown. Shadows are on at High quality only. Visualisation only; not used by any score.
+
+**Licences to confirm before launch.** The EOX 2016 mosaic is the only EOX Sentinel-2 cloudless layer offered under CC BY (commercial use with attribution); EOX's later yearly mosaics (2018 onward) are CC BY-NC-SA, non-commercial. One older EOX page describes the 2016 layer as CC BY-SA, so confirm the current terms with EOX. **The 2D map's True Color layer currently loads `s2cloudless-2024` (`EOX_TRUE_COLOR_URL` in `App.jsx`), which is in the non-commercial group**: switch it to the 2016 layer or get a licence from EOX before charging for Vayu.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VITE_ENABLE_3D_VIEW` | unset (off) | exactly `1` turns the feature on |
+| `VITE_3D_IMAGERY_SOURCE` | unset | `gibs` forces the NASA GIBS imagery |
+| `VITE_3D_IMAGERY_URL` | unset | your own licensed imagery: an `https` template containing `{z}`, `{x}`, `{y}` (Web Mercator) |
+| `VITE_3D_IMAGERY_ATTRIBUTION`, `VITE_3D_IMAGERY_MAX_ZOOM` | `Imagery: custom source`, 13 | credit line shown in the view, and the finest zoom of that imagery |
+
+**Tested vs not tested.** The geometry, decoding, caching, imagery fallback, quality switching, loader and component lifecycle are unit-tested with a stand-in for Cesium; every Cesium property used was checked against the cesium 1.147.0 package, and the terrain row order was checked against the real library in Node. **Nothing has been rendered in a real browser, and OpenFreeMap, AWS, EOX, GIBS and jsDelivr were not reachable from the development sandbox**, so look at it on a real phone and laptop (a Vercel preview with the flag on) before enabling it for users. If the browser console reports an integrity error for Cesium, re-check the hash as described in `loadCesium.js`.
+
 ---
 
 ## Platform: Theme, Mobile &amp; Landing Page
@@ -383,7 +410,7 @@ Vayu/
 │       │                             #   AgriPanel + AgriIntelBar, BusinessIntelBar, EconomicsView, IntelPanel,
 │       │                             #   OrbitalGlobe, GlobeCloseUpMap, LiveGoesPanel, StreetViewPanel, SparkChart, ...
 │       ├── hooks/                    # WebSocket/polling abstractions (vessels, aircraft, satellites, wind, intel feed)
-│       └── lib/                      # esriZoomGuard (location-aware Esri zoom clamping)
+│       └── lib/                      # esriZoomGuard (location-aware Esri zoom clamping); view3d/ (optional 3D view)
 ├── backend/
 │   ├── app/api/                      # REST + WebSocket routers: query, intel, layers, agri, report,
 │   │                                 #   reporting, auth, remote_sensing
