@@ -3,11 +3,11 @@ import geojsonvt from 'geojson-vt';
 import vtpbf from 'vt-pbf';
 import { TILE, LRU, altitudeForZoom, decodeTerrarium, hash01, lonLatToGlobalPixel, lonLatToTile, metersPerPixel, tileCorner, tilesCoveringCircle } from '../src/lib/view3d/geo.js';
 import { createElevationSampler } from '../src/lib/view3d/elevation.js';
-import { createBaseImageryProvider, createHillshadeProvider, createTerrainProvider, zoomForLevel } from '../src/lib/view3d/terrain.js';
+import { createBaseImageryProvider, createHillshadeProvider, createTerrainProvider, watchImageryErrors, zoomForLevel } from '../src/lib/view3d/terrain.js';
 import { BUILDING_ZOOM, buildingColorHex, footprintBase, getTileTemplate, parseBuildings, resetTileTemplate, tileUrl } from '../src/lib/view3d/buildings.js';
-import { GIBS_ATTRIBUTION, gibsUrl, imageryConfig } from '../src/lib/view3d/imagery.js';
+import { EOX_2016_ATTRIBUTION, EOX_2016_URL, GIBS_ATTRIBUTION, gibsUrl, imageryConfig } from '../src/lib/view3d/imagery.js';
 import { QUALITY, detectQuality, utcForSolarHour, view3dEnabled } from '../src/lib/view3d/quality.js';
-import { CESIUM_BASE, CESIUM_VERSION, loadCesium } from '../src/lib/view3d/loadCesium.js';
+import { CESIUM_BASE, CESIUM_VERSION, loadCesium, CESIUM_JS_SRI, CESIUM_CSS_SRI } from '../src/lib/view3d/loadCesium.js';
 import View3DLauncher from '../src/components/View3DLauncher.jsx';
 
 const near = (a, b, tol = 1e-3, msg) => ok(Math.abs(a - b) <= tol, `${msg || 'not near'}: ${a} vs ${b}`);
@@ -136,12 +136,21 @@ export function register() {
   });
 
   // ------------------------------------------------------------------ config, quality, loader
-  test('3D imagery: NASA GIBS by default (yesterday, UTC); a custom https template is accepted; a bad one falls back with a warning', () => {
+  test('3D imagery: EOX 2016 (the only commercially licensed EOX mosaic) by default with a GIBS fallback; custom https template accepted; bad one falls back with a warning', () => {
     const now = new Date('2026-11-21T00:30:00Z'); has(gibsUrl(now), '/2026-11-20/'); has(gibsUrl(now), '{z}/{y}/{x}.jpg');
-    const d = imageryConfig({}, now); eq([d.source, d.maxZoom, d.attribution], ['gibs', 9, GIBS_ATTRIBUTION]);
-    const c = imageryConfig({ VITE_3D_IMAGERY_URL: 'https://t.example/{z}/{x}/{y}.jpg', VITE_3D_IMAGERY_MAX_ZOOM: '14', VITE_3D_IMAGERY_ATTRIBUTION: 'Ours' }, now); eq([c.source, c.maxZoom, c.attribution], ['custom', 14, 'Ours']);
+    const d = imageryConfig({}, now); eq([d.source, d.maxZoom, d.url, d.attribution], ['eox2016', 14, EOX_2016_URL, EOX_2016_ATTRIBUTION]); eq([d.fallback.source, d.fallback.maxZoom, d.fallback.attribution], ['gibs', 9, GIBS_ATTRIBUTION]);
+    ok(/s2cloudless-2016_3857/.test(EOX_2016_URL) && !/s2cloudless-20(1[89]|2\d)/.test(EOX_2016_URL), 'only the CC BY 2016 layer; later EOX mosaics are non-commercial'); has(EOX_2016_ATTRIBUTION, 'Contains modified Copernicus Sentinel data 2016'); has(EOX_2016_ATTRIBUTION, 'EOX IT Services GmbH');
+    eq(imageryConfig({ VITE_3D_IMAGERY_SOURCE: 'gibs' }, now).source, 'gibs'); ok(!imageryConfig({ VITE_3D_IMAGERY_SOURCE: 'gibs' }, now).fallback, 'GIBS has no further fallback');
+    const c = imageryConfig({ VITE_3D_IMAGERY_URL: 'https://t.example/{z}/{x}/{y}.jpg', VITE_3D_IMAGERY_MAX_ZOOM: '14', VITE_3D_IMAGERY_ATTRIBUTION: 'Ours' }, now); eq([c.source, c.maxZoom, c.attribution, c.fallback.source], ['custom', 14, 'Ours', 'gibs']);
     eq(imageryConfig({ VITE_3D_IMAGERY_URL: 'https://t.example/{z}/{x}/{y}.jpg', VITE_3D_IMAGERY_MAX_ZOOM: '99' }, now).maxZoom, 19);
     for (const bad of ['http://t.example/{z}/{x}/{y}.jpg', 'https://t.example/{z}/{x}.jpg']) { const r = imageryConfig({ VITE_3D_IMAGERY_URL: bad }, now); eq(r.source, 'gibs'); has(r.warning, 'https'); }
+  });
+  test('3D imagery: the error watcher fires once at the limit, ignores later errors, and can be unsubscribed', () => {
+    const mk = () => { const hs = []; return { hs, errorEvent: { addEventListener: (h) => hs.push(h), removeEventListener: (h) => { const k = hs.indexOf(h); if (k >= 0) hs.splice(k, 1); } } }; };
+    const p = mk(); let fails = 0; watchImageryErrors(p, { limit: 3, onFail: () => fails++ }); const fire = () => p.hs.slice().forEach((h) => h({}));
+    fire(); fire(); eq(fails, 0); fire(); eq(fails, 1); fire(); fire(); eq(fails, 1, 'fires once'); eq(p.hs.length, 0, 'listener removed after firing');
+    const p2 = mk(); const off = watchImageryErrors(p2, { limit: 2, onFail: () => fails++ }); off(); eq(p2.hs.length, 0); watchImageryErrors({}, { onFail: () => {} });
+    const hs3 = []; let f3 = 0; watchImageryErrors({ errorEvent: { addEventListener: (h) => hs3.push(h) } }, { limit: 2, onFail: () => f3++ }); for (let i = 0; i < 6; i++) hs3.forEach((h) => h({})); eq(f3, 1, 'still fires once when the event cannot unsubscribe');
   });
   test('3D quality: phones and weak devices start Low; the flag is on only for exactly "1"; the sun hour maps to a UTC instant', () => {
     eq(detectQuality({ mobile: true, deviceMemory: 16, hardwareConcurrency: 16 }), 'low'); eq(detectQuality({ deviceMemory: 4, hardwareConcurrency: 16 }), 'low'); eq(detectQuality({ deviceMemory: 8, hardwareConcurrency: 8 }), 'high'); eq(detectQuality({}), 'balanced');
@@ -154,7 +163,9 @@ export function register() {
     const mk = () => { const added = []; const doc = { head: { appendChild: (e) => added.push(e) }, createElement: (t) => ({ tag: t, remove() {} }) }; return { added, doc, win: {} }; };
     const pre = mk(); pre.win.Cesium = { v: 1 }; eq((await loadCesium(pre)).v, 1); eq(pre.added.length, 0, 'already loaded: nothing injected');
     const a = mk(); const p1 = loadCesium(a), p2 = loadCesium(a); eq(a.added.length, 2, 'one stylesheet and one script'); const script = a.added.find((e) => e.tag === 'script');
-    has(script.src, 'cesium@1.147.0/Build/Cesium/Cesium.js'); eq(a.win.CESIUM_BASE_URL, CESIUM_BASE); a.win.Cesium = { ok: 1 }; script.onload(); eq(await p1, await p2);
+    has(script.src, 'cesium@1.147.0/Build/Cesium/Cesium.js'); eq(a.win.CESIUM_BASE_URL, CESIUM_BASE); eq(script.integrity, CESIUM_JS_SRI); eq(script.crossOrigin, 'anonymous'); const sheet = a.added.find((e) => e.tag === 'link'); eq(sheet.integrity, CESIUM_CSS_SRI); eq(sheet.crossOrigin, 'anonymous');
+    ok(/^sha384-[A-Za-z0-9+/]{64}$/.test(CESIUM_JS_SRI) && /^sha384-[A-Za-z0-9+/]{64}$/.test(CESIUM_CSS_SRI), 'sha384 base64 digests');
+    a.win.Cesium = { ok: 1 }; script.onload(); eq(await p1, await p2);
     const b = mk(); const pf = loadCesium(b); b.added.find((e) => e.tag === 'script').onerror(); let msg = ''; try { await pf; } catch (e) { msg = e.message; } has(msg, 'Could not load the 3D engine');
     const retry = loadCesium(b); eq(b.added.filter((e) => e.tag === 'script').length, 2, 'a retry injects a fresh script'); b.win.Cesium = { r: 1 }; b.added.filter((e) => e.tag === 'script')[1].onload(); eq((await retry).r, 1);
   });
@@ -166,14 +177,16 @@ export function register() {
 
   // A permissive stand-in for Cesium: every property is callable/assignable, Viewer is spied.
   const deep = () => { const store = new Map(); const p = new Proxy(function () {}, { get: (_, k) => { if (k === 'then') return undefined; if (k === Symbol.toPrimitive) return () => 0; if (!store.has(k)) store.set(k, deep()); return store.get(k); }, set: (_, k, v) => { store.set(k, v); return true; }, apply: () => deep(), construct: () => deep() }); return p; };
-  const fakeCesium = (log) => { const C = deep(); C.Viewer = function (el, opts) { log.opts = opts; log.el = el; const v = deep(); v.destroy = () => { log.destroyed = (log.destroyed || 0) + 1; }; v.isDestroyed = () => false; log.viewer = v; return v; }; return C; };
+  const fakeCesium = (log) => { const C = deep();
+    C.UrlTemplateImageryProvider = function (opts) { const p = deep(), hs = []; p.errorEvent = { addEventListener: (h) => hs.push(h), removeEventListener: (h) => { const k = hs.indexOf(h); if (k >= 0) hs.splice(k, 1); } }; (log.providers = log.providers || []).push({ opts, fire: () => hs.slice().forEach((h) => h({})) }); return p; };
+    C.Viewer = function (el, opts) { log.opts = opts; log.el = el; const v = deep(); log.layers = []; v.imageryLayers = { addImageryProvider: (prov, idx) => { const l = { alpha: 1, prov, idx }; log.layers.push(l); return l; }, remove: (l) => { log.removed = (log.removed || 0) + 1; log.removedLayer = l; } }; v.destroy = () => { log.destroyed = (log.destroyed || 0) + 1; }; v.isDestroyed = () => false; log.viewer = v; return v; }; return C; };
   const open = async (log, props = {}) => { window.Cesium = fakeCesium(log); const closed = { n: 0 }; const Terrain3D = (await import('../src/components/Terrain3D.jsx')).default; const m = await mount(<Terrain3D center={{ lat: 26.9, lon: 75.8 }} zoom={12} onClose={() => closed.n++} {...props} />); await flush(40); return { m, closed }; };
 
   test('3D view: starts the viewer on free sources only, shows every attribution, and tears down on close', async () => {
     const log = {}; const { m, closed } = await open(log);
     try {
       ok(!q(m.container, '[data-testid="terrain3d-loading"]'), 'past the loading state'); eq(log.opts.baseLayer, false, 'no Cesium ion default imagery'); ok(log.opts.terrainProvider, 'our own terrain provider'); eq(log.opts.requestRenderMode, true);
-      const credit = text(q(m.container, '[data-testid="terrain3d-credit"]')); for (const t of ['OpenFreeMap', 'OpenStreetMap', 'Tilezen', 'NASA GIBS']) has(credit, t);
+      const credit = text(q(m.container, '[data-testid="terrain3d-credit"]')); for (const t of ['OpenFreeMap', 'OpenStreetMap', 'Tilezen', 'Sentinel-2 cloudless', 'EOX IT Services GmbH', 'Copernicus Sentinel data 2016']) has(credit, t); lacks(credit, 'NASA GIBS');
       lacks(text(m.container), 'Cesium ion'); await click(byLabel(m.container, 'Close 3D view')); eq(closed.n, 1); await key(window, 'Escape'); eq(closed.n, 2, 'Escape closes too');
     } finally { await m.unmount(); }
     eq(log.destroyed, 1, 'viewer destroyed exactly once on unmount');
@@ -185,6 +198,24 @@ export function register() {
       await click(buttonWith(m.container, 'High')); eq(log.viewer.useBrowserRecommendedResolution, false); eq(log.viewer.resolutionScale, 1);
       await click(buttonWith(m.container, 'Low')); eq(log.viewer.useBrowserRecommendedResolution, true); eq(log.viewer.resolutionScale, 0.75); eq(log.viewer.scene.globe.maximumScreenSpaceError, QUALITY.low.maximumScreenSpaceError); eq(log.viewer.scene.msaaSamples, 1);
       eq(byLabel(m.container, 'Time of day').type, 'range');
+    } finally { await m.unmount(); delete window.Cesium; }
+  });
+  test('3D view: if the sharper imagery keeps failing it swaps to NASA GIBS under the hillshade, once, and says so; a few errors are tolerated', async () => {
+    const log = {}; const { m } = await open(log);
+    try {
+      eq(log.layers.length, 2, 'base imagery + hillshade'); const base = log.providers[0]; has(base.opts.url, 's2cloudless-2016_3857'); eq(base.opts.maximumLevel, 14);
+      for (let i = 0; i < 5; i++) base.fire(); await flush(10); ok(!log.removed, 'below the limit: no swap'); lacks(text(q(m.container, '[data-testid="terrain3d-credit"]')), 'NASA GIBS');
+      base.fire(); await flush(20); eq(log.removed, 1, 'failed base layer removed'); const added = log.layers[log.layers.length - 1]; eq(added.idx, 0, 'fallback goes UNDER the hillshade'); has(added.prov === undefined ? '' : JSON.stringify(log.providers[log.providers.length - 1].opts.url), 'gibs.earthdata.nasa.gov');
+      eq(log.providers[log.providers.length - 1].opts.maximumLevel, 9); has(text(m.container), 'coarser NASA GIBS imagery is shown instead'); has(text(q(m.container, '[data-testid="terrain3d-credit"]')), 'NASA GIBS'); lacks(text(q(m.container, '[data-testid="terrain3d-credit"]')), 'EOX');
+      for (let i = 0; i < 10; i++) base.fire(); await flush(10); eq(log.removed, 1, 'swaps only once');
+    } finally { await m.unmount(); delete window.Cesium; }
+  });
+  test('3D view: building shadows are on only at High quality', async () => {
+    const log = {}; const { m } = await open(log);
+    try {
+      await click(buttonWith(m.container, 'High')); eq(log.viewer.shadows, true); eq(log.viewer.shadowMap.size, 2048); eq(log.viewer.shadowMap.softShadows, true);
+      await click(buttonWith(m.container, 'Low')); eq(log.viewer.shadows, false); await click(buttonWith(m.container, 'Balanced')); eq(log.viewer.shadows, false);
+      eq([QUALITY.low.shadows, QUALITY.balanced.shadows, QUALITY.high.shadows], [false, false, true]);
     } finally { await m.unmount(); delete window.Cesium; }
   });
   test('3D view: a start-up failure (no WebGL) shows a clear message and leaves the app usable', async () => {

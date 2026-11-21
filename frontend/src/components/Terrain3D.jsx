@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { loadCesium } from '../lib/view3d/loadCesium.js';
 import { createElevationSampler, TERRAIN_ATTRIBUTION } from '../lib/view3d/elevation.js';
-import { createTerrainProvider, createBaseImageryProvider, createHillshadeProvider } from '../lib/view3d/terrain.js';
+import { createTerrainProvider, createBaseImageryProvider, createHillshadeProvider, watchImageryErrors } from '../lib/view3d/terrain.js';
 import { imageryConfig } from '../lib/view3d/imagery.js';
 import { BUILDINGS_ATTRIBUTION, DEFAULT_HEIGHT_NOTE, buildingColorHex, buildingTilesAround, footprintBase, getTileTemplate, parseBuildings, tileUrl, BUILDING_ZOOM } from '../lib/view3d/buildings.js';
 import { QUALITY, detectQuality, utcForSolarHour } from '../lib/view3d/quality.js';
 import { altitudeForZoom, tileCorner } from '../lib/view3d/geo.js';
 
 // Optional 3D view: free, commercial-safe data only (no Cesium ion, no Google tiles). Terrain = AWS/Mapzen Terrain Tiles, relief = computed hillshade, buildings = OpenFreeMap (OSM),
-// imagery = NASA GIBS by default. It sits on top of the app as an overlay and is off unless VITE_ENABLE_3D_VIEW=1. See README, "Optional 3D view".
+// imagery = EOX Sentinel-2 cloudless 2016 by default (falls back to NASA GIBS). It sits on top of the app as an overlay and is off unless VITE_ENABLE_3D_VIEW=1. See README, "Optional 3D view".
 const S = { text: '#e8efe9', dim: '#9fb0a5', bg: 'rgba(10,18,14,0.82)', border: 'rgba(255,255,255,0.14)', accent: '#7eb8d4', mono: "'JetBrains Mono','Courier New',monospace" };
 const ELEV_ZOOM = 13;       // zoom used for building base heights (the source data is ~30 m, so more detail would not be real)
 
@@ -16,7 +16,7 @@ export default function Terrain3D({ center, zoom, onClose }) {
   const host = useRef(null), api = useRef({}), [status, setStatus] = useState('loading'), [error, setError] = useState(null);
   const [quality, setQuality] = useState(() => detectQuality({ deviceMemory: navigator.deviceMemory, hardwareConcurrency: navigator.hardwareConcurrency, mobile: /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) }));
   const [hour, setHour] = useState(15), [count, setCount] = useState(0), [notes, setNotes] = useState([]);
-  const [imgSrc, setImgSrc] = useState('gibs');
+  const [imgInfo, setImgInfo] = useState(() => { const c = imageryConfig(import.meta.env); return { source: c.source, attribution: c.attribution }; });
 
   useEffect(() => {
     let cancelled = false, viewer = null; const aborters = new Set(); const timers = [];
@@ -32,13 +32,19 @@ export default function Terrain3D({ center, zoom, onClose }) {
           } finally { aborters.delete(ctl); }
         };
         const sampler = createElevationSampler({ fetchTile, cacheSize: QUALITY[quality].elevationCache }), img = imageryConfig(import.meta.env), q0 = QUALITY[quality];
-        setImgSrc(img.source); if (img.warning) setNotes((n) => [...n, img.warning]);
+        setImgInfo({ source: img.source, attribution: img.attribution }); if (img.warning) setNotes((n) => [...n, img.warning]);
         viewer = new Cesium.Viewer(host.current, {
           baseLayer: false, terrainProvider: createTerrainProvider(Cesium, sampler, { credit: TERRAIN_ATTRIBUTION }), requestRenderMode: true,
           baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false, navigationHelpButton: false, animation: false, timeline: false, fullscreenButton: false, infoBox: false, selectionIndicator: false,
         });
         const scene = viewer.scene, globe = scene.globe;
-        viewer.imageryLayers.addImageryProvider(createBaseImageryProvider(Cesium, img));
+        const baseProvider = createBaseImageryProvider(Cesium, img), baseLayer = viewer.imageryLayers.addImageryProvider(baseProvider);
+        // The sharper imagery's URL could not be tested from the dev sandbox: if its tiles keep failing, swap to the coarse NASA GIBS layer (under the hillshade) instead of leaving a black globe.
+        if (img.fallback) watchImageryErrors(baseProvider, { onFail: () => {
+          if (cancelled || viewer.isDestroyed()) return;
+          viewer.imageryLayers.remove(baseLayer, true); viewer.imageryLayers.addImageryProvider(createBaseImageryProvider(Cesium, img.fallback), 0);
+          setImgInfo({ source: img.fallback.source, attribution: img.fallback.attribution }); setNotes((n) => [...n, 'The sharper imagery could not be loaded, so coarser NASA GIBS imagery is shown instead.']); scene.requestRender();
+        } });
         viewer.imageryLayers.addImageryProvider(createHillshadeProvider(Cesium, sampler, { credit: TERRAIN_ATTRIBUTION })).alpha = 0.6;
         globe.depthTestAgainstTerrain = true; globe.enableLighting = true; globe.showGroundAtmosphere = true;
         scene.fog.enabled = true; scene.skyAtmosphere.show = true; scene.screenSpaceCameraController.minimumZoomDistance = 60;
@@ -46,7 +52,7 @@ export default function Terrain3D({ center, zoom, onClose }) {
         api.current = { Cesium, viewer, sampler, applyQuality: null };
 
         // Cesium renders at the browser's recommended (CSS-pixel) resolution by default; only High asks for full device pixels.
-        const apply = (qk) => { const q = QUALITY[qk]; viewer.useBrowserRecommendedResolution = qk !== 'high'; viewer.resolutionScale = q.resolutionScale; globe.maximumScreenSpaceError = q.maximumScreenSpaceError; scene.msaaSamples = q.msaaSamples; scene.requestRender(); };
+        const apply = (qk) => { const q = QUALITY[qk]; viewer.useBrowserRecommendedResolution = qk !== 'high'; viewer.resolutionScale = q.resolutionScale; globe.maximumScreenSpaceError = q.maximumScreenSpaceError; scene.msaaSamples = q.msaaSamples; viewer.shadows = !!q.shadows; if (q.shadows) { viewer.shadowMap.softShadows = true; viewer.shadowMap.size = 2048; viewer.shadowMap.maximumDistance = 6000; } scene.requestRender(); };
         api.current.applyQuality = apply; apply(quality);
 
         const alt = altitudeForZoom(zoom, center.lat), pitch = -38, back = alt / Math.tan(-pitch * Math.PI / 180) / 111320;
@@ -78,7 +84,7 @@ export default function Terrain3D({ center, zoom, onClose }) {
               }));
             }
             if (!instances.length) return 0;
-            const primitive = new Cesium.Primitive({ geometryInstances: instances, appearance: new Cesium.PerInstanceColorAppearance({ translucent: false, closed: true }), asynchronous: true });
+            const primitive = new Cesium.Primitive({ geometryInstances: instances, appearance: new Cesium.PerInstanceColorAppearance({ translucent: false, closed: true }), asynchronous: true, shadows: Cesium.ShadowMode.ENABLED });
             scene.primitives.add(primitive); tiles.set(key, { primitive, n: instances.length }); scene.requestRender(); return instances.length;
           } catch (e) { tiles.delete(key); if (e.name !== 'AbortError') setNotes((n) => (n.includes('Some building tiles could not be loaded.') ? n : [...n, 'Some building tiles could not be loaded.'])); return 0; }
           finally { aborters.delete(ctl); }
@@ -110,7 +116,7 @@ export default function Terrain3D({ center, zoom, onClose }) {
   useEffect(() => { api.current.setHour?.(hour); }, [hour]);
   useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
   const btn = (on) => ({ padding: '4px 9px', fontSize: 12, fontFamily: S.mono, background: on ? 'rgba(126,184,212,0.2)' : 'transparent', border: `1px solid ${on ? S.accent : S.border}`, color: on ? S.accent : S.text, cursor: 'pointer' });
-  const credit = useCallback(() => [BUILDINGS_ATTRIBUTION, TERRAIN_ATTRIBUTION, imgSrc === 'gibs' ? 'Imagery: NASA GIBS / Worldview (MODIS)' : 'Imagery: configured source (see site settings)'].join(' \u00B7 '), [imgSrc]);
+  const credit = useCallback(() => [BUILDINGS_ATTRIBUTION, TERRAIN_ATTRIBUTION, imgInfo.attribution].join(' \u00B7 '), [imgInfo]);
 
   return (
     <div data-testid="terrain3d" role="dialog" aria-label="3D view" style={{ position: 'fixed', inset: 0, zIndex: 2100, background: '#05080a' }}>
