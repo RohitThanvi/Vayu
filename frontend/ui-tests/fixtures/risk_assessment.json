@@ -1,0 +1,837 @@
+{
+ "empty": {
+  "as_of": "2026-11-20",
+  "citations": {
+   "aislus": "Slope classes of the All India Soil and Land Use Survey as used by ICAR-NBSS&LUP: 0-1, 1-3, 3-5, 5-10, 10-15, 15-25, 25-33, 33-50, >50 percent.",
+   "awc": "Plant-available water capacity by USDA texture: UC Cooperative Extension ANR 80243 and Alberta Agriculture (see water_balance.py); sand is an estimate.",
+   "chirps": "Funk, C. et al. (2015) The climate hazards infrared precipitation with stations (CHIRPS). Scientific Data 2:150066.",
+   "grace": "NASA GRACE / GRACE-FO mascon liquid-water-equivalent thickness: a regional (~300 km) storage signal, not a well-level measurement.",
+   "ipcc": "IPCC (2014) Climate Change 2014: Impacts, Adaptation and Vulnerability, AR5 WGII: risk as the interaction of hazard, exposure and vulnerability.",
+   "kogan": "Kogan, F.N. (1995) Application of vegetation index and brightness temperature for drought detection. Advances in Space Research 15(11):91-100 (VCI, TCI, VHI). Class limits as summarised in UN-SPIDER's drought-detection recommended practice.",
+   "openlandmap": "OpenLandMap / SoilGrids-style modelled soil layers (pH, organic carbon, texture) at 250 m: model estimates, not field measurements.",
+   "shc": "Soil Health Card rating limits (Government of India Soil Health Card scheme; ICAR-IISS): organic carbon low <0.50, medium 0.50-0.75, high >0.75 percent; soil reaction acidic <6.5, neutral 6.5-7.0, alkaline >7.0.",
+   "smap": "NASA SMAP Level-4 Global 3-hourly 9 km Surface and Root Zone Soil Moisture (SPL4SMGP): modelled, SMAP brightness temperature assimilated into a land-surface model.",
+   "spi": "McKee, T.B., Doesken, N.J., Kleist, J. (1993) The relationship of drought frequency and duration to time scales. 8th Conference on Applied Climatology, AMS (SPI).",
+   "unep": "UNEP (1992) World Atlas of Desertification: aridity index P/PET, hyper-arid <0.05, arid 0.05-0.20, semi-arid 0.20-0.50, dry sub-humid 0.50-0.65, humid >=0.65.",
+   "usdm": "US Drought Monitor percentile-rank classification (D0 21st-30th, D1 11th-20th, D2 6th-10th, D3 3rd-5th, D4 0-2nd percentile): droughtmonitor.unl.edu/About/AbouttheData/DroughtClassification.aspx"
+  },
+  "climate": null,
+  "confidence": {
+   "coverage": "0 of 4 indicator families",
+   "label": "low",
+   "mean_reliability": 0.0,
+   "missing": [
+    "vegetation",
+    "rainfall",
+    "soil_moisture",
+    "groundwater"
+   ],
+   "score": 0.0
+  },
+  "errors": {
+   "baseline": "b",
+   "gw": "g",
+   "prec": "p",
+   "profile": "x",
+   "rz": "r",
+   "vdi": "boom"
+  },
+  "indicators": [
+   {
+    "family": "vegetation",
+    "id": "vhi",
+    "name": "Vegetation Health Index (VHI)",
+    "reason": "boom",
+    "reliability": null,
+    "source": "MODIS NDVI 250 m + LST 1 km (Spectra drought index)",
+    "status": "unavailable",
+    "stress": null
+   },
+   {
+    "family": "vegetation",
+    "id": "ndvi_z",
+    "name": "NDVI anomaly vs seasonal normal",
+    "reason": "b",
+    "reliability": null,
+    "source": "Sentinel-2 SR (10 m)",
+    "status": "unavailable",
+    "stress": null
+   },
+   {
+    "family": "rainfall",
+    "id": "rain_pct",
+    "name": "Rainfall percentile (SPI-like)",
+    "reason": "p",
+    "reliability": null,
+    "source": "CHIRPS daily (5.5 km)",
+    "status": "unavailable",
+    "stress": null
+   },
+   {
+    "family": "soil_moisture",
+    "id": "rz_pct",
+    "name": "Root-zone soil moisture percentile",
+    "reason": "r",
+    "reliability": null,
+    "source": "SMAP L4 (modelled, ~10 km)",
+    "status": "unavailable",
+    "stress": null
+   },
+   {
+    "family": "groundwater",
+    "id": "gw_pct",
+    "name": "Groundwater-storage percentile (GRACE)",
+    "reason": "g",
+    "reliability": null,
+    "source": "NASA GRACE/GRACE-FO mascons (~300 km)",
+    "status": "unavailable",
+    "stress": null
+   }
+  ],
+  "legacy": null,
+  "limitations": [
+   "Not validated against yield or crop-loss data. The score is a documented, standardised stress read, not a forecast of loss.",
+   "Ordinal classes are scaled to points by convention (20 per drought category); the points are not a measurement.",
+   "Soil properties are 250 m model estimates; pH, organic carbon and texture can differ from the field. Nutrients, salinity, micronutrients and soil biology cannot be sensed from space: get a soil test (Soil Health Card).",
+   "SMAP root-zone moisture is ~10 km model output; GRACE is ~300 km and its record here is short (low reliability).",
+   "VHI, VCI and TCI are relative to the pixel's own record; a short record understates extremes.",
+   "Crop type, sowing date, irrigation and management are unknown, so this is a land and season assessment, not a crop-specific one."
+  ],
+  "methodology": [
+   "Each stress indicator is compared with its own multi-year history and placed in a standard class (US Drought Monitor percentile bands; Kogan VHI classes).",
+   "Classes are scaled to 0-100 stress points: 20 per US Drought Monitor category, 25 per VHI class (a convention).",
+   "Indicators are averaged within each family, then families are averaged with equal weights over the families that are available.",
+   "Land vulnerability is the mean of documented ordinal ratings (water-holding capacity, organic carbon, slope, aridity, groundwater trend).",
+   "Risk class = stress class moved one step up for high vulnerability, one step down for low vulnerability.",
+   "Sensitivity: the stress score is recomputed under four alternative weightings and with each family left out; the range is reported."
+  ],
+  "risk": {
+   "class": "Cannot assess",
+   "rule": "No stress indicator was available.",
+   "shift": 0,
+   "stress_class": "unknown",
+   "vulnerability_class": "unknown"
+  },
+  "sensitivity": {
+   "max": null,
+   "min": null,
+   "most_influential": null,
+   "range": null,
+   "robust": false,
+   "variants": {
+    "equal weights (headline)": null,
+    "groundwater-down-weighted": null,
+    "moisture-heavy": null,
+    "rainfall-heavy": null,
+    "vegetation-heavy": null
+   }
+  },
+  "soil_condition": null,
+  "stress": {
+   "class": "unknown",
+   "families": {
+    "groundwater": {
+     "label": "Groundwater",
+     "score": null
+    },
+    "rainfall": {
+     "label": "Rainfall",
+     "score": null
+    },
+    "soil_moisture": {
+     "label": "Soil moisture",
+     "score": null
+    },
+    "vegetation": {
+     "label": "Vegetation health",
+     "score": null
+    }
+   },
+   "score": null
+  },
+  "summary": {
+   "drivers": [],
+   "no_signal": [],
+   "unavailable": [
+    "Vegetation Health Index (VHI) (boom)",
+    "NDVI anomaly vs seasonal normal (b)",
+    "Rainfall percentile (SPI-like) (p)",
+    "Root-zone soil moisture percentile (r)",
+    "Groundwater-storage percentile (GRACE) (g)"
+   ]
+  },
+  "vulnerability": {
+   "class": "unknown",
+   "factors": [],
+   "factors_used": 0,
+   "of": 5,
+   "score": null
+  }
+ },
+ "full": {
+  "as_of": "2026-11-10",
+  "citations": {
+   "aislus": "Slope classes of the All India Soil and Land Use Survey as used by ICAR-NBSS&LUP: 0-1, 1-3, 3-5, 5-10, 10-15, 15-25, 25-33, 33-50, >50 percent.",
+   "awc": "Plant-available water capacity by USDA texture: UC Cooperative Extension ANR 80243 and Alberta Agriculture (see water_balance.py); sand is an estimate.",
+   "chirps": "Funk, C. et al. (2015) The climate hazards infrared precipitation with stations (CHIRPS). Scientific Data 2:150066.",
+   "grace": "NASA GRACE / GRACE-FO mascon liquid-water-equivalent thickness: a regional (~300 km) storage signal, not a well-level measurement.",
+   "ipcc": "IPCC (2014) Climate Change 2014: Impacts, Adaptation and Vulnerability, AR5 WGII: risk as the interaction of hazard, exposure and vulnerability.",
+   "kogan": "Kogan, F.N. (1995) Application of vegetation index and brightness temperature for drought detection. Advances in Space Research 15(11):91-100 (VCI, TCI, VHI). Class limits as summarised in UN-SPIDER's drought-detection recommended practice.",
+   "openlandmap": "OpenLandMap / SoilGrids-style modelled soil layers (pH, organic carbon, texture) at 250 m: model estimates, not field measurements.",
+   "shc": "Soil Health Card rating limits (Government of India Soil Health Card scheme; ICAR-IISS): organic carbon low <0.50, medium 0.50-0.75, high >0.75 percent; soil reaction acidic <6.5, neutral 6.5-7.0, alkaline >7.0.",
+   "smap": "NASA SMAP Level-4 Global 3-hourly 9 km Surface and Root Zone Soil Moisture (SPL4SMGP): modelled, SMAP brightness temperature assimilated into a land-surface model.",
+   "spi": "McKee, T.B., Doesken, N.J., Kleist, J. (1993) The relationship of drought frequency and duration to time scales. 8th Conference on Applied Climatology, AMS (SPI).",
+   "unep": "UNEP (1992) World Atlas of Desertification: aridity index P/PET, hyper-arid <0.05, arid 0.05-0.20, semi-arid 0.20-0.50, dry sub-humid 0.50-0.65, humid >=0.65.",
+   "usdm": "US Drought Monitor percentile-rank classification (D0 21st-30th, D1 11th-20th, D2 6th-10th, D3 3rd-5th, D4 0-2nd percentile): droughtmonitor.unl.edu/About/AbouttheData/DroughtClassification.aspx"
+  },
+  "climate": {
+   "annual_mean_temp_c": 25.333333333333332,
+   "annual_rain_mm": 568.0,
+   "aridity": {
+    "annual_pet_mm": 1424.0,
+    "class": "semi-arid",
+    "points": 60,
+    "value": 0.4
+   },
+   "coldest_month_c": 15,
+   "hottest_month_c": 34,
+   "monthly_ndvi": null,
+   "monthly_rain_mm": [
+    8,
+    9,
+    6,
+    4,
+    12,
+    60,
+    190,
+    185,
+    75,
+    12,
+    3,
+    4
+   ],
+   "monthly_temp_c": [
+    15,
+    18,
+    24,
+    30,
+    34,
+    34,
+    30,
+    28,
+    29,
+    26,
+    20,
+    16
+   ],
+   "note": null,
+   "years": "approx. normals"
+  },
+  "confidence": {
+   "coverage": "4 of 4 indicator families",
+   "label": "high",
+   "mean_reliability": 0.76,
+   "missing": [],
+   "score": 0.76
+  },
+  "errors": {},
+  "indicators": [
+   {
+    "baseline": "per-pixel record 2001-2024; 20 years with data",
+    "class": "moderate (Kogan)",
+    "family": "vegetation",
+    "id": "vhi",
+    "name": "Vegetation Health Index (VHI)",
+    "note": "VCI 30.0 (vegetation condition), TCI 26.0 (temperature condition). Valid pixels 0.8.",
+    "percentile": null,
+    "reliability": "high",
+    "resolution": "1 km",
+    "source": "MODIS NDVI 250 m + LST 1 km (Spectra drought index)",
+    "status": "ok",
+    "stress": 50.0,
+    "unit": "0-100",
+    "value": 28.0,
+    "window": "w"
+   },
+   {
+    "baseline": "normal 0.45 +/- 0.05 over 8 years",
+    "class": "D1 moderate",
+    "family": "vegetation",
+    "id": "ndvi_z",
+    "name": "NDVI anomaly vs seasonal normal",
+    "note": "current NDVI 0.39; status ok",
+    "percentile": 11.51,
+    "reliability": "medium",
+    "resolution": "10 m",
+    "source": "Sentinel-2 SR (10 m)",
+    "status": "ok",
+    "stress": 40.0,
+    "unit": "z-score",
+    "value": -1.2,
+    "window": "30-day window to 2026-11-01"
+   },
+   {
+    "baseline": "mean 120.0 mm over 30 same-window years",
+    "class": "D4 exceptional",
+    "family": "rainfall",
+    "id": "rain_pct",
+    "name": "Rainfall percentile (SPI-like)",
+    "note": "SPI-like z = -3.09 (nonparametric, empirical percentile; WMO SPI recommends at least 30 years)",
+    "percentile": 0.0,
+    "reliability": "high",
+    "resolution": "5.5 km",
+    "source": "CHIRPS daily (5.5 km)",
+    "status": "ok",
+    "stress": 100.0,
+    "unit": "mm",
+    "value": 50.0,
+    "window": "last 90 days"
+   },
+   {
+    "baseline": "percentile as defined by the SMAP L4 product",
+    "class": "D1 moderate",
+    "family": "soil_moisture",
+    "id": "rz_pct",
+    "name": "Root-zone soil moisture percentile",
+    "note": "root zone 0.21 m3/m3 (0-100 cm), surface 0.1 m3/m3 (0-5 cm); modelled values, not measurements",
+    "percentile": 15.0,
+    "reliability": "medium",
+    "resolution": "~10 km",
+    "source": "SMAP L4 (modelled, ~10 km)",
+    "status": "ok",
+    "stress": 40.0,
+    "unit": "percentile",
+    "value": 15.0,
+    "window": "last 14 days"
+   },
+   {
+    "baseline": "percentile within its own 24-month record",
+    "class": "D1 moderate",
+    "family": "groundwater",
+    "id": "gw_pct",
+    "name": "Groundwater-storage percentile (GRACE)",
+    "note": "trend declining (-2.0 cm/yr). Regional signal with a short record: low reliability.",
+    "percentile": 10.42,
+    "reliability": "low",
+    "resolution": "~300 km",
+    "source": "NASA GRACE/GRACE-FO mascons (~300 km)",
+    "status": "ok",
+    "stress": 40.0,
+    "unit": "cm water equivalent",
+    "value": 2.0,
+    "window": "to 2026-08"
+   }
+  ],
+  "legacy": {
+   "band": "moderate",
+   "confidence": 0.8,
+   "note": "The original 3-indicator score (drought extent, vegetation loss, soil-moisture), kept for alerts and the watchlist.",
+   "risk_score": 42
+  },
+  "limitations": [
+   "Not validated against yield or crop-loss data. The score is a documented, standardised stress read, not a forecast of loss.",
+   "Ordinal classes are scaled to points by convention (20 per drought category); the points are not a measurement.",
+   "Soil properties are 250 m model estimates; pH, organic carbon and texture can differ from the field. Nutrients, salinity, micronutrients and soil biology cannot be sensed from space: get a soil test (Soil Health Card).",
+   "SMAP root-zone moisture is ~10 km model output; GRACE is ~300 km and its record here is short (low reliability).",
+   "VHI, VCI and TCI are relative to the pixel's own record; a short record understates extremes.",
+   "Crop type, sowing date, irrigation and management are unknown, so this is a land and season assessment, not a crop-specific one."
+  ],
+  "methodology": [
+   "Each stress indicator is compared with its own multi-year history and placed in a standard class (US Drought Monitor percentile bands; Kogan VHI classes).",
+   "Classes are scaled to 0-100 stress points: 20 per US Drought Monitor category, 25 per VHI class (a convention).",
+   "Indicators are averaged within each family, then families are averaged with equal weights over the families that are available.",
+   "Land vulnerability is the mean of documented ordinal ratings (water-holding capacity, organic carbon, slope, aridity, groundwater trend).",
+   "Risk class = stress class moved one step up for high vulnerability, one step down for low vulnerability.",
+   "Sensitivity: the stress score is recomputed under four alternative weightings and with each family left out; the range is reported."
+  ],
+  "risk": {
+   "class": "High",
+   "rule": "Stress class High, unchanged (vulnerability moderate).",
+   "shift": 0,
+   "stress_class": "High",
+   "vulnerability_class": "Moderate"
+  },
+  "sensitivity": {
+   "max": 65.0,
+   "min": 41.7,
+   "most_influential": "without rainfall",
+   "range": 23.3,
+   "robust": false,
+   "variants": {
+    "equal weights (headline)": 56.2,
+    "groundwater-down-weighted": 59.5,
+    "moisture-heavy": 53.0,
+    "rainfall-heavy": 65.0,
+    "vegetation-heavy": 54.0,
+    "without groundwater": 61.7,
+    "without rainfall": 41.7,
+    "without soil moisture": 61.7,
+    "without vegetation health": 60.0
+   }
+  },
+  "soil_condition": {
+   "advice": "These cannot be sensed from space. Get a soil test (nutrients, pH, organic carbon, salinity) from a KVK or the state soil-testing laboratory; the Soil Health Card scheme provides it.",
+   "model_note": "OpenLandMap / SoilGrids-style modelled soil layers (pH, organic carbon, texture) at 250 m: model estimates, not field measurements.",
+   "not_measurable": [
+    "salinity (electrical conductivity)",
+    "nitrogen, phosphorus, potassium and micronutrients",
+    "soil biology and structure",
+    "compaction and crusting"
+   ],
+   "properties": [
+    {
+     "class": "alkaline",
+     "id": "ph",
+     "interpretation": "Soil Health Card reading: alkaline.",
+     "name": "Soil reaction (pH)",
+     "scored": false,
+     "source": "shc, openlandmap",
+     "value": 8.0
+    },
+    {
+     "class": "low",
+     "id": "oc",
+     "interpretation": "Soil Health Card rating: low. Build it with compost, crop residue and green manure.",
+     "name": "Organic carbon",
+     "scored": true,
+     "source": "shc, openlandmap",
+     "value": "0.4 %"
+    },
+    {
+     "class": "freely drained (light)",
+     "id": "texture",
+     "interpretation": "Holds about 125 mm of plant-available water per metre; freely drained (light).",
+     "name": "Texture and drainage",
+     "scored": true,
+     "source": "awc, openlandmap",
+     "value": "Sandy loam"
+    },
+    {
+     "class": "very gently sloping",
+     "id": "slope",
+     "interpretation": "AIS&LUS class: very gently sloping.",
+     "name": "Slope",
+     "scored": true,
+     "source": "aislus",
+     "value": "1 %"
+    }
+   ]
+  },
+  "stress": {
+   "class": "High",
+   "families": {
+    "groundwater": {
+     "label": "Groundwater",
+     "score": 40.0
+    },
+    "rainfall": {
+     "label": "Rainfall",
+     "score": 100.0
+    },
+    "soil_moisture": {
+     "label": "Soil moisture",
+     "score": 40.0
+    },
+    "vegetation": {
+     "label": "Vegetation health",
+     "score": 45.0
+    }
+   },
+   "score": 56.2
+  },
+  "summary": {
+   "drivers": [
+    "Rainfall percentile (SPI-like): D4 exceptional",
+    "Vegetation Health Index (VHI): moderate (Kogan)",
+    "NDVI anomaly vs seasonal normal: D1 moderate"
+   ],
+   "no_signal": [],
+   "unavailable": []
+  },
+  "vulnerability": {
+   "class": "Moderate",
+   "factors": [
+    {
+     "class": "moderate",
+     "id": "awc",
+     "name": "Soil water-holding capacity",
+     "note": "Less water held between rains means drought bites sooner. Rated against the span of USDA texture classes.",
+     "points": 60,
+     "source": "awc, openlandmap",
+     "value": "125 mm per m (Sandy loam)"
+    },
+    {
+     "class": "low",
+     "id": "oc",
+     "name": "Soil organic carbon",
+     "note": "Organic matter holds water and nutrients. Soil Health Card limits: low <0.50, medium 0.50-0.75, high >0.75 percent.",
+     "points": 80,
+     "source": "shc, openlandmap",
+     "value": "0.4 %"
+    },
+    {
+     "class": "very gently sloping",
+     "id": "slope",
+     "name": "Slope",
+     "note": "Steeper land sheds rain as runoff and erodes; AIS&LUS classes.",
+     "points": 10,
+     "source": "aislus",
+     "value": "1 %"
+    },
+    {
+     "class": "semi-arid",
+     "id": "aridity",
+     "name": "Climatic aridity (P/PET)",
+     "note": "Annual rainfall over annual potential evapotranspiration (Thornthwaite); UNEP classes.",
+     "points": 60,
+     "source": "unep",
+     "value": "0.4 (PET about 1424 mm)"
+    },
+    {
+     "class": "declining",
+     "id": "gw_trend",
+     "name": "Groundwater-storage trend",
+     "note": "A regional (~300 km) signal over a short record; low reliability.",
+     "points": 80.0,
+     "source": "grace",
+     "value": "declining (-2.0 cm/yr)"
+    }
+   ],
+   "factors_used": 5,
+   "of": 5,
+   "score": 58.0
+  }
+ },
+ "partial": {
+  "as_of": "2026-11-10",
+  "citations": {
+   "aislus": "Slope classes of the All India Soil and Land Use Survey as used by ICAR-NBSS&LUP: 0-1, 1-3, 3-5, 5-10, 10-15, 15-25, 25-33, 33-50, >50 percent.",
+   "awc": "Plant-available water capacity by USDA texture: UC Cooperative Extension ANR 80243 and Alberta Agriculture (see water_balance.py); sand is an estimate.",
+   "chirps": "Funk, C. et al. (2015) The climate hazards infrared precipitation with stations (CHIRPS). Scientific Data 2:150066.",
+   "grace": "NASA GRACE / GRACE-FO mascon liquid-water-equivalent thickness: a regional (~300 km) storage signal, not a well-level measurement.",
+   "ipcc": "IPCC (2014) Climate Change 2014: Impacts, Adaptation and Vulnerability, AR5 WGII: risk as the interaction of hazard, exposure and vulnerability.",
+   "kogan": "Kogan, F.N. (1995) Application of vegetation index and brightness temperature for drought detection. Advances in Space Research 15(11):91-100 (VCI, TCI, VHI). Class limits as summarised in UN-SPIDER's drought-detection recommended practice.",
+   "openlandmap": "OpenLandMap / SoilGrids-style modelled soil layers (pH, organic carbon, texture) at 250 m: model estimates, not field measurements.",
+   "shc": "Soil Health Card rating limits (Government of India Soil Health Card scheme; ICAR-IISS): organic carbon low <0.50, medium 0.50-0.75, high >0.75 percent; soil reaction acidic <6.5, neutral 6.5-7.0, alkaline >7.0.",
+   "smap": "NASA SMAP Level-4 Global 3-hourly 9 km Surface and Root Zone Soil Moisture (SPL4SMGP): modelled, SMAP brightness temperature assimilated into a land-surface model.",
+   "spi": "McKee, T.B., Doesken, N.J., Kleist, J. (1993) The relationship of drought frequency and duration to time scales. 8th Conference on Applied Climatology, AMS (SPI).",
+   "unep": "UNEP (1992) World Atlas of Desertification: aridity index P/PET, hyper-arid <0.05, arid 0.05-0.20, semi-arid 0.20-0.50, dry sub-humid 0.50-0.65, humid >=0.65.",
+   "usdm": "US Drought Monitor percentile-rank classification (D0 21st-30th, D1 11th-20th, D2 6th-10th, D3 3rd-5th, D4 0-2nd percentile): droughtmonitor.unl.edu/About/AbouttheData/DroughtClassification.aspx"
+  },
+  "climate": {
+   "annual_mean_temp_c": 25.333333333333332,
+   "annual_rain_mm": 568.0,
+   "aridity": {
+    "annual_pet_mm": 1424.0,
+    "class": "semi-arid",
+    "points": 60,
+    "value": 0.4
+   },
+   "coldest_month_c": 15,
+   "hottest_month_c": 34,
+   "monthly_ndvi": null,
+   "monthly_rain_mm": [
+    8,
+    9,
+    6,
+    4,
+    12,
+    60,
+    190,
+    185,
+    75,
+    12,
+    3,
+    4
+   ],
+   "monthly_temp_c": [
+    15,
+    18,
+    24,
+    30,
+    34,
+    34,
+    30,
+    28,
+    29,
+    26,
+    20,
+    16
+   ],
+   "note": null,
+   "years": "approx. normals"
+  },
+  "confidence": {
+   "coverage": "3 of 4 indicator families",
+   "label": "medium",
+   "mean_reliability": 0.7,
+   "missing": [
+    "rainfall"
+   ],
+   "score": 0.52
+  },
+  "errors": {
+   "prec": "CHIRPS timeout"
+  },
+  "indicators": [
+   {
+    "baseline": "per-pixel record 2001-2024; 20 years with data",
+    "class": "moderate (Kogan)",
+    "family": "vegetation",
+    "id": "vhi",
+    "name": "Vegetation Health Index (VHI)",
+    "note": "VCI 30.0 (vegetation condition), TCI 26.0 (temperature condition). Valid pixels 0.8.",
+    "percentile": null,
+    "reliability": "high",
+    "resolution": "1 km",
+    "source": "MODIS NDVI 250 m + LST 1 km (Spectra drought index)",
+    "status": "ok",
+    "stress": 50.0,
+    "unit": "0-100",
+    "value": 28.0,
+    "window": "w"
+   },
+   {
+    "baseline": "normal 0.45 +/- 0.05 over 8 years",
+    "class": "D1 moderate",
+    "family": "vegetation",
+    "id": "ndvi_z",
+    "name": "NDVI anomaly vs seasonal normal",
+    "note": "current NDVI 0.39; status ok",
+    "percentile": 11.51,
+    "reliability": "medium",
+    "resolution": "10 m",
+    "source": "Sentinel-2 SR (10 m)",
+    "status": "ok",
+    "stress": 40.0,
+    "unit": "z-score",
+    "value": -1.2,
+    "window": "30-day window to 2026-11-01"
+   },
+   {
+    "family": "rainfall",
+    "id": "rain_pct",
+    "name": "Rainfall percentile (SPI-like)",
+    "reason": "CHIRPS timeout",
+    "reliability": null,
+    "source": "CHIRPS daily (5.5 km)",
+    "status": "unavailable",
+    "stress": null
+   },
+   {
+    "baseline": "percentile as defined by the SMAP L4 product",
+    "class": "D1 moderate",
+    "family": "soil_moisture",
+    "id": "rz_pct",
+    "name": "Root-zone soil moisture percentile",
+    "note": "root zone 0.21 m3/m3 (0-100 cm), surface 0.1 m3/m3 (0-5 cm); modelled values, not measurements",
+    "percentile": 15.0,
+    "reliability": "medium",
+    "resolution": "~10 km",
+    "source": "SMAP L4 (modelled, ~10 km)",
+    "status": "ok",
+    "stress": 40.0,
+    "unit": "percentile",
+    "value": 15.0,
+    "window": "last 14 days"
+   },
+   {
+    "baseline": "percentile within its own 24-month record",
+    "class": "D1 moderate",
+    "family": "groundwater",
+    "id": "gw_pct",
+    "name": "Groundwater-storage percentile (GRACE)",
+    "note": "trend declining (-2.0 cm/yr). Regional signal with a short record: low reliability.",
+    "percentile": 10.42,
+    "reliability": "low",
+    "resolution": "~300 km",
+    "source": "NASA GRACE/GRACE-FO mascons (~300 km)",
+    "status": "ok",
+    "stress": 40.0,
+    "unit": "cm water equivalent",
+    "value": 2.0,
+    "window": "to 2026-08"
+   }
+  ],
+  "legacy": {
+   "band": "moderate",
+   "confidence": 0.8,
+   "note": "The original 3-indicator score (drought extent, vegetation loss, soil-moisture), kept for alerts and the watchlist.",
+   "risk_score": 42
+  },
+  "limitations": [
+   "Not validated against yield or crop-loss data. The score is a documented, standardised stress read, not a forecast of loss.",
+   "Ordinal classes are scaled to points by convention (20 per drought category); the points are not a measurement.",
+   "Soil properties are 250 m model estimates; pH, organic carbon and texture can differ from the field. Nutrients, salinity, micronutrients and soil biology cannot be sensed from space: get a soil test (Soil Health Card).",
+   "SMAP root-zone moisture is ~10 km model output; GRACE is ~300 km and its record here is short (low reliability).",
+   "VHI, VCI and TCI are relative to the pixel's own record; a short record understates extremes.",
+   "Crop type, sowing date, irrigation and management are unknown, so this is a land and season assessment, not a crop-specific one."
+  ],
+  "methodology": [
+   "Each stress indicator is compared with its own multi-year history and placed in a standard class (US Drought Monitor percentile bands; Kogan VHI classes).",
+   "Classes are scaled to 0-100 stress points: 20 per US Drought Monitor category, 25 per VHI class (a convention).",
+   "Indicators are averaged within each family, then families are averaged with equal weights over the families that are available.",
+   "Land vulnerability is the mean of documented ordinal ratings (water-holding capacity, organic carbon, slope, aridity, groundwater trend).",
+   "Risk class = stress class moved one step up for high vulnerability, one step down for low vulnerability.",
+   "Sensitivity: the stress score is recomputed under four alternative weightings and with each family left out; the range is reported."
+  ],
+  "risk": {
+   "class": "Moderate",
+   "rule": "Stress class Moderate, unchanged (vulnerability moderate).",
+   "shift": 0,
+   "stress_class": "Moderate",
+   "vulnerability_class": "Moderate"
+  },
+  "sensitivity": {
+   "max": 42.5,
+   "min": 40.0,
+   "most_influential": "without vegetation health",
+   "range": 2.5,
+   "robust": true,
+   "variants": {
+    "equal weights (headline)": 41.7,
+    "groundwater-down-weighted": 42.1,
+    "moisture-heavy": 41.2,
+    "rainfall-heavy": 41.7,
+    "vegetation-heavy": 42.5,
+    "without groundwater": 42.5,
+    "without soil moisture": 42.5,
+    "without vegetation health": 40.0
+   }
+  },
+  "soil_condition": {
+   "advice": "These cannot be sensed from space. Get a soil test (nutrients, pH, organic carbon, salinity) from a KVK or the state soil-testing laboratory; the Soil Health Card scheme provides it.",
+   "model_note": "OpenLandMap / SoilGrids-style modelled soil layers (pH, organic carbon, texture) at 250 m: model estimates, not field measurements.",
+   "not_measurable": [
+    "salinity (electrical conductivity)",
+    "nitrogen, phosphorus, potassium and micronutrients",
+    "soil biology and structure",
+    "compaction and crusting"
+   ],
+   "properties": [
+    {
+     "class": "alkaline",
+     "id": "ph",
+     "interpretation": "Soil Health Card reading: alkaline.",
+     "name": "Soil reaction (pH)",
+     "scored": false,
+     "source": "shc, openlandmap",
+     "value": 8.0
+    },
+    {
+     "class": "low",
+     "id": "oc",
+     "interpretation": "Soil Health Card rating: low. Build it with compost, crop residue and green manure.",
+     "name": "Organic carbon",
+     "scored": true,
+     "source": "shc, openlandmap",
+     "value": "0.4 %"
+    },
+    {
+     "class": "freely drained (light)",
+     "id": "texture",
+     "interpretation": "Holds about 125 mm of plant-available water per metre; freely drained (light).",
+     "name": "Texture and drainage",
+     "scored": true,
+     "source": "awc, openlandmap",
+     "value": "Sandy loam"
+    },
+    {
+     "class": "very gently sloping",
+     "id": "slope",
+     "interpretation": "AIS&LUS class: very gently sloping.",
+     "name": "Slope",
+     "scored": true,
+     "source": "aislus",
+     "value": "1 %"
+    }
+   ]
+  },
+  "stress": {
+   "class": "Moderate",
+   "families": {
+    "groundwater": {
+     "label": "Groundwater",
+     "score": 40.0
+    },
+    "rainfall": {
+     "label": "Rainfall",
+     "score": null
+    },
+    "soil_moisture": {
+     "label": "Soil moisture",
+     "score": 40.0
+    },
+    "vegetation": {
+     "label": "Vegetation health",
+     "score": 45.0
+    }
+   },
+   "score": 41.7
+  },
+  "summary": {
+   "drivers": [
+    "Vegetation Health Index (VHI): moderate (Kogan)",
+    "NDVI anomaly vs seasonal normal: D1 moderate",
+    "Root-zone soil moisture percentile: D1 moderate"
+   ],
+   "no_signal": [],
+   "unavailable": [
+    "Rainfall percentile (SPI-like) (CHIRPS timeout)"
+   ]
+  },
+  "vulnerability": {
+   "class": "Moderate",
+   "factors": [
+    {
+     "class": "moderate",
+     "id": "awc",
+     "name": "Soil water-holding capacity",
+     "note": "Less water held between rains means drought bites sooner. Rated against the span of USDA texture classes.",
+     "points": 60,
+     "source": "awc, openlandmap",
+     "value": "125 mm per m (Sandy loam)"
+    },
+    {
+     "class": "low",
+     "id": "oc",
+     "name": "Soil organic carbon",
+     "note": "Organic matter holds water and nutrients. Soil Health Card limits: low <0.50, medium 0.50-0.75, high >0.75 percent.",
+     "points": 80,
+     "source": "shc, openlandmap",
+     "value": "0.4 %"
+    },
+    {
+     "class": "very gently sloping",
+     "id": "slope",
+     "name": "Slope",
+     "note": "Steeper land sheds rain as runoff and erodes; AIS&LUS classes.",
+     "points": 10,
+     "source": "aislus",
+     "value": "1 %"
+    },
+    {
+     "class": "semi-arid",
+     "id": "aridity",
+     "name": "Climatic aridity (P/PET)",
+     "note": "Annual rainfall over annual potential evapotranspiration (Thornthwaite); UNEP classes.",
+     "points": 60,
+     "source": "unep",
+     "value": "0.4 (PET about 1424 mm)"
+    },
+    {
+     "class": "declining",
+     "id": "gw_trend",
+     "name": "Groundwater-storage trend",
+     "note": "A regional (~300 km) signal over a short record; low reliability.",
+     "points": 80.0,
+     "source": "grace",
+     "value": "declining (-2.0 cm/yr)"
+    }
+   ],
+   "factors_used": 5,
+   "of": 5,
+   "score": 58.0
+  }
+ }
+}

@@ -207,3 +207,20 @@ def test_aoi_centre_handles_feature_and_multipolygon():
     for g in (p, {"type": "Feature", "geometry": p, "properties": {}}, {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": p}]}, {"type": "MultiPolygon", "coordinates": [p["coordinates"]]}):
         lat, lon = a._aoi_centre(g); assert lat == pytest.approx(26.05) and lon == pytest.approx(75.05), "closing vertex not double-counted"
     assert a._aoi_centre({"type": "Point", "coordinates": [1, 2]}) is None
+
+
+# ---------------- the frontend's test fixtures must keep the real shape ----------------
+def _shape(x):
+    if isinstance(x, dict): return {k: _shape(v) for k, v in x.items() if k not in ("citations", "variants", "errors", "families")}
+    if isinstance(x, list): return [_shape(x[0])] if x else []
+    return type(x).__name__ if x is not None else "None"
+
+
+def test_frontend_fixture_has_the_same_top_level_shape_as_the_real_assessment():
+    import json
+    fx = json.loads((Path(__file__).resolve().parents[2] / "frontend" / "ui-tests" / "fixtures" / "risk_assessment.json").read_text())
+    for name in ("full", "empty", "partial"):
+        assert set(fx[name]) == set(FULL), (name, set(fx[name]) ^ set(FULL))
+        for i in fx[name]["indicators"]: assert {"id", "name", "family", "status", "source"} <= set(i)
+    assert set(fx["full"]["indicators"][0]) == set(FULL["indicators"][0]), "regenerate the fixture: indicator fields changed"
+    assert set(fx["full"]["vulnerability"]) == set(FULL["vulnerability"]) and set(fx["full"]["soil_condition"]) == set(FULL["soil_condition"])
