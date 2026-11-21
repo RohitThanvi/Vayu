@@ -20,6 +20,7 @@ const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
 // bundle when statically imported — lazy-loaded so it only downloads
 // when a user actually opens Street View, same reasoning as OrbitalGlobe.
 const StreetViewPanel = lazy(() => import('./components/StreetViewPanel'));
+import View3DLauncher from './components/View3DLauncher.jsx';
 import GlobeCloseUpMap from './components/GlobeCloseUpMap';
 import { ESRI_HIGH_RES_URL, ESRI_ATTRIBUTION, attachEsriZoomGuard } from './lib/esriZoomGuard.js';
 import LiveGoesPanel from './components/LiveGoesPanel';
@@ -2998,6 +2999,8 @@ export default function App({ tier = 'full', onChangeTier, tierLocked = false })
           />
         </Suspense>
       )}
+
+      <View3DLauncher getView={() => { const m = mapRef.current; if (!m) return null; const c = m.getCenter(); return { lat: c.lat, lon: c.lng, zoom: m.getZoom() }; }} />
 
       {streetViewNotFoundAt && (
         <div style={{
