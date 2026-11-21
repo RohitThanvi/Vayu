@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -15,7 +15,7 @@ from ..services.agri.whatsapp import build_twiml_reply, handle_inbound_message
 from ..services.agri.phenology import compute_phenology
 from ..services.agri.crop_stages import supported_crops
 from ..services.agri.irrigation_advisory import compute_irrigation_advisory
-from ..services.agri import crop_pathways, crop_suitability, pathway_pdf, pathway_plan
+from ..services.agri import crop_pathways, crop_suitability, pathway_pdf, pathway_plan, risk_assessment, risk_pdf
 from ..services import gee_remote_sensing as rs
 from ..services.gee_cache import cached_compute, DEFAULT_TTL_SECONDS
 
@@ -138,6 +138,56 @@ async def risk_score(req: RiskScoreRequest):
     except Exception as e:
         logger.error(f"risk_score endpoint failed: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Risk scoring failed: {e}")
+
+
+async def _risk_assessment_inputs(req: RiskScoreRequest) -> Dict[str, Any]:
+    """Shared by the JSON assessment and its PDF: validate, sample the land profile (cached, same key shape as the pathway guide), compute the assessment (cached)."""
+    aoi = req.aoi_geojson
+    if not isinstance(aoi, dict) or not aoi.get("type"):
+        raise HTTPException(status_code=422, detail="aoi_geojson must be a GeoJSON geometry, Feature or FeatureCollection.")
+    if req.as_of:
+        try:
+            when = datetime.strptime(req.as_of, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=422, detail="as_of must be a date in YYYY-MM-DD form.")
+        if when > date.today():
+            raise HTTPException(status_code=422, detail="as_of cannot be in the future.")
+    as_of = _effective_as_of(req.as_of)
+    profile, profile_error = None, None
+    try:
+        profile = await asyncio.to_thread(
+            cached_compute, "agri_crop_profile", {"lat": None, "lon": None, "aoi": aoi},
+            lambda: crop_suitability.sample_location_profile(lat=None, lon=None, aoi=aoi), 86400 * 7)
+    except Exception as e:
+        logger.warning(f"risk assessment: land profile unavailable: {e}")
+        profile_error = str(e)[:200]
+    try:
+        result = await asyncio.to_thread(
+            cached_compute, "agri_risk_assessment_v2", {"aoi": aoi, "as_of": as_of, "profile": bool(profile)},
+            lambda: risk_assessment.json_safe(risk_assessment.compute_risk_assessment(aoi=aoi, as_of=as_of, profile=profile or {})), DEFAULT_TTL_SECONDS)
+    except Exception as e:
+        logger.error(f"risk_assessment endpoint failed: {e}", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Risk assessment failed: {e}")
+    if profile_error:
+        result = {**result, "errors": {**(result.get("errors") or {}), "profile": profile_error}}
+    return result
+
+
+@router.post("/risk-assessment", summary="Detailed risk assessment (v2): stress indicators, land vulnerability, soil condition, sensitivity and confidence, each with its source")
+async def risk_assessment_endpoint(req: RiskScoreRequest):
+    return await _risk_assessment_inputs(req)
+
+
+@router.post("/risk-assessment/pdf", summary="The detailed risk assessment with every metric as a PDF report")
+async def risk_assessment_pdf(req: RiskScoreRequest):
+    result = await _risk_assessment_inputs(req)
+    label = pathway_pdf._loc_label(None, None, _aoi_centre(req.aoi_geojson))
+    try:
+        pdf = await asyncio.to_thread(risk_pdf.make_risk_pdf, result, location_label=label)
+    except Exception as e:
+        logger.error(f"risk assessment pdf failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not build the PDF report.")
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="Vayu_risk_assessment_{result.get("as_of") or "latest"}.pdf"'})
 
 
 @router.post("/baseline", summary="Multi-year seasonal-normal NDVI comparison for an AOI")

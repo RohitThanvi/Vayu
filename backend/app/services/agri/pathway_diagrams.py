@@ -220,7 +220,7 @@ def range_gauge(value: Optional[float], lo: float, hi: float, unit: str = "", w=
 
 
 def climate_chart(temp: Sequence[Optional[float]], rain: Sequence[Optional[float]], band: Optional[Sequence[float]], cold_limit: Optional[float], hot_limit: Optional[float],
-                  window_months: Optional[Sequence[int]] = None, w=500, h=190):
+                  window_months: Optional[Sequence[int]] = None, w=500, h=190, crop_legend: bool = True):
     """THIS location's monthly temperature (line) and rainfall (bars) against the crop's temperature band, its cold/hot limits and its planting window."""
     d = Drawing(w, h); x0, y0, cw, ch = 40, 30, w - 84, h - 58
     tv = [v for v in temp if v is not None]; rv = [v for v in rain if v is not None]
@@ -254,7 +254,8 @@ def climate_chart(temp: Sequence[Optional[float]], rain: Sequence[Optional[float
         r = rmax * k / 4; _t(d, x0 + cw + 4, y0 + ch * k / 4 - 2, f"{r:.0f}", 6.5, colors.HexColor("#4A7FA8"))
     _t(d, x0 - 4, y0 + ch + 6, "deg C", 6.5, colors.HexColor("#D9742B"), "end"); _t(d, x0 + cw + 4, y0 + ch + 6, "rain, mm", 6.5, colors.HexColor("#4A7FA8"))
     lx = x0
-    for col, lab in ((colors.HexColor("#D9742B"), "your monthly temperature"), (colors.HexColor("#9CC6E6"), "your monthly rainfall"), (colors.HexColor("#DCEFE0"), "crop's comfortable temperature"), (colors.HexColor("#FFF2CC"), "planting window")):
+    legend = ((colors.HexColor("#D9742B"), "your monthly temperature"), (colors.HexColor("#9CC6E6"), "your monthly rainfall"), (colors.HexColor("#DCEFE0"), "crop's comfortable temperature"), (colors.HexColor("#FFF2CC"), "planting window"))
+    for col, lab in (legend if crop_legend else legend[:2]):     # crop_legend=False: no crop band or window is drawn, so do not name them
         d.add(Rect(lx, h - 14, 8, 6, fillColor=col, strokeColor=LINE, strokeWidth=0.4)); _t(d, lx + 11, h - 13, lab, 6.5, MUTED); lx += 22 + len(lab) * 3.1
     return d
 
