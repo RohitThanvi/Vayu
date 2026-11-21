@@ -31,3 +31,11 @@ export function createHillshadeProvider(Cesium, sampler, { minZoom = 7, maxZoom 
   };
   return provider;
 }
+
+/** Calls onFail() once when a provider has reported `limit` tile errors (a wrong URL or an outage), so the view can swap to a fallback instead of showing a black globe. Returns an unsubscribe function. */
+export function watchImageryErrors(provider, { limit = 6, onFail }) {
+  let n = 0, fired = false;
+  const handler = () => { n += 1; if (!fired && n >= limit) { fired = true; try { onFail(); } finally { provider.errorEvent?.removeEventListener?.(handler); } } };
+  provider.errorEvent?.addEventListener?.(handler);
+  return () => provider.errorEvent?.removeEventListener?.(handler);
+}
