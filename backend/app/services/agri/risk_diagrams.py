@@ -74,7 +74,7 @@ def position_chart(indicators: List[Dict[str, Any]], w=500, row=22):
         d.add(Line(x, y, x, y + row - 4, strokeColor=INK, strokeWidth=1.4)); d.add(Circle(x, y + row - 4, 2.6, fillColor=INK, strokeColor=WHITE, strokeWidth=0.5))
         _t(d, min(x + 5, w - 4) if v < 88 else x - 5, y + 5, f"{v:g}", 6.8, INK, "start" if v < 88 else "end", True)
     _axis(d, x0, bw, 6)
-    _t(d, x0, h - 12, "Dry end (left) = more stress. Percentile rows use the US Drought Monitor bands (D4 to D0); the VHI row uses Kogan's classes.", 6.4, MUTED)
+    _t(d, 4, h - 10, "Left (dry end) = more stress. Percentile rows use the US Drought Monitor bands (D4 to D0); the VHI row uses Kogan's classes.", 6.4, MUTED)
     return d
 
 
