@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import RiskAssessmentPanel from './RiskAssessmentPanel.jsx';
 
 // Matches the dark-terminal aesthetic used elsewhere in App.jsx (kept local
 // to avoid importing the S/Icon internals across files).
@@ -227,6 +228,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
               )}
             </div>
           )}
+          <RiskAssessmentPanel drawnAOI={drawnAOI} apiUrl={apiUrl} />
         </div>
       )}
 
