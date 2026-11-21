@@ -339,6 +339,14 @@ def assemble_assessment(x: Dict[str, Any]) -> Dict[str, Any]:
                             "Sensitivity: the stress score is recomputed under four alternative weightings and with each family left out; the range is reported."]}
 
 
+def json_safe(x: Any) -> Any:
+    """Make an assessment safe to send as JSON: NaN and infinity (which JSON cannot carry and browsers reject) become None, tuples become lists. Nothing else changes."""
+    if isinstance(x, float): return x if math.isfinite(x) else None
+    if isinstance(x, dict): return {k: json_safe(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)): return [json_safe(v) for v in x]
+    return x
+
+
 def _safe(fn, *a, **k):
     try:
         return fn(*a, **k), None
