@@ -32,7 +32,9 @@ DISCLAIMER = ("This is a documented, standardised stress read built from satelli
 
 def _num(v: Any, nd: int = 1) -> str:
     if v is None or isinstance(v, bool): return "n/a"
-    if isinstance(v, (int, float)): return f"{v:.{nd}f}".rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+    if isinstance(v, float):
+        t = f"{v:.{nd}f}"
+        return t.rstrip("0").rstrip(".") if "." in t else t           # strip only a fractional tail: "50" must stay "50", never "5"
     return str(v)
 
 
@@ -42,10 +44,11 @@ def _risk_index(cls: Optional[str]) -> Optional[int]:
 
 def _indicator_row(i: Dict[str, Any]) -> Dict[str, Any]:
     ok = i.get("status") == "ok"
-    base = {"id": i["id"], "name": i["name"], "family": FAMILY_LABEL.get(i.get("family"), i.get("family")), "status": i.get("status"), "source": i.get("source"), "cites": INDICATOR_CITES.get(i["id"], [])}
+    base = {"id": i["id"], "name": i["name"], "family": FAMILY_LABEL.get(i.get("family"), i.get("family")), "status": i.get("status"), "source": i.get("source"), "cites": INDICATOR_CITES.get(i["id"], []) if ok else []}       # an unavailable indicator cites nothing: no dangling tag, no source listed that was not used
     if not ok:
         return {**base, "value": "not available", "baseline": f"Not scored. Reason: {i.get('reason') or 'unknown'}", "percentile": "-", "class": "-", "stress": "-", "reliability": "-", "resolution": "-", "window": "-", "note": ""}
     unit = f" {i['unit']}" if i.get("unit") else ""
+    if i.get("unit") == "0-100": unit = " (on a 0-100 scale)"
     return {**base, "value": f"{_num(i['value'], 2)}{unit}", "baseline": i.get("baseline") or "n/a", "percentile": _num(i.get("percentile")) if i.get("percentile") is not None else "n/a (VHI is classed directly)",
             "class": i.get("class") or "n/a", "stress": _num(i.get("stress"), 0), "reliability": i.get("reliability") or "n/a", "resolution": i.get("resolution") or "n/a", "window": i.get("window") or "n/a", "note": i.get("note") or ""}
 
@@ -177,25 +180,25 @@ def render_pdf(c: Dict[str, Any]) -> bytes:
     S += [Spacer(1, 6), Paragraph("Provenance of each indicator", st["h2"])]
     rows = [_hdr(("Indicator", "Reliability", "Source", "Resolution", "Window"), st)]
     for i in c["indicators"]: rows.append([_cell(i["name"], st, True), _cell(i["reliability"], st), Paragraph(_p(i["source"] or "n/a") + _tag(i["cites"]), st["cell"]), _cell(i["resolution"], st), _cell(i["window"], st)])
-    S.append(_tbl(rows, [W * 0.24, W * 0.11, W * 0.31, W * 0.11, W * 0.23], st))
+    S.append(_tbl(rows, [W * 0.22, W * 0.11, W * 0.29, W * 0.14, W * 0.24], st))
     notes = [i for i in c["indicators"] if i["note"]]
     if notes:
         S += [Spacer(1, 6), Paragraph("Notes on the indicators", st["h2"])] + [Paragraph(f"<b>{_p(i['name'])}:</b> {_p(i['note'])}", st["li"], bulletText="\u2022") for i in notes]
     # ---- vulnerability
     v = c["vulnerability"]
-    S += [PageBreak(), _Outline("Land vulnerability", "vuln"), Paragraph("Land vulnerability", st["h1"]), Paragraph(_p(v["explanation"]), st["small"]), Spacer(1, 4)]
+    S += [Spacer(1, 12), _Outline("Land vulnerability", "vuln"), Paragraph("Land vulnerability", st["h1"]), Paragraph(_p(v["explanation"]), st["small"]), Spacer(1, 4)]
     if v["factors"]:
         S.append(Paragraph(f"Vulnerability: {_p(str(v['class']))}" + (f", {_num(v['score'])} of 100" if v["score"] is not None else ""), st["h2"]))
         rows = [_hdr(("Factor", "Value", "Class", "Points", "Why it matters"), st)]
         for f in v["factors"]: rows.append([_cell(f["name"], st, True), _cell(f["value"], st), _cell(f["class"], st), _cell(_num(f["points"], 0), st), Paragraph(_p(f["note"]) + _tag([k.strip() for k in f["source"].split(",") if k.strip()]), st["cell"])])
-        S.append(_tbl(rows, [W * 0.19, W * 0.20, W * 0.13, W * 0.08, W * 0.40], st))
+        S.append(_tbl(rows, [W * 0.23, W * 0.19, W * 0.12, W * 0.08, W * 0.38], st))
     # ---- soil
     S += [Spacer(1, 8), _Outline("Soil condition", "soil"), Paragraph("Soil condition (descriptive)", st["h1"])]
     soil = c["soil"]
     if soil and soil.get("properties"):
         S.append(Paragraph("pH, salinity and nutrients are fertility constraints, not drought vulnerability, so pH is described here and never enters a score. The values are 250 m model estimates.", st["small"]))
         rows = [_hdr(("Property", "Value", "Class", "In a score?", "Reading"), st)]
-        for r in soil["properties"]: rows.append([_cell(r["name"], st, True), _cell(_num(r["value"]) if not isinstance(r["value"], str) else r["value"], st), _cell(r["class"], st), _cell("Yes, vulnerability" if r.get("scored") else "No", st), Paragraph(_p(r["interpretation"]) + _tag([k.strip() for k in (r.get("source") or "").split(",") if k.strip()]), st["cell"])])
+        for r in soil["properties"]: rows.append([_cell(r["name"], st, True), _cell(r["value"] if isinstance(r["value"], str) else (f"{r['value']:.1f}" if r.get("id") == "ph" else _num(r["value"])), st), _cell(r["class"], st), _cell("Yes, vulnerability" if r.get("scored") else "No", st), Paragraph(_p(r["interpretation"]) + _tag([k.strip() for k in (r.get("source") or "").split(",") if k.strip()]), st["cell"])])
         S += [Spacer(1, 4), _tbl(rows, [W * 0.18, W * 0.12, W * 0.16, W * 0.13, W * 0.41], st), Spacer(1, 6),
               Paragraph("<b>Cannot be sensed from space:</b> " + _p("; ".join(soil["not_measurable"])) + ".", st["b"]), Spacer(1, 3), Paragraph(f"<b>What to do:</b> {_p(soil['advice'])}", st["lead"])]
     else:
@@ -207,7 +210,7 @@ def render_pdf(c: Dict[str, Any]) -> bytes:
         ar = cl.get("aridity") or {}
         facts = [("Annual rainfall", f"{_num(cl.get('annual_rain_mm'), 0)} mm"), ("Annual mean temperature", f"{_num(cl.get('annual_mean_temp_c'))} C"), ("Coldest month, mean", f"{_num(cl.get('coldest_month_c'))} C"),
                  ("Hottest month, mean", f"{_num(cl.get('hottest_month_c'))} C"), ("Aridity index (P/PET, UNEP)", f"{_num(ar.get('value'), 2)} ({ar.get('class', 'n/a')}); PET about {_num(ar.get('annual_pet_mm'), 0)} mm" if ar else "n/a"),
-                 ("Years of climate record", _num(cl.get("years")))]
+                 ("Climate record (years)", _num(cl.get("years")))]
         rows = [[_cell(a, st, True), _cell(b, st)] for a, b in facts]
         S.append(_tbl(rows, [W * 0.4, W * 0.6], st, header=False))
         if cl.get("note"): S += [Spacer(1, 4), Paragraph(f"<b>Note:</b> {_p(cl['note'])}", st["lead"])]

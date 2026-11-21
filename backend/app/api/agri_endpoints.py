@@ -401,8 +401,13 @@ async def pathway_manual(crop_id: str):
 
 
 def _aoi_centre(aoi):
+    """Rough centre (lat, lon) of a Polygon, MultiPolygon, Feature or FeatureCollection: mean of the first outer ring's vertices. Used only for the label on a PDF."""
     try:
-        ring = aoi["coordinates"][0] if aoi.get("type") == "Polygon" else aoi["features"][0]["geometry"]["coordinates"][0]
+        g = aoi
+        if g.get("type") == "FeatureCollection": g = g["features"][0]
+        if g.get("type") == "Feature": g = g["geometry"]
+        ring = g["coordinates"][0][0] if g.get("type") == "MultiPolygon" else g["coordinates"][0]
+        if len(ring) > 1 and ring[0] == ring[-1]: ring = ring[:-1]          # GeoJSON rings repeat the first vertex; do not count it twice
         return sum(p[1] for p in ring) / len(ring), sum(p[0] for p in ring) / len(ring)
     except Exception:
         return None
