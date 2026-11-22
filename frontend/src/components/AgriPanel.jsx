@@ -15,11 +15,6 @@ function bandColor(band) { return BAND_COLOR[band] || S.text3; }
 
 export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
   const [view, setView] = useState('score'); // 'score' | 'watchlist' | 'rollup'
-  const [scoreResult, setScoreResult] = useState(null);
-  const [scoreLoading, setScoreLoading] = useState(false);
-  const [scoreError, setScoreError] = useState(null);
-  const [reportLoading, setReportLoading] = useState(false);
-  const [reportError, setReportError] = useState(null);
 
   const [regions, setRegions] = useState([]);
   const [regionName, setRegionName] = useState('');
@@ -40,45 +35,6 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
   const [mandiError, setMandiError] = useState(null);
   const [mandiCommodity, setMandiCommodity] = useState('');
   const [mandiState, setMandiState] = useState('');
-
-  const runRiskScore = useCallback(async () => {
-    if (!drawnAOI) return;
-    setScoreLoading(true); setScoreError(null); setScoreResult(null);
-    try {
-      const resp = await fetch(`${apiUrl}/api/v1/agri/risk-score`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ aoi_geojson: drawnAOI }),
-      });
-      if (!resp.ok) throw new Error((await resp.json()).detail || 'Risk scoring failed');
-      setScoreResult(await resp.json());
-    } catch (e) {
-      setScoreError(e.message);
-    } finally {
-      setScoreLoading(false);
-    }
-  }, [drawnAOI, apiUrl]);
-
-  const downloadAgriReport = async () => {
-    if (!drawnAOI) return;
-    setReportLoading(true); setReportError(null);
-    try {
-      const resp = await fetch(`${apiUrl}/api/v1/report/agri-risk`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ aoi_geojson: drawnAOI, region_name: searchedRegionName || undefined }),
-      });
-      if (!resp.ok) throw new Error((await resp.json()).detail || 'Report generation failed');
-      const blob = await resp.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = 'vayu_agri_risk_report.pdf';
-      document.body.appendChild(a); a.click(); a.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (e) {
-      setReportError(e.message);
-    } finally {
-      setReportLoading(false);
-    }
-  };
 
   const loadRegions = useCallback(async () => {
     try {
@@ -165,7 +121,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
       {view === 'score' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ fontSize: 13, color: S.text3, lineHeight: 1.6 }}>
-            Draw an AOI on the map (or search a place) to get a composite 0-100 agricultural risk score — combines vegetation stress, drought, and soil moisture into one number with a plain-language reason, instead of raw indices.
+            Draw an AOI on the map (or search a place) to get the agricultural risk assessment: drought stress from vegetation, rainfall, soil moisture and groundwater, combined with how vulnerable the land is, plus the original three indicators (drought extent, vegetation loss, soil moisture) in full, and one PDF report with every metric.
           </div>
           <div style={{
             fontSize: 15, fontFamily: S.mono, padding: '7px 10px', letterSpacing: 1,
@@ -175,60 +131,7 @@ export default function AgriPanel({ drawnAOI, apiUrl, searchedRegionName }) {
           }}>
             {drawnAOI ? 'AOI DEFINED' : 'DRAW AOI ON MAP'}
           </div>
-          <button onClick={runRiskScore} disabled={!drawnAOI || scoreLoading}
-            style={{
-              padding: '10px', fontSize: 15, fontFamily: S.mono, letterSpacing: 2, textTransform: 'uppercase',
-              background: !drawnAOI || scoreLoading ? S.surface2 : 'rgba(126,184,212,0.1)',
-              border: `1px solid ${!drawnAOI || scoreLoading ? S.border : S.accent}`,
-              color: !drawnAOI || scoreLoading ? S.text3 : S.accent,
-              cursor: !drawnAOI || scoreLoading ? 'not-allowed' : 'pointer',
-            }}>
-            {scoreLoading ? 'SCORING...' : 'RUN RISK SCORE'}
-          </button>
-          {scoreError && (
-            <div style={{ background: 'rgba(139,32,32,0.08)', border: '1px solid rgba(139,32,32,0.3)', padding: '9px 11px', fontSize: 14, color: S.text2 }}>
-              {scoreError}
-            </div>
-          )}
-          {scoreResult && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{
-                display: 'flex', alignItems: 'baseline', gap: 10, padding: '12px',
-                background: S.surface2, border: `1px solid ${bandColor(scoreResult.band)}`,
-              }}>
-                <div style={{ fontSize: 32, fontFamily: S.mono, fontWeight: 700, color: bandColor(scoreResult.band) }}>
-                  {scoreResult.risk_score}
-                </div>
-                <div>
-                  <div style={{ fontSize: 13, fontFamily: S.mono, letterSpacing: 2, textTransform: 'uppercase', color: bandColor(scoreResult.band) }}>
-                    {scoreResult.band}
-                  </div>
-                  <div style={{ fontSize: 12, color: S.text3 }}>confidence {scoreResult.confidence}%</div>
-                </div>
-              </div>
-              <div style={{ fontSize: 13, color: S.text2, lineHeight: 1.6 }}>{scoreResult.reason}</div>
-              <div style={{ fontSize: 11, color: S.text3, fontFamily: S.mono }}>
-                inputs used: {scoreResult.inputs_used?.join(', ') || 'none'}
-                {scoreResult.inputs_failed?.length > 0 && ` · failed: ${scoreResult.inputs_failed.join(', ')}`}
-              </div>
-              <button onClick={downloadAgriReport} disabled={reportLoading}
-                style={{
-                  padding: '9px', fontSize: 13, fontFamily: S.mono, letterSpacing: 1.5, textTransform: 'uppercase',
-                  background: reportLoading ? S.surface2 : 'rgba(126,184,212,0.1)',
-                  border: `1px solid ${reportLoading ? S.border : S.accent}`,
-                  color: reportLoading ? S.text3 : S.accent,
-                  cursor: reportLoading ? 'not-allowed' : 'pointer',
-                }}>
-                {reportLoading ? 'GENERATING...' : 'DOWNLOAD REPORT (PDF)'}
-              </button>
-              {reportError && (
-                <div style={{ fontSize: 12, color: S.text2, background: 'rgba(139,32,32,0.08)', border: '1px solid rgba(139,32,32,0.3)', padding: '6px 9px' }}>
-                  {reportError}
-                </div>
-              )}
-            </div>
-          )}
-          <RiskAssessmentPanel drawnAOI={drawnAOI} apiUrl={apiUrl} />
+          <RiskAssessmentPanel drawnAOI={drawnAOI} apiUrl={apiUrl} regionName={searchedRegionName} />
         </div>
       )}
 

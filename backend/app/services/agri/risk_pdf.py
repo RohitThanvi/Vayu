@@ -5,7 +5,7 @@ Two layers, like pathway_pdf.py, so the content is testable without parsing a PD
   build_content(assessment, location_label=..., generated_on=...) -> plain dict: every number, class, source, reason and caveat shown in the report
   render_pdf(content) -> bytes (A4, reportlab, vector charts from risk_diagrams / pathway_diagrams)
 Report order: cover and summary, stress indicators (chart, values table, provenance table, notes), land vulnerability, soil condition (descriptive, not scored), climate, sensitivity,
-the original alert score, data gaps, methodology, limitations, sources.
+the original three indicators (drought extent, vegetation loss, soil moisture) in full, maps of the indicators, what to do next, data gaps, methodology, limitations, sources.
 Honesty rules carried into the text: nothing is validated against yield or loss data; class-to-points scaling is a convention; modelled layers are labelled modelled; an unavailable
 indicator is listed with its reason and never shown as zero. Helvetica / WinAnsi only (text goes through pdf_safe). English only.
 """
@@ -14,12 +14,14 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from reportlab.lib import colors
+from reportlab.lib.utils import ImageReader
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from . import pathway_diagrams as dg
 from . import risk_diagrams as rd
-from .pathway_pdf import DEEP, GREEN, INK, LINE, MUTED, PALE, _Outline, _fit, _p, _styles, pdf_safe
+from ..report_generator import GROUNDWATER_LEGEND, MOISTURE_LEGEND, NDDI_LEGEND, NDVI_LEGEND, PRECIP_LEGEND, THERMAL_LEGEND, _gradient_legend, _moisture_legend_for
+from .pathway_pdf import DEEP, GREEN, LINE, MUTED, PALE, _Outline, _fit, _p, _styles, pdf_safe
 from .risk_assessment import FAMILIES, FAMILY_LABEL, RISK_ORDER, SENSITIVITY_ROBUST_RANGE
 
 # Which citations back which indicator (the assessment names a free-text source per indicator, not citation keys).
@@ -53,6 +55,89 @@ def _indicator_row(i: Dict[str, Any]) -> Dict[str, Any]:
             "class": i.get("class") or "n/a", "stress": _num(i.get("stress"), 0), "reliability": i.get("reliability") or "n/a", "resolution": i.get("resolution") or "n/a", "window": i.get("window") or "n/a", "note": i.get("note") or ""}
 
 
+# Maps shown in the report: (key, title, caption, legend). Legends are the SAME constants the Earth Engine thumbnails are drawn with (report_generator), so a legend cannot drift from its map.
+MAP_SPECS = [
+    ("optical", "True-colour view (Sentinel-2)", "Cloud-masked Sentinel-2 median around the as-of date.", None),
+    ("ndvi", "Vegetation greenness (NDVI)", "The surface the vegetation-loss indicator is computed from. Red and orange: sparse or stressed vegetation; green: healthy.", NDVI_LEGEND),
+    ("nddi", "Drought map (NDDI)", "The surface the drought-extent indicator is computed from. Blank pixels are bare soil, water or cloud, where the index is not defined.", NDDI_LEGEND),
+    ("moisture", "Soil moisture (NASA SMAP)", "About 9 km resolution: a small area may fall inside one or two pixels. The colour range is fitted to this area, so compare shades within the map, not between maps.", MOISTURE_LEGEND),
+    ("precipitation", "Accumulated rainfall, last 90 days (CHIRPS)", "About 5.5 km resolution.", PRECIP_LEGEND),
+    ("groundwater", "Groundwater storage anomaly (GRACE)", "A regional signal of about 300 km: it does not resolve individual fields or wells. The latest available month is shown.", GROUNDWATER_LEGEND),
+    ("temperature", "Land surface temperature (Landsat thermal)", "Thermal imagery over the last 90 days; it is a surface temperature, not air temperature.", THERMAL_LEGEND),
+]
+
+
+def _maps_content(images: Optional[Dict[str, Any]]) -> list:
+    """Which maps this report has. The image bytes stay out of the content dict (it must stay plain, comparable data); only availability and the moisture colour range are recorded."""
+    images = images or {}
+    return [{"key": k, "title": t, "caption": cap, "available": bool((images.get(k) or {}).get("bytes")), "range": (images.get(k) or {}).get("range")} for k, t, cap, _ in MAP_SPECS]
+
+
+def _recommendations(cls: str, conf_label: Optional[str], unavailable: list, original_failed: list) -> List[str]:
+    """Plain next steps by risk class. Deterministic text, no chemical or input advice: only monitoring, verification and data-quality steps."""
+    recs: List[str] = []
+    if cls == "Cannot assess":
+        recs.append("No stress indicator was available for this area and date, so no risk class is given. Try again in a few days, or draw a larger area if the selected area is very small.")
+    elif cls in ("High", "Very high"):
+        recs += ["Given the elevated risk class, make a field visit to this area before any operational, insurance or subsidy decision that rests on this assessment alone.",
+                 "Use the maps to see which part of the area is driving the result: risk is rarely uniform across a large or irregular area."]
+    elif cls == "Moderate":
+        recs.append("Monitor this area every 2 to 4 weeks to see whether the moderate reading is stable, improving, or moving toward the high class.")
+    else:
+        recs.append("No immediate action is indicated by this assessment; continue routine monitoring at your normal cadence.")
+    if conf_label == "low": recs.append("Confidence is low (few indicator families contributed, or those that did are low reliability), so treat the class as indicative and confirm on the ground.")
+    if unavailable: recs.append(f"{len(unavailable)} indicator(s) had no data this run (listed under the summary and the indicator table). Consider re-running in a few weeks once satellite coverage improves, rather than treating a partial assessment as final.")
+    if original_failed: recs.append("Part of the original three-indicator score had no usable reading: " + ", ".join(k.replace("_", " ") for k in original_failed) + ".")
+    recs.append("If this area will be monitored repeatedly, add it to the Agri watchlist so future alerts can build a farmer and officer feedback history; that history improves confidence over time.")
+    return recs
+
+
+def _km2(v: Any) -> str: return "n/a" if v is None else f"{v:,.2f} km2"
+
+
+def _pc(v: Any, nd: int = 1) -> str: return "n/a" if v is None else f"{_num(v, nd)}%"
+
+
+def _original_content(lg: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The original three indicators (drought extent, vegetation loss, soil moisture) with every raw metric, their sub-scores and weights, as one section of this single report."""
+    if not lg: return None
+    rm = lg.get("raw_metrics") or {}; d, v, m = rm.get("drought") or {}, rm.get("vegetation") or {}, rm.get("soil_moisture") or {}
+    ss, w, failed, minp = lg.get("sub_scores") or {}, lg.get("weights") or {}, lg.get("inputs_failed") or [], lg.get("min_assessed_pct")
+
+    def why_missing(key: str, src: str) -> Optional[str]:
+        if ss.get(key) is not None: return None
+        if key == "drought" and d.get("assessed_area_pct") is not None and minp is not None and d["assessed_area_pct"] < minp:
+            return f"Not assessed: only {_pc(d['assessed_area_pct'])} of the area could be scored (the rest is bare soil, water or cloud), so a drought share would not be representative."
+        return "Not assessed: no usable reading for this area and period." if (src in rm or key in failed) else "Not assessed."
+    comps = [{"name": nm, "weight": _pc(100 * w[k], 0) if k in w else "n/a", "sub_score": _num(ss.get(k)) if ss.get(k) is not None else "not assessed", "reason": why_missing(k, src)}
+             for k, nm, src in (("drought", "Drought extent (NDDI)", "drought"), ("vegetation_loss", "Vegetation loss (Sentinel-2 NDVI)", "vegetation"), ("moisture_deficit", "Soil-moisture deficit (SMAP)", "soil_moisture"))]
+    drought = [("Drought-affected area (NDDI above 0.5)", f"{_km2(d.get('drought_affected_km2'))} ({_pc(d.get('drought_affected_pct'))} of the area)", "end of the period"),
+               ("Share of the assessable area under drought", _pc(d.get("drought_pct_of_assessed")), "this is what the sub-score uses"),
+               ("Severe drought area (NDDI above 0.7)", f"{_km2(d.get('severe_drought_km2'))} ({_pc(d.get('severe_drought_pct'))} of the area; {_pc(d.get('severe_pct_of_assessed'))} of the assessable area)", ""),
+               ("Area where NDDI could be computed", _pc(d.get("assessed_area_pct")), "the rest is bare soil, water or cloud and is not scored"),
+               ("Mean NDDI at start, end, change", f"{_num(d.get('avg_nddi_start'), 3)}, {_num(d.get('avg_nddi_end'), 3)}, {_num(d.get('nddi_change'), 3)}", "higher = more drought stress"),
+               ("Class limits", "0.5 (drought), 0.7 (severe)", "conventions of this platform, not published limits")] if d else []
+    veg = [("Vegetation lost", f"{_km2(v.get('vegetation_loss_km2'))} ({_pc(v.get('loss_pct'))} of the initial vegetated area)", "NDVI fell below 0.2 between the two years"),
+           ("Vegetation gained", _km2(v.get("vegetation_gain_km2")), ""), ("Net change", _km2(v.get("net_change_km2")), ""),
+           ("Initial vegetated area", f"{_km2(v.get('initial_vegetation_km2'))} ({_pc(v.get('vegetation_pct_of_aoi'))} of the area)", "")] if v else []
+    if v.get("small_base_caveat"): veg.append(("Caution", "Vegetation covers under 2% of the area", "the loss percentage rests on very few pixels and can swing a lot"))
+    moist = [("Average soil moisture, start and end", f"{_num(m.get('start_avg_soil_moisture'), 3)} and {_num(m.get('end_avg_soil_moisture'), 3)} m3/m3", "SMAP surface layer, 0-5 cm"),
+             ("Change in soil moisture", f"{_num(m.get('moisture_change'), 3)} m3/m3", "negative = drying"),
+             ("Lowest and highest end value", f"{_num(m.get('end_min_sm'), 3)} and {_num(m.get('end_max_sm'), 3)} m3/m3", ""),
+             ("Dry-stress share (moisture below 0.1 m3/m3)", f"{_pc(m.get('dry_stress_pct'))} ({_km2(m.get('dry_stress_area_km2'))})", "end of the period"),
+             ("Reading available", "yes" if m.get("data_available") else "no", "")] if m else []
+    if m.get("window_overlap_caveat"): moist.append(("Caution", "The start and end windows overlap", "the change shares some of the same imagery, so it understates real change"))
+    if m.get("sampling_note"): moist.append(("Coverage", m["sampling_note"], ""))
+    per = lg.get("period") or {}
+    return {"risk_score": lg.get("risk_score"), "band": lg.get("band"), "confidence": lg.get("confidence"), "reason": lg.get("reason"), "components": comps, "drought": drought, "vegetation": veg, "moisture": moist,
+            "period": f"{per.get('start_date')} to {per.get('end_date')}" if per else None,
+            "method": ["Drought: NDDI = (NDVI - NDWI) / (NDVI + NDWI) from cloud-masked Sentinel-2 medians (one year each side), NDWI = (NIR - SWIR) / (NIR + SWIR) (Gu et al. 2007; Gao 1996).",
+                       "Vegetation: two adjacent one-year Sentinel-2 NDVI medians; vegetated means NDVI of 0.2 or more (a convention).",
+                       "Soil moisture: NASA SMAP L4 surface moisture (about 9 km); the score combines the fall in moisture with the dry-stress share.",
+                       "The composite is the weighted mean of the sub-scores that could be computed; the weights are renormalised over the available ones. Alerts and the watchlist use this composite."],
+            "note": lg.get("note")}
+
+
 def _sensitivity_text(s: Dict[str, Any]) -> str:
     if not s or s.get("range") is None: return "The stress score could not be computed, so there is nothing to test."
     t = (f"Across the equal-weight headline, four alternative weightings and each leave-one-family-out variant, the stress score runs from {_num(s['min'])} to {_num(s['max'])} points "
@@ -63,7 +148,7 @@ def _sensitivity_text(s: Dict[str, Any]) -> str:
     return t
 
 
-def build_content(a: Dict[str, Any], *, location_label: str = "Location not given", generated_on: Optional[str] = None) -> Dict[str, Any]:
+def build_content(a: Dict[str, Any], *, location_label: str = "Location not given", generated_on: Optional[str] = None, images: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Everything the report says, as plain data."""
     risk, stress, vuln, conf = a.get("risk") or {}, a.get("stress") or {}, a.get("vulnerability") or {}, a.get("confidence") or {}
     inds = [_indicator_row(i) for i in a.get("indicators") or []]
@@ -76,6 +161,7 @@ def build_content(a: Dict[str, Any], *, location_label: str = "Location not give
                  "Confidence = coverage of the indicator families x mean indicator reliability (high 1.0, medium 0.7, low 0.4)."
                  + (f" Families with no data: {', '.join(FAMILY_LABEL[m].lower() for m in cover_missing if m in FAMILY_LABEL)}." if cover_missing else ""))
     sens = a.get("sensitivity") or {}
+    sm_unavail = (a.get("summary") or {}).get("unavailable") or []
     variants = [{"name": k, "score": v} for k, v in (sens.get("variants") or {}).items()]
     soil, clim, legacy = a.get("soil_condition"), a.get("climate"), a.get("legacy")
     vf = [{"name": f["name"], "value": f["value"], "class": f["class"], "points": f["points"], "source": f.get("source") or "", "note": f.get("note") or ""} for f in vuln.get("factors") or []]
@@ -85,6 +171,7 @@ def build_content(a: Dict[str, Any], *, location_label: str = "Location not give
     for f in vf: used += [k.strip() for k in f["source"].split(",") if k.strip()]
     for r in (soil or {}).get("properties") or []: used += [k.strip() for k in (r.get("source") or "").split(",") if k.strip()]
     if clim and (clim.get("aridity") or {}): used.append("unep")
+    if legacy: used += ["nddi", "gao", "smap"]
     seen: List[str] = []
     for k in used:
         if k in cites_all and k not in seen: seen.append(k)
@@ -100,7 +187,7 @@ def build_content(a: Dict[str, Any], *, location_label: str = "Location not give
             "soil": soil, "climate": clim, "ndvi": ndvi if ndvi and len([x for x in ndvi if x is not None]) >= 6 else None,
             "sensitivity": {"variants": variants, "min": sens.get("min"), "max": sens.get("max"), "range": sens.get("range"), "robust": sens.get("robust"), "most_influential": sens.get("most_influential"), "text": _sensitivity_text(sens),
                             "raw": sens.get("variants") or {}},
-            "legacy": legacy, "errors": [{"source": ERROR_LABELS.get(k, k), "message": str(v)[:160]} for k, v in (a.get("errors") or {}).items()],
+            "original": _original_content(legacy), "maps": _maps_content(images), "recommendations": _recommendations(cls, conf.get("label"), sm_unavail, (legacy or {}).get("inputs_failed") or []), "errors": [{"source": ERROR_LABELS.get(k, k), "message": str(v)[:160]} for k, v in (a.get("errors") or {}).items()],
             "methodology": a.get("methodology") or [], "limitations": a.get("limitations") or [], "citations": [{"key": k, "text": cites_all[k]} for k in seen], "disclaimer": DISCLAIMER}
 
 
@@ -121,6 +208,22 @@ def _cell(s, st, bold=False): return Paragraph(f"<b>{_p(s)}</b>" if bold else _p
 def _tag(keys): return (' <font size="7" color="#2E7D4F">[' + ", ".join(keys) + "]</font>") if keys else ""
 
 
+def _wrap_text(text: str, measure, width: float) -> List[str]:
+    """Greedy word wrap that also hard-breaks a single token wider than the line (a long name with no spaces must not run off the page)."""
+    lines: List[str] = []; cur = ""
+    for wd in text.split():
+        while wd and measure(wd) > width:
+            k = len(wd)
+            while k > 1 and measure(wd[:k]) > width: k -= 1
+            if cur: lines.append(cur); cur = ""
+            lines.append(wd[:k]); wd = wd[k:]
+        if not wd: continue
+        if cur and measure(cur + " " + wd) > width: lines.append(cur); cur = wd
+        else: cur = (cur + " " + wd).strip()
+    if cur: lines.append(cur)
+    return lines
+
+
 def _cover(canvas, doc, c):
     w, h = A4; m = c["meta"]
     canvas.saveState(); canvas.setFillColor(DEEP); canvas.rect(0, h - 262, w, 262, stroke=0, fill=1); canvas.setFillColor(GREEN); canvas.rect(0, h - 268, w, 6, stroke=0, fill=1)
@@ -130,11 +233,7 @@ def _cover(canvas, doc, c):
     canvas.setFillColor(pill); canvas.roundRect(51, h - 170, 210, 34, 6, stroke=0, fill=1); canvas.setFillColor(colors.white); canvas.setFont("Helvetica-Bold", 15)
     canvas.drawString(63, h - 160, pdf_safe(f"Risk: {m['risk_class']}"))
     canvas.setFillColor(colors.HexColor("#CFE8D5")); canvas.setFont("Helvetica", 10.5)
-    lines, cur = [], ""
-    for wd in f"Area: {pdf_safe(m['location'])}".split():
-        if canvas.stringWidth((cur + " " + wd).strip(), "Helvetica", 10.5) > w - 102: lines.append(cur); cur = wd
-        else: cur = (cur + " " + wd).strip()
-    lines.append(cur)
+    lines = _wrap_text(f"Area: {pdf_safe(m['location'])}", lambda t: canvas.stringWidth(t, "Helvetica", 10.5), w - 102)
     if len(lines) > 2: lines = [lines[0], lines[1].rstrip(".,; ")[:-3] + "..."]
     for k, ln in enumerate(lines): canvas.drawString(51, h - 200 - 14 * k, ln)
     canvas.drawString(51, h - 200 - 14 * len(lines) - 2, pdf_safe(f"Conditions as of {m['as_of'] or 'n/a'}   |   Prepared on {m['generated_on']}"))
@@ -147,7 +246,34 @@ def _later(canvas, doc, c):
     canvas.drawString(51, 31, "Indicative. Not validated against yield or loss data; modelled layers are estimates, not measurements."); canvas.drawRightString(w - 51, 31, f"Page {doc.page}"); canvas.restoreState()
 
 
-def render_pdf(c: Dict[str, Any]) -> bytes:
+def _map_section(c: Dict[str, Any], images: Dict[str, Any], st, W, requested: bool = True) -> list:
+    """The maps the report could draw, two per row with their legends, then one line naming any map that was not available (never silently dropped)."""
+    specs = {k: leg for k, _, _, leg in MAP_SPECS}; have = [m for m in c["maps"] if m["available"] and (images.get(m["key"]) or {}).get("bytes")]; missing = [m["title"] for m in c["maps"] if m not in have]
+    out: list = [PageBreak(), _Outline("Maps", "maps"), Paragraph("Maps of the indicators", st["h1"]),
+                 Paragraph("These are the surfaces the indicators above are computed from, drawn for the area you selected. A map shows where within the area a signal sits; it does not add a score.", st["small"]), Spacer(1, 4)]
+    if not requested:
+        out.append(Paragraph("Maps were not requested for this report.", st["b"])); return out
+    cells = []
+    for m in have:
+        raw = images[m["key"]]["bytes"]
+        try: iw, ih = ImageReader(io.BytesIO(raw)).getSize()
+        except Exception: missing.append(m["title"]); continue
+        w = min(W / 2 - 14, 200); leg = specs[m["key"]]       # 200 pt cap so two rows of maps fit on a page
+        if m["key"] == "moisture": leg = {**(_moisture_legend_for(m["range"]) if m.get("range") else MOISTURE_LEGEND), "unit": "Soil moisture, colour range fitted to this area"}
+        cell: list = [Paragraph(f"<b>{_p(m['title'])}</b>", st["cell"]), Spacer(1, 2), Image(io.BytesIO(raw), width=w, height=w * ih / max(iw, 1)), Spacer(1, 4)]
+        if leg: cell.append(_gradient_legend(leg["palette"], leg["min"], leg["max"], leg["unit"], leg.get("labels"), width=int(w), height=44))
+        cell.append(Paragraph(_p(m["caption"]), st["small"])); cells.append(cell)
+    if cells:
+        if len(cells) % 2: cells.append("")
+        t = Table([cells[i:i + 2] for i in range(0, len(cells), 2)], colWidths=[W / 2, W / 2])
+        t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)])); out.append(t)
+    if missing: out.append(Paragraph("<b>Not available in this run:</b> " + _p("; ".join(missing)) + ". They could not be drawn for this area and date; the indicators above do not depend on them.", st["small"]))
+    return out
+
+
+def render_pdf(c: Dict[str, Any], images: Optional[Dict[str, Any]] = None) -> bytes:
+    requested = images is not None            # None = maps were switched off; {} = they were tried and none came back
+    images = images or {}
     st, W = _styles(), A4[0] - 102
     buf = io.BytesIO(); m = c["meta"]
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=51, rightMargin=51, topMargin=56, bottomMargin=56, title=pdf_safe(f"Agricultural risk assessment: {m['location']}"), author="Vayu",
@@ -167,7 +293,7 @@ def render_pdf(c: Dict[str, Any]) -> bytes:
     if sm["unavailable"]: S.append(Paragraph(f"<b>Not available (not scored, never treated as zero):</b> {_p('; '.join(sm['unavailable']))}.", st["small"]))
     S += [Paragraph("How the class is reached", st["h2"]), Paragraph(_p(c["risk_rule"] or "n/a"), st["b"]), Spacer(1, 4), Paragraph(_p(c["confidence_text"]), st["small"]), Spacer(1, 8),
           Paragraph("In this report: stress indicators with every value and source; land vulnerability; soil condition (descriptive, not scored); climate of the area; how sensitive the score is to the weighting; "
-                    "the original alert score; data gaps; methodology; limitations; sources.", st["small"]), PageBreak()]
+                    "the original three indicators in full; data gaps; methodology; limitations; sources.", st["small"]), PageBreak()]
     # ---- stress
     S += [_Outline("Stress indicators", "stress"), Paragraph("Stress: what the satellites and models show now", st["h1"]),
           Paragraph("Each indicator is compared with its own multi-year history and placed in a published class. Classes become 0-100 stress points by convention (20 per US Drought Monitor category, 25 per VHI class); "
@@ -223,14 +349,28 @@ def render_pdf(c: Dict[str, Any]) -> bytes:
     if sn["variants"]:
         rows = [_hdr(("Variant", "Stress score"), st)] + [[_cell(x["name"], st), _cell(_num(x["score"]) if x["score"] is not None else "not computed", st)] for x in sn["variants"]]
         S += [Spacer(1, 4), _tbl(rows, [W * 0.6, W * 0.4], st)]
-    # ---- legacy
-    lg = c["legacy"]
-    S += [Spacer(1, 8), _Outline("Original alert score", "legacy"), Paragraph("The original alert score", st["h2"])]
-    if lg and lg.get("risk_score") is not None:
-        S.append(Paragraph(f"The original 3-indicator score (drought extent, vegetation loss, soil moisture) for the same area is {_num(lg['risk_score'], 0)} of 100 ({_p(str(lg.get('band')))}), with confidence {_num(lg.get('confidence'), 2)}. "
-                           "It is kept unchanged for alerts and the watchlist. It uses fewer inputs and no land context, so it can differ from the assessment above.", st["b"]))
+    # ---- the original three indicators, in full
+    og = c["original"]
+    S += [PageBreak(), _Outline("The original three indicators", "original"), Paragraph("The original three indicators, in full", st["h1"])]
+    if og:
+        S.append(Paragraph(f"The original composite combines drought extent, vegetation loss and soil moisture for {_p(og['period'] or 'the same period')}. It is {_num(og['risk_score'], 0)} of 100 ({_p(str(og['band']))}), confidence {_num(og['confidence'], 0)}%. "
+                           "It is the score alerts and the watchlist use; it has no land-vulnerability or long-record context, so it can differ from the assessment above.", st["b"]))
+        if og["reason"]: S += [Spacer(1, 2), Paragraph(f"<b>Why:</b> {_p(og['reason'])}", st["lead"])]
+        rows = [_hdr(("Indicator", "Weight", "Sub-score (0-100)", "Status"), st)] + [[_cell(x["name"], st, True), _cell(x["weight"], st), _cell(x["sub_score"], st), _cell(x["reason"] or "scored", st)] for x in og["components"]]
+        S += [Spacer(1, 6), _tbl(rows, [W * 0.32, W * 0.10, W * 0.18, W * 0.40], st)]
+        for title, key in (("Drought extent (NDDI, Sentinel-2)", "drought"), ("Vegetation loss (Sentinel-2 NDVI)", "vegetation"), ("Soil moisture (NASA SMAP)", "moisture")):
+            S.append(Paragraph(title, st["h2"]))
+            if og[key]:
+                rows = [_hdr(("Metric", "Value", "Note"), st)] + [[_cell(a, st, True), _cell(b2, st), _cell(n, st)] for a, b2, n in og[key]]
+                S.append(_tbl(rows, [W * 0.34, W * 0.38, W * 0.28], st))
+            else: S.append(Paragraph("No reading was available for this indicator in this run.", st["b"]))
+        S += [Paragraph("How the original score is built", st["h2"])] + [Paragraph(_p(t), st["li"], bulletText="\u2022") for t in og["method"]]
     else:
-        S.append(Paragraph("The original alert score was not available for this run.", st["b"]))
+        S.append(Paragraph("The original three-indicator score was not available for this run.", st["b"]))
+    # ---- maps
+    S += _map_section(c, images, st, W, requested)
+    # ---- what to do
+    S += [Spacer(1, 6), _Outline("What to do", "actions"), Paragraph("What to do with this assessment", st["h1"])] + [Paragraph(_p(t), st["li"], bulletText="\u2022") for t in c["recommendations"]]
     # ---- gaps, method, limits, sources
     if c["errors"]:
         S += [Paragraph("Data gaps in this run", st["h2"])] + [Paragraph(f"<b>{_p(e['source'])}:</b> {_p(e['message'])}", st["li"], bulletText="\u2022") for e in c["errors"]]
@@ -242,5 +382,5 @@ def render_pdf(c: Dict[str, Any]) -> bytes:
     return buf.getvalue()
 
 
-def make_risk_pdf(assessment: Dict[str, Any], *, location_label: str = "Location not given", generated_on: Optional[str] = None) -> bytes:
-    return render_pdf(build_content(assessment, location_label=location_label, generated_on=generated_on))
+def make_risk_pdf(assessment: Dict[str, Any], *, location_label: str = "Location not given", generated_on: Optional[str] = None, images: Optional[Dict[str, Any]] = None) -> bytes:
+    return render_pdf(build_content(assessment, location_label=location_label, generated_on=generated_on, images=images), images)

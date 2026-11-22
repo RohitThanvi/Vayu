@@ -19,7 +19,16 @@ BASE = {"z_score": -1.2, "seasonal_normal_ndvi": 0.45, "seasonal_std_ndvi": 0.05
 PREC = {"status": "ok", "recent_total_mm": 50.0, "historical_mean_mm": 120.0, "recent_days": 90, "historical_totals_mm": [float(x) for x in range(60, 180, 4)]}   # 30 values
 RZ = {"sm_rootzone_percentile": 15.0, "sm_rootzone_0_100cm": 0.21, "sm_surface_0_5cm": 0.1}
 GW = {"status": "ok", "series": [{"date": f"d{i}", "value": float(i)} for i in range(24)], "latest_anomaly_cm": 2.0, "latest_date": "2026-08", "trend": "declining", "slope_cm_per_year": -2.0}
-V1 = {"risk_score": 42, "band": "moderate", "confidence": 0.8}
+# A realistic compute_risk_score() result (same keys and metric names as the real function returns).
+V1 = {"risk_score": 42, "band": "moderate", "confidence": 80.0, "reason": "elevated drought stress and declining soil moisture",
+      "sub_scores": {"drought": 45.0, "vegetation_loss": 30.0, "moisture_deficit": 52.5}, "weights": {"drought": 0.40, "vegetation_loss": 0.35, "moisture_deficit": 0.25}, "min_assessed_pct": 20.0,
+      "inputs_used": ["drought", "vegetation_loss", "moisture_deficit"], "inputs_failed": [], "period": {"start_date": "2025-11-10", "end_date": "2026-11-10"},
+      "raw_metrics": {"vegetation": {"vegetation_loss_km2": 1.2, "vegetation_gain_km2": 0.4, "initial_vegetation_km2": 4.0, "net_change_km2": -0.8, "loss_pct": 30.0, "region_area_km2": 10.0, "vegetation_pct_of_aoi": 40.0, "small_base_caveat": False},
+                      "drought": {"drought_affected_km2": 2.7, "severe_drought_km2": 0.9, "region_area_km2": 10.0, "assessed_area_pct": 60.0, "drought_pct_of_assessed": 45.0, "severe_pct_of_assessed": 15.0, "drought_affected_pct": 27.0,
+                                  "severe_drought_pct": 9.0, "avg_nddi_start": 0.31, "avg_nddi_end": 0.52, "nddi_change": 0.21, "thresholds": {"drought": 0.5, "severe": 0.7}},
+                      "soil_moisture": {"start_avg_soil_moisture": 0.24, "end_avg_soil_moisture": 0.19, "moisture_change": -0.05, "dry_stress_area_km2": 3.0, "dry_stress_pct": 30.0, "end_min_sm": 0.11, "end_max_sm": 0.27,
+                                        "sampling": "aoi", "sampling_note": None, "data_available": True, "window_overlap_caveat": False}},
+      "provenance": {"vegetation_source": "Sentinel-2", "drought_source": "Sentinel-2 NDDI", "moisture_source": "NASA_SMAP_SPL4SMGP_008", "computed_at": "2026-11-10T00:00:00Z"}}
 
 
 def inputs(**kw): return {"vdi": VDI, "baseline": BASE, "prec": PREC, "rz": RZ, "gw": GW, "profile": copy.deepcopy(RJ), "v1": V1, "errors": {}, "as_of": "2026-11-10", **kw}

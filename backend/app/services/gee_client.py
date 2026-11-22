@@ -699,6 +699,9 @@ def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
     region_area_km2 = _region_area_km2(region)
     assessed_km2 = _calc_area_km2(end_nddi.mask(), region)      # where NDDI could be computed at all (not cloud, bare soil, water)
     assessed_pct = round(min(max(assessed_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
+    # Share of the ASSESSABLE area (where NDDI exists) under drought stress: bare soil, water and cloud cannot be scored, and counting them as "not drought" would dilute a mostly-barren AOI toward zero.
+    drought_pct_of_assessed = round(min(max(drought_km2 / assessed_km2 * 100, 0), 100), 4) if assessed_km2 > 0 else None
+    severe_pct_of_assessed = round(min(max(severe_km2 / assessed_km2 * 100, 0), 100), 4) if assessed_km2 > 0 else None
     drought_affected_pct = round(min(max(drought_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
     severe_drought_pct = round(min(max(severe_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
 
@@ -724,6 +727,8 @@ def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
             "severe_drought_km2": round(severe_km2, 4),
             "region_area_km2": round(region_area_km2, 4),
             "assessed_area_pct": assessed_pct,
+            "drought_pct_of_assessed": drought_pct_of_assessed,
+            "severe_pct_of_assessed": severe_pct_of_assessed,
             "drought_affected_pct": drought_affected_pct,
             "severe_drought_pct": severe_drought_pct,
             "avg_nddi_start": round(avg_nddi_start, 4) if avg_nddi_start is not None else None,

@@ -13,7 +13,7 @@ import ee
 import httpx
 from PIL import Image as PILImage
 
-from .gee_client import _polygon_geometry, _mask_s2_clouds, _cap_end_date
+from .gee_client import _polygon_geometry, _mask_s2_clouds, _cap_end_date, _nddi_image
 
 logger = logging.getLogger(__name__)
 
@@ -343,9 +343,7 @@ def get_nddi_thumbnail(aoi: Dict[str, Any], center_date: str, days_window: int =
     composite = _s2_composite(region, center_date, days_window)
     if composite is None:
         return None
-    ndvi = composite.normalizedDifference(["B8", "B4"]).rename("NDVI")
-    ndwi = composite.normalizedDifference(["B3", "B8"]).rename("NDWI")
-    nddi = ndvi.subtract(ndwi).divide(ndvi.add(ndwi))
+    nddi = _nddi_image(composite)      # the SAME corrected builder the drought score uses (NDWI from NIR and SWIR; unstable pixels masked), so the map shows what the score is computed from
     return _fetch_thumb_bytes(nddi, region, {
         "min": -0.5, "max": 1.0,
         "palette": ["#1a4d7a", "#4a9ec9", "#e8e88a", "#d97a41", "#8b2020"],

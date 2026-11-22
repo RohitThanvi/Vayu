@@ -16,6 +16,8 @@ from ..services.agri.phenology import compute_phenology
 from ..services.agri.crop_stages import supported_crops
 from ..services.agri.irrigation_advisory import compute_irrigation_advisory
 from ..services.agri import crop_pathways, crop_suitability, pathway_pdf, pathway_plan, risk_assessment, risk_pdf
+from ..services.satellite_imagery import (get_groundwater_thumbnail, get_lst_thumbnail, get_ndvi_thumbnail, get_nddi_thumbnail, get_optical_thumbnail, get_precipitation_thumbnail,
+                                          get_soil_moisture_thumbnail)
 from ..services import gee_remote_sensing as rs
 from ..services.gee_cache import cached_compute, DEFAULT_TTL_SECONDS
 
@@ -178,12 +180,49 @@ async def risk_assessment_endpoint(req: RiskScoreRequest):
     return await _risk_assessment_inputs(req)
 
 
-@router.post("/risk-assessment/pdf", summary="The detailed risk assessment with every metric as a PDF report")
-async def risk_assessment_pdf(req: RiskScoreRequest):
-    result = await _risk_assessment_inputs(req)
-    label = pathway_pdf._loc_label(None, None, _aoi_centre(req.aoi_geojson))
+class RiskAssessmentPdfRequest(RiskScoreRequest):
+    region_name: Optional[str] = None        # shown on the cover next to the coordinates
+    include_imagery: bool = True             # the maps need Earth Engine thumbnails and take longest; the report works without them
+
+
+IMAGERY_TIMEOUT_S = 120.0
+_MAP_FETCHERS = {"optical": get_optical_thumbnail, "ndvi": get_ndvi_thumbnail, "nddi": get_nddi_thumbnail, "moisture": get_soil_moisture_thumbnail,
+                 "precipitation": get_precipitation_thumbnail, "groundwater": get_groundwater_thumbnail, "temperature": get_lst_thumbnail}
+
+
+async def _risk_map_images(aoi: Dict[str, Any], as_of: Optional[str]) -> Dict[str, Any]:
+    """The report's map thumbnails, fetched concurrently. A map that fails, or is slower than IMAGERY_TIMEOUT_S, is simply absent (the report lists it as not available); it never fails the report."""
+    if not as_of: return {}
+
+    async def one(key, fn):
+        try: return key, await asyncio.to_thread(fn, aoi, as_of)
+        except Exception as e:
+            logger.warning(f"risk assessment pdf: {key} map failed, continuing without it: {e}")
+            return key, None
     try:
-        pdf = await asyncio.to_thread(risk_pdf.make_risk_pdf, result, location_label=label)
+        pairs = await asyncio.wait_for(asyncio.gather(*[one(k, f) for k, f in _MAP_FETCHERS.items()]), timeout=IMAGERY_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        logger.warning("risk assessment pdf: map thumbnails timed out, continuing without maps")
+        return {}
+    out: Dict[str, Any] = {}
+    for key, val in pairs:
+        if not val: continue
+        if key == "moisture":                                  # {bytes, min, max}: the colour stretch fitted to this area
+            if val.get("bytes"): out[key] = {"bytes": val["bytes"], "range": (val.get("min"), val.get("max")) if val.get("min") is not None and val.get("max") is not None else None}
+        else: out[key] = {"bytes": val}
+    return out
+
+
+@router.post("/risk-assessment/pdf", summary="THE risk assessment report: every metric, the original three indicators in full, maps, methodology and sources, as one PDF")
+async def risk_assessment_pdf(req: RiskAssessmentPdfRequest):
+    result = await _risk_assessment_inputs(req)
+    centre = _aoi_centre(req.aoi_geojson)
+    name = " ".join((req.region_name or "").split())[:100]
+    if name and centre: label = f"{name} ({abs(centre[0]):.3f}{'N' if centre[0] >= 0 else 'S'}, {abs(centre[1]):.3f}{'E' if centre[1] >= 0 else 'W'})"
+    else: label = name or pathway_pdf._loc_label(None, None, centre)
+    images = await _risk_map_images(req.aoi_geojson, result.get("as_of")) if req.include_imagery else None
+    try:
+        pdf = await asyncio.to_thread(risk_pdf.make_risk_pdf, result, location_label=label, images=images)
     except Exception as e:
         logger.error(f"risk assessment pdf failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Could not build the PDF report.")

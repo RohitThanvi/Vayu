@@ -39,6 +39,8 @@ RISK_ORDER = ["Low", "Moderate", "High", "Very high"]
 SENSITIVITY_ROBUST_RANGE = 10.0          # score range (points) under alternative weightings at or below which the score is called robust
 
 CITATIONS = {
+    "nddi": "Gu, Y., Brown, J.F., Verdin, J.P., Wardlow, B. (2007) A five-year analysis of MODIS NDVI and NDWI for grassland drought assessment over the central Great Plains of the United States. Geophysical Research Letters 34, L06407. (NDDI = (NDVI - NDWI) / (NDVI + NDWI). The 0.5 / 0.7 class limits used here are conventions of this platform, not limits taken from the paper.)",
+    "gao": "Gao, B.-C. (1996) NDWI - a normalized difference water index for remote sensing of vegetation liquid water from space. Remote Sensing of Environment 58(3):257-266. (NDWI = (NIR - SWIR) / (NIR + SWIR).)",
     "ipcc": "IPCC (2014) Climate Change 2014: Impacts, Adaptation and Vulnerability, AR5 WGII: risk as the interaction of hazard, exposure and vulnerability.",
     "kogan": "Kogan, F.N. (1995) Application of vegetation index and brightness temperature for drought detection. Advances in Space Research 15(11):91-100 (VCI, TCI, VHI). Class limits as summarised in UN-SPIDER's drought-detection recommended practice.",
     "usdm": "US Drought Monitor percentile-rank classification (D0 21st-30th, D1 11th-20th, D2 6th-10th, D3 3rd-5th, D4 0-2nd percentile): droughtmonitor.unl.edu/About/AbouttheData/DroughtClassification.aspx",
@@ -331,7 +333,9 @@ def assemble_assessment(x: Dict[str, Any]) -> Dict[str, Any]:
             "vulnerability": vuln, "risk": risk, "confidence": conf, "sensitivity": sens, "indicators": inds,
             "summary": {"drivers": drivers, "no_signal": calm, "unavailable": [f"{i['name']} ({i['reason']})" for i in inds if i["status"] != "ok"]},
             "soil_condition": soil_condition(profile) if profile else None, "climate": climate_panel(profile) if profile else None,
-            "legacy": {"risk_score": v1.get("risk_score"), "band": v1.get("band"), "confidence": v1.get("confidence"), "note": "The original 3-indicator score (drought extent, vegetation loss, soil-moisture), kept for alerts and the watchlist."} if v1 else None,
+            "legacy": {"risk_score": v1.get("risk_score"), "band": v1.get("band"), "confidence": v1.get("confidence"), "reason": v1.get("reason"), "sub_scores": v1.get("sub_scores"), "weights": v1.get("weights"),
+                       "min_assessed_pct": v1.get("min_assessed_pct"), "inputs_failed": v1.get("inputs_failed") or [], "period": v1.get("period"), "raw_metrics": v1.get("raw_metrics"), "provenance": v1.get("provenance"),
+                       "note": "The original 3-indicator score (drought extent, vegetation loss, soil moisture), kept for alerts and the watchlist and shown here in full."} if v1 else None,
             "errors": err, "citations": CITATIONS, "limitations": LIMITATIONS,
             "methodology": ["Each stress indicator is compared with its own multi-year history and placed in a standard class (US Drought Monitor percentile bands; Kogan VHI classes).",
                             "Classes are scaled to 0-100 stress points: 20 per US Drought Monitor category, 25 per VHI class (a convention).",

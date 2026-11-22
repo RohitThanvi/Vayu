@@ -108,3 +108,30 @@ def test_moisture_with_no_value_is_missing_never_a_zero_percent(moisture):
 
 def test_moisture_genuinely_not_dry_is_zero_percent_a_real_value(moisture):
     m = moisture({**VALS, "dry": 0.0}, None); assert m["dry_stress_pct"] == 0.0 and m["dry_stress_area_km2"] == 0.0 and risk_scoring._moisture_subscore(m) is not None
+
+
+# ---------------- drought sub-score: share of the ASSESSABLE area ----------------
+def test_drought_subscore_uses_the_assessable_area_not_the_whole_aoi():
+    m = {"assessed_area_pct": 50.0, "drought_pct_of_assessed": 40.0, "drought_affected_pct": 20.0}
+    assert risk_scoring._drought_subscore(m) == 40.0, "20% of the AOI is 40% of what could be assessed: the diluted figure must not be used"
+
+
+def test_drought_subscore_is_not_assessed_when_too_little_of_the_aoi_could_be_scored():
+    assert risk_scoring._drought_subscore({"assessed_area_pct": 5.0, "drought_pct_of_assessed": 90.0, "drought_affected_pct": 4.5}) is None
+    assert risk_scoring._drought_subscore({"assessed_area_pct": risk_scoring.MIN_ASSESSED_PCT, "drought_pct_of_assessed": 90.0}) == 90.0, "the limit itself is assessable"
+
+
+def test_drought_subscore_falls_back_for_older_results_without_assessed_fields():
+    assert risk_scoring._drought_subscore({"drought_affected_pct": 33.0}) == 33.0
+    assert risk_scoring._drought_subscore({"assessed_area_pct": 60.0, "drought_pct_of_assessed": None, "drought_affected_pct": 12.0}) == 12.0
+
+
+def test_composite_renormalises_weights_when_drought_is_not_assessed(monkeypatch):
+    veg = {"metrics": {"loss_pct": 40.0}}
+    dro = {"metrics": {"assessed_area_pct": 3.0, "drought_pct_of_assessed": 80.0, "drought_affected_pct": 2.4}}
+    moi = {"metrics": {"data_available": True, "moisture_change": 0.0, "dry_stress_pct": 20.0}}
+    monkeypatch.setattr(risk_scoring, "compute_vegetation_change", lambda **k: veg); monkeypatch.setattr(risk_scoring, "compute_drought_index", lambda **k: dro); monkeypatch.setattr(risk_scoring, "compute_soil_moisture", lambda **k: moi)
+    r = risk_scoring.compute_risk_score({"type": "Polygon"}, as_of="2026-11-01")
+    w = risk_scoring.WEIGHTS; expected = round((40.0 * w["vegetation_loss"] + 10.0 * w["moisture_deficit"]) / (w["vegetation_loss"] + w["moisture_deficit"]), 1)
+    assert r["sub_scores"]["drought"] is None and "drought" in r["inputs_failed"] and r["risk_score"] == expected and r["weights"] == w
+    assert r["raw_metrics"]["drought"]["assessed_area_pct"] == 3.0

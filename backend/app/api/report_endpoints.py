@@ -8,18 +8,12 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from ..services import gee_client
-from ..services.report_generator import build_analysis_report, build_agri_risk_report, build_remote_sensing_report, ANALYSIS_SPECS
+from ..services.report_generator import build_analysis_report, build_remote_sensing_report, ANALYSIS_SPECS
 from ..services import gee_remote_sensing as rs
 from ..services import timelapse_media
-from ..services.agri.risk_scoring import compute_risk_score
-from ..services.agri.baseline import compute_seasonal_baseline
-from ..services.agri.groundwater import compute_groundwater_trend
-from ..services.agri.precipitation import compute_precipitation_context
 from ..services.satellite_imagery import (
-    get_thumbnail_for_analysis, get_optical_thumbnail, get_optical_thumbnail_with_coverage,
+    get_thumbnail_for_analysis, get_optical_thumbnail_with_coverage,
     get_change_map_thumbnail,
-    get_ndvi_thumbnail, get_nddi_thumbnail, get_soil_moisture_thumbnail,
-    get_lst_thumbnail, get_precipitation_thumbnail, get_groundwater_thumbnail,
 )
 from ..services.llm_client import get_llm_synthesis
 from .. schemas import MetricType
@@ -49,14 +43,6 @@ class AnalysisReportRequest(BaseModel):
     # recomputing against GEE a second time just to build the PDF. If
     # omitted, the analysis is recomputed fresh from the AOI/dates.
     metrics: Optional[Dict[str, Any]] = None
-    include_imagery: bool = True
-
-
-class AgriRiskReportRequest(BaseModel):
-    aoi_geojson: Dict[str, Any]
-    as_of: Optional[str] = None
-    region_name: Optional[str] = None
-    region_id: Optional[str] = None
     include_imagery: bool = True
 
 
@@ -181,152 +167,6 @@ async def analysis_report(req: AnalysisReportRequest):
     return Response(
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.post("/agri-risk", summary="Generate a scientific PDF report for an agri risk score")
-async def agri_risk_report(req: AgriRiskReportRequest):
-    try:
-        risk_result = compute_risk_score(aoi=req.aoi_geojson, as_of=req.as_of, region_id=req.region_id)
-    except Exception as e:
-        logger.error(f"agri risk report recompute failed: {e}", exc_info=True)
-        raise HTTPException(status_code=422, detail=f"Could not compute risk score for report: {e}")
-
-    image_bytes = None
-    ndvi_bytes = None
-    nddi_bytes = None
-    moisture_bytes = None
-    moisture_legend_range = None
-    if req.include_imagery:
-        as_of = risk_result.get("period", {}).get("end_date")
-        results = await asyncio.gather(
-            asyncio.to_thread(get_optical_thumbnail, req.aoi_geojson, as_of),
-            asyncio.to_thread(get_ndvi_thumbnail, req.aoi_geojson, as_of),
-            asyncio.to_thread(get_nddi_thumbnail, req.aoi_geojson, as_of),
-            asyncio.to_thread(get_soil_moisture_thumbnail, req.aoi_geojson, as_of),
-            return_exceptions=True,
-        )
-        labels = ("true-color", "NDVI", "NDDI", "soil-moisture")
-        image_bytes, ndvi_bytes, nddi_bytes, moisture_result = (
-            r if not isinstance(r, Exception) else None for r in results
-        )
-        if moisture_result:
-            moisture_bytes = moisture_result["bytes"]
-            moisture_legend_range = (moisture_result["min"], moisture_result["max"])
-        for label, r in zip(labels, results):
-            if isinstance(r, Exception):
-                logger.warning(f"agri risk report {label} thumbnail failed, continuing without it: {r}")
-
-    baseline_result = None
-    try:
-        as_of = risk_result.get("period", {}).get("end_date")
-        baseline_result = await asyncio.to_thread(compute_seasonal_baseline, req.aoi_geojson, as_of)
-    except Exception as e:
-        logger.warning(f"agri risk report baseline fetch failed, continuing without it: {e}")
-
-    # Regional context — groundwater, rainfall, temperature. Deliberately
-    # NOT part of the composite risk score (different resolution/cadence
-    # than the 3-month indicators the score is built from); reported
-    # separately in their own section instead.
-    as_of = risk_result.get("period", {}).get("end_date")
-    groundwater_result = None
-    precipitation_result = None
-    temperature_result = None
-    groundwater_bytes = None
-    precipitation_bytes = None
-    temperature_bytes = None
-    try:
-        context_results = await asyncio.gather(
-            asyncio.to_thread(compute_groundwater_trend, req.aoi_geojson),
-            asyncio.to_thread(compute_precipitation_context, req.aoi_geojson, as_of),
-            asyncio.to_thread(gee_client.compute_temperature_context, req.aoi_geojson, as_of),
-            return_exceptions=True,
-        )
-        labels = ("groundwater", "precipitation", "temperature")
-        groundwater_result, precipitation_result, temperature_result = (
-            r if not isinstance(r, Exception) else None for r in context_results
-        )
-        for label, r in zip(labels, context_results):
-            if isinstance(r, Exception):
-                logger.warning(f"agri risk report {label} context fetch failed, continuing without it: {r}")
-        if req.include_imagery:
-            image_results = await asyncio.gather(
-                asyncio.to_thread(get_groundwater_thumbnail, req.aoi_geojson, as_of),
-                asyncio.to_thread(get_precipitation_thumbnail, req.aoi_geojson, as_of),
-                asyncio.to_thread(get_lst_thumbnail, req.aoi_geojson, as_of),
-                return_exceptions=True,
-            )
-            groundwater_bytes, precipitation_bytes, temperature_bytes = (
-                r if not isinstance(r, Exception) else None for r in image_results
-            )
-            for label, r in zip(labels, image_results):
-                if isinstance(r, Exception):
-                    logger.warning(f"agri risk report {label} thumbnail failed, continuing without it: {r}")
-    except Exception as e:
-        logger.warning(f"agri risk report regional context fetch failed, continuing without it: {e}")
-
-    llm_synthesis = None
-    try:
-        def _context_summary(result, keys):
-            """Drops the internal 'status' field's uninformative common case
-            ('ok' just means data was retrieved, not that conditions are
-            fine) — passing it through let the LLM narrate nonsense like
-            'rainfall is described as ok yet well below normal', treating a
-            data-availability flag as if it were a condition judgement.
-            Only surfaces status when it's something actually worth telling
-            the model about (no_data / ok_no_baseline), explicitly labeled
-            as a data-availability note rather than a condition."""
-            if not result:
-                return None
-            out = {k: result.get(k) for k in keys if k in result and k != "status"}
-            status = result.get("status")
-            if status and status != "ok":
-                out["data_availability_note"] = status  # e.g. "no_data" — NOT a condition descriptor
-            return out or None
-
-        context = {
-            "risk_score": risk_result.get("risk_score"), "band": risk_result.get("band"),
-            "confidence": risk_result.get("confidence"), "sub_scores": risk_result.get("sub_scores"),
-            "reason": risk_result.get("reason"), "region_name": req.region_name or "the AOI",
-            "period": risk_result.get("period"),
-            "seasonal_context": (
-                {
-                    "metric": "NDVI (vegetation greenness) seasonal anomaly \u2014 NOT a temperature reading",
-                    "classification": baseline_result.get("status"),  # e.g. "normal" / "below_normal"
-                    "z_score": baseline_result.get("z_score"),
-                }
-                if baseline_result and baseline_result.get("seasonal_normal_ndvi") is not None else None
-            ),
-            "regional_context_note": "The following groundwater/rainfall/temperature readings are "
-                "informational context and are NOT part of the composite risk score above.",
-            "groundwater_context": _context_summary(
-                groundwater_result, ["trend", "slope_cm_per_year", "latest_anomaly_cm"]),
-            "rainfall_context": _context_summary(
-                precipitation_result, ["condition", "anomaly_pct", "recent_total_mm", "historical_mean_mm"]),
-            "temperature_context": _context_summary(
-                temperature_result, ["mean_lst_c", "min_lst_c", "max_lst_c"]),
-        }
-        llm_synthesis = await asyncio.to_thread(get_llm_synthesis, context)
-    except Exception as e:
-        logger.warning(f"agri risk report LLM synthesis failed, continuing without it: {e}")
-
-    try:
-        pdf_bytes = build_agri_risk_report(
-            aoi_geojson=req.aoi_geojson, risk_result=risk_result, region_name=req.region_name,
-            image_bytes=image_bytes, ndvi_image_bytes=ndvi_bytes, nddi_image_bytes=nddi_bytes,
-            moisture_image_bytes=moisture_bytes, moisture_legend_range=moisture_legend_range,
-            baseline_result=baseline_result, llm_synthesis=llm_synthesis,
-            groundwater_result=groundwater_result, precipitation_result=precipitation_result,
-            temperature_result=temperature_result, groundwater_image_bytes=groundwater_bytes,
-            precipitation_image_bytes=precipitation_bytes, temperature_image_bytes=temperature_bytes,
-        )
-    except Exception as e:
-        logger.error(f"agri risk report generation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Report generation failed: {e}")
-
-    return Response(
-        content=pdf_bytes, media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="vayu_agri_risk_report.pdf"'},
     )
 
 

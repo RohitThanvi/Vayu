@@ -41,7 +41,59 @@ function IndicatorRow({ i }) {
   );
 }
 
-export default function RiskAssessmentPanel({ drawnAOI, apiUrl }) {
+const km2 = (v) => (v == null ? 'n/a' : `${fmt(v, 2)} km²`);
+const pc = (v) => (v == null ? 'n/a' : `${fmt(v)}%`);
+
+// The original three indicators (drought extent, vegetation loss, soil moisture) with their raw metrics, weights and sub-scores: part of the ONE assessment, not a separate report.
+function OriginalIndicators({ lg }) {
+  const rm = lg.raw_metrics || {}, d = rm.drought || {}, v = rm.vegetation || {}, m = rm.soil_moisture || {}, ss = lg.sub_scores || {}, w = lg.weights || {};
+  const missing = (k, src) => {
+    if (ss[k] != null) return null;
+    if (k === 'drought' && d.assessed_area_pct != null && lg.min_assessed_pct != null && d.assessed_area_pct < lg.min_assessed_pct)
+      return `Not assessed: only ${pc(d.assessed_area_pct)} of the area could be scored (the rest is bare soil, water or cloud).`;
+    return (rm[src] || (lg.inputs_failed || []).includes(k)) ? 'Not assessed: no usable reading for this area and period.' : 'Not assessed.';
+  };
+  const rows = [
+    ['drought', 'Drought extent (NDDI)', 'drought', [
+      ['Drought-affected area (NDDI above 0.5)', `${km2(d.drought_affected_km2)} (${pc(d.drought_affected_pct)} of the area)`],
+      ['Share of the assessable area under drought', pc(d.drought_pct_of_assessed)],
+      ['Severe drought area (NDDI above 0.7)', km2(d.severe_drought_km2)],
+      ['Area where NDDI could be computed', pc(d.assessed_area_pct)],
+      ['Mean NDDI start / end / change', `${fmt(d.avg_nddi_start, 3)} / ${fmt(d.avg_nddi_end, 3)} / ${fmt(d.nddi_change, 3)}`]]],
+    ['vegetation_loss', 'Vegetation loss (Sentinel-2 NDVI)', 'vegetation', [
+      ['Vegetation lost', `${km2(v.vegetation_loss_km2)} (${pc(v.loss_pct)} of the initial vegetated area)`],
+      ['Vegetation gained', km2(v.vegetation_gain_km2)], ['Initial vegetated area', `${km2(v.initial_vegetation_km2)} (${pc(v.vegetation_pct_of_aoi)} of the area)`],
+      ...(v.small_base_caveat ? [['Caution', 'Vegetation covers under 2% of the area, so the loss percentage rests on very few pixels.']] : [])]],
+    ['moisture_deficit', 'Soil moisture (NASA SMAP)', 'soil_moisture', [
+      ['Average moisture start / end', `${fmt(m.start_avg_soil_moisture, 3)} / ${fmt(m.end_avg_soil_moisture, 3)} m³/m³`], ['Change', `${fmt(m.moisture_change, 3)} m³/m³`],
+      ['Dry-stress share (below 0.1 m³/m³)', `${pc(m.dry_stress_pct)} (${km2(m.dry_stress_area_km2)})`],
+      ...(m.window_overlap_caveat ? [['Caution', 'The start and end windows overlap, so the change understates real change.']] : []), ...(m.sampling_note ? [['Coverage', m.sampling_note]] : [])]],
+  ];
+  return (
+    <div data-testid="original-indicators" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <Label>Original three indicators</Label>
+      <Box>
+        Composite {fmt(lg.risk_score, 0)}/100 ({lg.band}), confidence {fmt(lg.confidence, 0)}%{lg.reason ? `: ${lg.reason}` : ''}. This is the score alerts and the watchlist use.
+      </Box>
+      {rows.map(([k, name, src, items]) => {
+        const why = missing(k, src);
+        return (
+          <details key={k} data-testid={`original-${k}`} style={{ background: S.surface2, border: `1px solid ${S.border}`, padding: '7px 10px', fontSize: 13, color: S.text2 }}>
+            <summary style={{ cursor: 'pointer', lineHeight: 1.5 }}>
+              <b style={{ color: S.text }}>{name}</b>: {why ? <span style={{ color: S.text3 }}>not assessed</span> : `${fmt(ss[k])}/100`}{w[k] != null && ` · weight ${fmt(w[k] * 100, 0)}%`}
+            </summary>
+            <div style={{ marginTop: 6, fontSize: 12, color: S.text3, lineHeight: 1.6 }}>
+              {why && <div>{why}</div>}
+              {items.map(([a, b]) => <div key={a}>{a}: {b}</div>)}
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function RiskAssessmentPanel({ drawnAOI, apiUrl, regionName }) {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -51,13 +103,13 @@ export default function RiskAssessmentPanel({ drawnAOI, apiUrl }) {
   // A different drawn area makes the old assessment wrong for the map: clear it rather than show it under the new AOI.
   useEffect(() => { setResult(null); setError(null); setPdfError(null); }, [drawnAOI]);
 
-  const body = useCallback(() => JSON.stringify({ aoi_geojson: drawnAOI }), [drawnAOI]);
+  const body = useCallback((withName) => JSON.stringify({ aoi_geojson: drawnAOI, ...(withName && regionName ? { region_name: regionName } : {}) }), [drawnAOI, regionName]);
 
   const run = useCallback(async () => {
     if (!drawnAOI) return;
     setLoading(true); setError(null); setResult(null);
     try {
-      const resp = await fetch(`${apiUrl}/api/v1/agri/risk-assessment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body() });
+      const resp = await fetch(`${apiUrl}/api/v1/agri/risk-assessment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body(false) });
       if (!resp.ok) throw new Error((await resp.json()).detail || 'Risk assessment failed');
       setResult(await resp.json());
     } catch (e) { setError(e.message); } finally { setLoading(false); }
@@ -67,7 +119,7 @@ export default function RiskAssessmentPanel({ drawnAOI, apiUrl }) {
     if (!drawnAOI) return;
     setPdfLoading(true); setPdfError(null);
     try {
-      const resp = await fetch(`${apiUrl}/api/v1/agri/risk-assessment/pdf`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body() });
+      const resp = await fetch(`${apiUrl}/api/v1/agri/risk-assessment/pdf`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body(true) });
       if (!resp.ok) throw new Error((await resp.json()).detail || 'Could not build the PDF report');
       const url = URL.createObjectURL(await resp.blob());
       const a = document.createElement('a');
@@ -86,10 +138,10 @@ export default function RiskAssessmentPanel({ drawnAOI, apiUrl }) {
   return (
     <div data-testid="risk-assessment" style={{ display: 'flex', flexDirection: 'column', gap: 9, marginTop: 6, paddingTop: 12, borderTop: `1px solid ${S.border}` }}>
       <div style={{ fontSize: 13, color: S.text3, lineHeight: 1.6 }}>
-        Detailed assessment: drought stress from vegetation, rainfall, root-zone moisture and groundwater, combined with how vulnerable the land is (soil water-holding, organic carbon, slope, aridity). Every figure shows its source. Indicative only; not validated against yield or loss data.
+        Every figure shows its source. Indicative only; not validated against yield or loss data.
       </div>
-      <button onClick={run} disabled={!drawnAOI || loading} aria-label="Run detailed risk assessment" style={btn(!drawnAOI || loading)}>
-        {loading ? 'ASSESSING...' : 'DETAILED RISK ASSESSMENT'}
+      <button onClick={run} disabled={!drawnAOI || loading} aria-label="Run risk assessment" style={btn(!drawnAOI || loading)}>
+        {loading ? 'ASSESSING...' : 'RUN RISK ASSESSMENT'}
       </button>
       {error && <div data-testid="assessment-error" style={{ background: 'rgba(139,32,32,0.08)', border: '1px solid rgba(139,32,32,0.3)', padding: '9px 11px', fontSize: 14, color: S.text2 }}>{error}</div>}
       {r && (
@@ -136,6 +188,8 @@ export default function RiskAssessmentPanel({ drawnAOI, apiUrl }) {
               <b style={{ color: S.text }}>Sensitivity:</b> the stress score ranges {fmt(r.sensitivity.min)} to {fmt(r.sensitivity.max)} across alternative weightings, {r.sensitivity.robust ? 'so the result is robust to how the families are weighted.' : 'so it depends noticeably on the weighting. Read the class, not the exact number.'}
             </Box>
           )}
+
+          {r.legacy && <OriginalIndicators lg={r.legacy} />}
 
           <button onClick={download} disabled={pdfLoading} aria-label="Download full assessment report (PDF)" style={btn(pdfLoading)}>
             {pdfLoading ? 'PREPARING PDF...' : 'FULL REPORT WITH ALL METRICS (PDF)'}

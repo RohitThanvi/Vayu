@@ -42,13 +42,20 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, v))
 
 
-def _drought_subscore(drought_metrics: Dict[str, Any]) -> float:
-    """0-100: share of the AOI under drought stress (NDDI > 0.5). Uses
-    drought_affected_pct (area-normalized against the AOI's own total
-    area) whenever available; only falls back to a raw, non-normalized
-    km²-based estimate if the AOI-area computation itself failed, since
-    an absolute km² figure means very different things for a small AOI
-    vs. a large one and should never be the primary basis for this score."""
+# Below this share of the AOI where NDDI could be computed at all (the rest is bare soil, water, cloud), a drought share is not representative of the AOI: report "not assessed" instead of a diluted number.
+# A convention of this platform, not a published limit.
+MIN_ASSESSED_PCT = 20.0
+
+
+def _drought_subscore(drought_metrics: Dict[str, Any]) -> Optional[float]:
+    """0-100: share of the ASSESSABLE area under drought stress (NDDI > 0.5). None when too little of the AOI could be assessed (see MIN_ASSESSED_PCT), so a mostly-barren or cloud-covered AOI is "not assessed"
+    rather than "no drought". Falls back to the share of the whole AOI when the assessed-area figures are absent (older results), and to a raw km2 estimate only if the AOI-area computation itself failed."""
+    assessed = drought_metrics.get("assessed_area_pct")
+    if assessed is not None and assessed < MIN_ASSESSED_PCT:
+        return None
+    of_assessed = drought_metrics.get("drought_pct_of_assessed")
+    if of_assessed is not None:
+        return _clamp(of_assessed)
     affected = drought_metrics.get("drought_affected_pct")
     if affected is not None:
         return _clamp(affected)
@@ -198,6 +205,8 @@ def compute_risk_score(aoi: Dict[str, Any], as_of: Optional[str] = None,
         },
         "reason": reason,
         "sub_scores": sub_scores,
+        "weights": dict(WEIGHTS),
+        "min_assessed_pct": MIN_ASSESSED_PCT,
         "inputs_used": list(available.keys()),
         "inputs_failed": inputs_failed,
         "period": {"start_date": start_date, "end_date": end_date},
