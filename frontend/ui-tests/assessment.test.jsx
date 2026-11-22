@@ -22,7 +22,7 @@ const stubDownload = () => {
   return { names, restore: () => { A.click = pc; URL.createObjectURL = pu; URL.revokeObjectURL = pr; } };
 };
 const panel = (aoi = AOI) => <AgriPanel drawnAOI={aoi} apiUrl="" searchedRegionName="" />;
-const runAssessment = async (m) => { await click(buttonWith(m.container, 'DETAILED RISK ASSESSMENT')); await flush(30); };
+const runAssessment = async (m) => { await click(buttonWith(m.container, 'RUN RISK ASSESSMENT')); await flush(30); };
 
 export function register() {
   test('Assessment: number formatting never turns 50 into 5', () => {
@@ -73,7 +73,7 @@ export function register() {
   test('Assessment: nothing is requested without a drawn area', async () => {
     route('/agri/risk-assessment', FX.full); const n = net(); const m = await mount(panel(null));
     try {
-      const b = buttonWith(m.container, 'DETAILED RISK ASSESSMENT'); ok(b.disabled, 'button disabled'); await click(b); await flush(20);
+      const b = buttonWith(m.container, 'RUN RISK ASSESSMENT'); ok(b.disabled, 'button disabled'); await click(b); await flush(20);
       eq(n.of('/agri/risk-assessment').length, 0); ok(!q(m.container, '[data-testid="assessment-headline"]'));
     } finally { await m.unmount(); n.restore(); }
   });
@@ -111,12 +111,46 @@ export function register() {
     } finally { await m.unmount(); n.restore(); dl.restore(); }
   });
 
-  test('Assessment: the original score card and its report still work beside the new panel', async () => {
-    route('/agri/risk-score', { risk_score: 42, band: 'moderate', confidence: 80, reason: 'legacy reason text', inputs_used: ['ndvi'], inputs_failed: [] });
-    const n = net(); const m = await mount(panel());
+  test('Assessment: the Score tab has ONE assessment and ONE report: the old score button, card and report download are gone', async () => {
+    route('/agri/risk-assessment', FX.full); const n = net(), dl = stubDownload(); const m = await mount(panel());
     try {
-      await click(buttonWith(m.container, 'RUN RISK SCORE')); await flush(30);
-      eq(n.of('/agri/risk-score').length, 1); has(text(m.container), 'legacy reason text'); has(text(m.container), 'DOWNLOAD REPORT (PDF)'); eq(n.of('/agri/risk-assessment').length, 0, 'the legacy button does not trigger the new assessment');
+      const t = text(m.container); lacks(t, 'RUN RISK SCORE'); lacks(t, 'DOWNLOAD REPORT (PDF)'); ok(!buttonWith(m.container, 'RUN RISK SCORE'), 'no legacy score button');
+      await runAssessment(m);
+      eq(n.of('/agri/risk-score').length, 0, 'the legacy score endpoint is never called from this tab'); lacks(text(m.container), 'DOWNLOAD REPORT (PDF)');
+      const pdfButtons = qa(m.container, 'button').filter((b) => /PDF/.test(text(b))); eq(pdfButtons.length, 1, 'exactly one PDF button'); has(text(pdfButtons[0]), 'FULL REPORT WITH ALL METRICS');
+      await click(pdfButtons[0]); await flush(30); eq(n.of('/report/agri-risk').length, 0, 'the removed report endpoint is never requested'); eq(n.of('/risk-assessment/pdf').length, 1);
+    } finally { await m.unmount(); n.restore(); dl.restore(); }
+  });
+
+  test('Assessment: the original three indicators are shown in full inside the one assessment, with weights, sub-scores and raw metrics', async () => {
+    route('/agri/risk-assessment', FX.full); const n = net(); const m = await mount(panel());
+    try {
+      await runAssessment(m); const o = q(m.container, '[data-testid="original-indicators"]'); ok(o, 'original indicators block');
+      has(text(o), 'Composite 42/100 (moderate), confidence 80%'); has(text(o), 'elevated drought stress and declining soil moisture'); has(text(o), 'alerts and the watchlist use');
+      const d = text(q(m.container, '[data-testid="original-drought"]')); has(d, 'Drought extent (NDDI): 45/100'); has(d, 'weight 40%'); has(d, '2.7 km² (27% of the area)'); has(d, 'Share of the assessable area under drought: 45%'); has(d, 'Area where NDDI could be computed: 60%'); has(d, '0.31 / 0.52 / 0.21');
+      const v = text(q(m.container, '[data-testid="original-vegetation_loss"]')); has(v, '30/100'); has(v, 'weight 35%'); has(v, '1.2 km² (30% of the initial vegetated area)'); has(v, 'Vegetation gained: 0.4 km²');
+      const s2 = text(q(m.container, '[data-testid="original-moisture_deficit"]')); has(s2, '52.5/100'); has(s2, 'weight 25%'); has(s2, '0.24 / 0.19 m³/m³'); has(s2, 'Dry-stress share (below 0.1 m³/m³): 30% (3 km²)');
     } finally { await m.unmount(); n.restore(); }
+  });
+
+  test('Assessment: an original indicator that could not be scored says why instead of showing a number', async () => {
+    route('/agri/risk-assessment', FX.legacy_not_assessed); const n = net(); const m = await mount(panel());
+    try {
+      await runAssessment(m); const d = text(q(m.container, '[data-testid="original-drought"]'));
+      has(d, 'Drought extent (NDDI): not assessed'); has(d, 'only 5% of the area could be scored'); lacks(d, '45/100'); has(text(q(m.container, '[data-testid="original-vegetation_loss"]')), '30/100');
+    } finally { await m.unmount(); n.restore(); }
+  });
+
+  test('Assessment: no original-indicator block when the original score was unavailable', async () => {
+    route('/agri/risk-assessment', FX.empty); const n = net(); const m = await mount(panel());
+    try { await runAssessment(m); ok(!q(m.container, '[data-testid="original-indicators"]')); } finally { await m.unmount(); n.restore(); }
+  });
+
+  test('Assessment: the searched place name is sent with the PDF request only (never with the assessment request)', async () => {
+    route('/agri/risk-assessment', FX.full); const n = net(), dl = stubDownload(); const m = await mount(<AgriPanel drawnAOI={AOI} apiUrl="" searchedRegionName="Sikar" />);
+    try {
+      await runAssessment(m); eq(n.of('/agri/risk-assessment').filter((c) => !c.u.includes('/pdf'))[0].body, { aoi_geojson: AOI });
+      await click(buttonWith(m.container, 'FULL REPORT WITH ALL METRICS (PDF)')); await flush(30); eq(n.of('/risk-assessment/pdf')[0].body, { aoi_geojson: AOI, region_name: 'Sikar' });
+    } finally { await m.unmount(); n.restore(); dl.restore(); }
   });
 }

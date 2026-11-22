@@ -34,7 +34,7 @@ router = APIRouter(prefix="/remote-sensing", tags=["Remote Sensing"])
 TOOLS = {
     "spectral_indices": {
         "label": "Spectral Indices", "needs_dates": True,
-        "description": "NDVI, NDWI, MNDWI, NDBI, SAVI, EVI, NDSI — Sentinel-2, 10-20m.",
+        "description": "NDVI, NDWI, MNDWI, NDBI, SAVI, EVI, NDSI, NDMI, NDRE, MSAVI2, NBR — Sentinel-2, 10-20m.",
     },
     "terrain": {
         "label": "Terrain Analysis", "needs_dates": False,

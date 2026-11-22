@@ -146,6 +146,34 @@ INDEX_DEFINITIONS = {
         "bands": ["B3", "B11"],
         "interpretation": "Same band math as MNDWI, different interpretation context: NDSI > 0.4 is the standard threshold for classifying a pixel as snow/ice-covered.",
     },
+    "ndmi": {
+        "label": "NDMI — Normalized Difference Moisture Index (Gao's NDWI)",
+        "formula": "(NIR - SWIR1) / (NIR + SWIR1)  =  (B8 - B11) / (B8 + B11)",
+        "citation": "Gao 1996 (published as NDWI; also called NDMI)",
+        "bands": ["B8", "B11"],
+        "interpretation": "Follows the water content of vegetation canopies: higher = wetter canopy, lower = drier or water-stressed vegetation. NOT the open-water NDWI above (McFeeters, Green/NIR): do not use it to map water bodies. It is the NDWI used inside the NDDI drought index. Compare a place with its own earlier values; no single threshold separates stressed from healthy across crops.",
+    },
+    "ndre": {
+        "label": "NDRE — Normalized Difference Red Edge Index",
+        "formula": "(NIR - RedEdge1) / (NIR + RedEdge1)  =  (B8 - B5) / (B8 + B5)",
+        "citation": "Gitelson & Merzlyak 1994",
+        "bands": ["B8", "B5"],
+        "interpretation": "A red-edge index that follows leaf chlorophyll content, so it keeps responding in dense, mature canopies where NDVI saturates. It tracks chlorophyll (greenness), not nitrogen directly: a low value can come from nitrogen shortage but equally from water stress, disease or growth stage. B5 is a 20 m band, resampled to 10 m.",
+    },
+    "msavi2": {
+        "label": "MSAVI2 — Modified Soil-Adjusted Vegetation Index",
+        "formula": "(2xNIR + 1 - sqrt((2xNIR + 1)^2 - 8x(NIR - Red))) / 2  with NIR = B8, Red = B4",
+        "citation": "Qi et al. 1994",
+        "bands": ["B8", "B4"],
+        "interpretation": "A soil-adjusted vegetation index whose soil factor adjusts itself (SAVI uses a fixed L): suited to sparse vegetation and fields dominated by bare soil, where NDVI is biased by soil brightness. It reduces soil noise at the cost of a smaller dynamic range than NDVI.",
+    },
+    "nbr": {
+        "label": "NBR — Normalized Burn Ratio",
+        "formula": "(NIR - SWIR2) / (NIR + SWIR2)  =  (B8 - B12) / (B8 + B12)",
+        "citation": "Key & Benson 2006; García & Caselles 1991",
+        "bands": ["B8", "B12"],
+        "interpretation": "High for healthy vegetation, low or negative for burnt or very dry ground (SWIR2 rises and NIR falls after burning). This is a single-date value: burn severity needs the difference between a pre-fire and a post-fire date (dNBR), which the Burn Severity tool computes.",
+    },
 }
 
 
@@ -155,12 +183,17 @@ def _index_image(composite: ee.Image, index_id: str) -> ee.Image:
         nir, red = composite.select("B8"), composite.select("B4")
         L = 0.5
         return nir.subtract(red).divide(nir.add(red).add(L)).multiply(1 + L).rename("SAVI")
+    if index_id == "msavi2":
+        # Qi et al. 1994: (2*NIR + 1 - sqrt((2*NIR + 1)^2 - 8*(NIR - Red))) / 2. The radicand equals (2*NIR - 1)^2 + 8*Red, so it is never negative for real reflectances.
+        nir, red = composite.select("B8"), composite.select("B4")
+        a = nir.multiply(2).add(1)
+        return a.subtract(a.pow(2).subtract(nir.subtract(red).multiply(8)).sqrt()).divide(2).rename("MSAVI2")
     if index_id == "evi":
         nir, red, blue = composite.select("B8"), composite.select("B4"), composite.select("B2")
         return nir.subtract(red).multiply(2.5).divide(
             nir.add(red.multiply(6)).subtract(blue.multiply(7.5)).add(1)
         ).rename("EVI")
-    # NDVI/NDWI/MNDWI/NDBI/NDSI are all a normalizedDifference of two bands —
+    # NDVI/NDWI/MNDWI/NDBI/NDSI/NDMI/NDRE/NBR are all a normalizedDifference of two bands —
     # GEE's built-in handles (a-b)/(a+b) directly rather than hand-rolling it.
     b1, b2 = d["bands"][0], d["bands"][1]
     return composite.normalizedDifference([b1, b2]).rename(index_id.upper())
@@ -212,8 +245,8 @@ def _scene_provenance(region: ee.Geometry, start: str, end: str,
 def compute_spectral_indices(aoi: Dict, start_date: str, end_date: str, indices: list = None) -> Dict[str, Any]:
     """Computes one or more spectral indices (see INDEX_DEFINITIONS) as
     AOI-mean values from a cloud-masked Sentinel-2 SR median composite.
-    Default: all 7 indices. 10-20m native resolution depending on band
-    (B4/B3/B2/B8 are 10m, B11 is 20m)."""
+    Default: all 11 indices. 10-20m native resolution depending on band
+    (B4/B3/B2/B8 are 10m; B5, B11 and B12 are 20m)."""
     logger.info(f"GEE (remote sensing): spectral_indices {indices} {start_date} -> {end_date}")
     indices = indices or list(INDEX_DEFINITIONS.keys())
     unknown = [i for i in indices if i not in INDEX_DEFINITIONS]
@@ -223,32 +256,26 @@ def compute_spectral_indices(aoi: Dict, start_date: str, end_date: str, indices:
     region = _polygon_geometry(aoi)
     composite, scene_count = _s2_composite(region, start_date, end_date)
 
-    # Fraction of the AOI actually covered by cloud-free pixels in the
-    # composite (vs. gaps left by cloud masking) — an AOI-mean number
-    # computed from a composite that's only 40% valid pixel coverage is
-    # a much shakier number than one from 95% coverage, but without this
-    # field there'd be no way to tell the two apart.
-    valid_px = composite.select("B4").mask().reduceRegion(
-        reducer=ee.Reducer.mean(), geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
-    ).getInfo()
-    valid_pixel_fraction = round((valid_px.get("B4", 0) or 0), 4)
+    # Fraction of the AOI actually covered by cloud-free pixels in the composite: an AOI-mean from a composite with only 40% valid coverage is a much shakier number than one from 95%.
+    # reduce_stats(): a missing statistic is None, never 0 (a fully cloud-masked area used to report NDVI 0.0), and ALL indices are reduced in ONE Earth Engine call instead of one call per index.
+    valid_px, _ = reduce_stats(composite.select("B4").mask(), region, ee.Reducer.mean(), 20)
+    valid_pixel_fraction = num(valid_px, "B4", 4)
+
+    stack = ee.Image.cat([_index_image(composite, i) for i in indices])
+    stats, sampling = reduce_stats(stack, region, ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True), 20)
 
     results = {}
     for idx_id in indices:
-        img = _index_image(composite, idx_id)
+        img = stack.select(idx_id.upper())
         band_name = idx_id.upper()
-        stats = img.reduceRegion(
-            reducer=ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True),
-            geometry=region, scale=20, maxPixels=1e9, bestEffort=True, tileScale=4,
-        ).getInfo()
         d = INDEX_DEFINITIONS[idx_id]
         results[idx_id] = {
             "label": d["label"], "formula": d["formula"], "citation": d["citation"],
             "interpretation": d["interpretation"],
-            "mean": round(stats.get(f"{band_name}_mean", 0) or 0, 4),
-            "min": round(stats.get(f"{band_name}_min", 0) or 0, 4),
-            "max": round(stats.get(f"{band_name}_max", 0) or 0, 4),
-            "std_dev": round(stats.get(f"{band_name}_stdDev", 0) or 0, 4),
+            "mean": num(stats, f"{band_name}_mean", 4),
+            "min": num(stats, f"{band_name}_min", 4),
+            "max": num(stats, f"{band_name}_max", 4),
+            "std_dev": num(stats, f"{band_name}_stdDev", 4),
             "map_layer": _tile_layer(img, INDEX_PALETTES.get(idx_id, {"min": -1, "max": 1, "palette": ["#000000", "#ffffff"]})),
             "download_url": _download_url(img, region, scale=20),
         }
@@ -258,6 +285,7 @@ def compute_spectral_indices(aoi: Dict, start_date: str, end_date: str, indices:
         "method": f"Sentinel-2 SR Harmonized, cloud-masked via Scene Classification Layer, median composite of {scene_count} scene(s), 10-20m native resolution.",
         "scene_count": scene_count,
         "valid_pixel_fraction": valid_pixel_fraction,
+        "sampling": sampling, "sampling_note": sampling_note(sampling, 0.02, "Sentinel-2"),
         "aoi_area_km2": round(_region_area_km2(region), 3),
         "scene_provenance": _scene_provenance(region, start_date, end_date),
     }
@@ -351,6 +379,10 @@ INDEX_PALETTES = {
     "mndwi": {"min": -0.5, "max": 0.5, "palette": ["#8c510a", "#f6e8c3", "#c7eae5", "#01665e"]},
     "ndbi": {"min": -0.3, "max": 0.3, "palette": ["#ffffcc", "#fed976", "#fd8d3c", "#e31a1c"]},
     "ndsi": {"min": -0.2, "max": 0.8, "palette": ["#08306b", "#4292c6", "#c6dbef", "#ffffff"]},
+    "ndmi": {"min": -0.3, "max": 0.6, "palette": ["#8c510a", "#f6e8c3", "#c7eae5", "#01665e"]},      # dry canopy (brown) to wet canopy (teal)
+    "ndre": {"min": -0.1, "max": 0.6, "palette": ["#a50026", "#f46d43", "#fee08b", "#66bd63", "#1a9850"]},
+    "msavi2": {"min": -0.2, "max": 0.8, "palette": ["#a50026", "#f46d43", "#fee08b", "#66bd63", "#1a9850"]},
+    "nbr": {"min": -0.5, "max": 0.8, "palette": ["#7f0000", "#d7301f", "#fee08b", "#66bd63", "#1a9850"]},   # burnt / bare (dark red) to healthy vegetation (green)
 }
 
 WORLDCOVER_CLASSES = {
@@ -569,7 +601,7 @@ def compute_sar_backscatter(aoi: Dict, start_date: str, end_date: str) -> Dict[s
 # instead of a separate single-purpose function per index (gee_client.py's
 # vegetation_change/builtup_change/water_change already do this per-index for
 # the Analyze tab's natural-language flow; this is the same underlying idea
-# exposed directly for any of the 7 indices, picked explicitly rather than
+# exposed directly for any of the 11 indices, picked explicitly rather than
 # inferred from a sentence).
 # ═════════════════════════════════════════════════════════════════════════════
 
