@@ -5,11 +5,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1])); sys.path.insert(0, str(Path(__file__).parent))
 import pytest
 from agri_fixtures import LOCATIONS
+from app.services import vdi_contract
 from app.services.agri import risk_assessment as ra
 from app.services.agri.water_balance import AWC_MM_PER_M
 
 RJ = LOCATIONS["rajasthan_semiarid"]
-VDI = {"indices": {"VHI": {"mean": 28.0}, "VCI": {"mean": 30.0}, "TCI": {"mean": 26.0}}, "valid_pixel_fraction": 0.8, "baseline": {"ndvi_years_with_data": 20, "lst_years_with_data": 22, "years_requested": "2001-2024", "window": "w"}}
+# Built through the REAL packager (vdi_contract.package_vdi_indices), so this fixture has exactly the shape compute_vegetation_drought_index() returns (lower-case keys). A hand-written upper-case dict here once hid a
+# production bug: the consumer read indices["VHI"], the producer wrote indices["vhi"], and the VHI indicator was always "unavailable".
+_VDI_META = {k: (k + " label", "formula", "citation", "interpretation") for k in vdi_contract.VDI_KEYS}
+def vdi_indices(vhi=28.0, vci=30.0, tci=26.0): return vdi_contract.package_vdi_indices({"VHI_mean": vhi, "VCI_mean": vci, "TCI_mean": tci}, _VDI_META, lambda k: None)
+VDI = {"indices": vdi_indices(), "valid_pixel_fraction": 0.8, "baseline": {"ndvi_years_with_data": 20, "lst_years_with_data": 22, "years_requested": "2001-2024", "window": "w"}}
 BASE = {"z_score": -1.2, "seasonal_normal_ndvi": 0.45, "seasonal_std_ndvi": 0.05, "years_used": 8, "window_days": 30, "as_of": "2026-11-01", "current_ndvi": 0.39, "status": "ok"}
 PREC = {"status": "ok", "recent_total_mm": 50.0, "historical_mean_mm": 120.0, "recent_days": 90, "historical_totals_mm": [float(x) for x in range(60, 180, 4)]}   # 30 values
 RZ = {"sm_rootzone_percentile": 15.0, "sm_rootzone_0_100cm": 0.21, "sm_surface_0_5cm": 0.1}
@@ -58,7 +63,7 @@ def test_indicators_report_value_percentile_class_and_stress():
 
 
 def test_unavailable_indicators_say_why_and_never_score_zero():
-    cases = [ra.ind_vhi(None, "gee down"), ra.ind_vhi({"indices": {"VHI": {"mean": None}}}), ra.ind_vhi({**VDI, "valid_pixel_fraction": 0.1}), ra.ind_ndvi(None, "no base"), ra.ind_ndvi({"z_score": None, "reason": "too few years"}),
+    cases = [ra.ind_vhi(None, "gee down"), ra.ind_vhi({"indices": vdi_indices(vhi=None)}), ra.ind_vhi({**VDI, "valid_pixel_fraction": 0.1}), ra.ind_ndvi(None, "no base"), ra.ind_ndvi({"z_score": None, "reason": "too few years"}),
              ra.ind_rain({"status": "no_data"}), ra.ind_rain({**PREC, "historical_totals_mm": []}), ra.ind_rootzone({"sm_rootzone_percentile": None}), ra.ind_groundwater({"status": "ok", "series": [], "latest_anomaly_cm": 1}),
              ra.ind_groundwater({**GW, "series": GW["series"][:5]})]
     for c in cases: assert c["status"] == "unavailable" and c["stress"] is None and c["reason"], c

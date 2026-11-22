@@ -7,6 +7,8 @@ from typing import Dict, Any
 
 import ee
 
+from .gee_sampling import num, reduce_stats, sampling_note
+
 logger = logging.getLogger(__name__)
 
 # ── GEE Initialization ────────────────────────────────────────────────────────
@@ -171,6 +173,22 @@ def _require_start_after(start_date: str, cutoff: str, dataset_name: str):
             f"{dataset_name} data is only available from {cutoff}. "
             f"Please choose a start date on or after {cutoff}."
         )
+
+
+# NDDI (Gu, Brown, Verdin & Wardlow 2007, GRL 34:L06407) = (NDVI - NDWI) / (NDVI + NDWI), where NDWI is the vegetation-water index of Gao (1996) built from the NIR and SWIR channels:
+# (NIR - SWIR) / (NIR + SWIR). Sentinel-2: NIR = B8, SWIR = B11, Red = B4. An earlier version used (Green - NIR)/(Green + NIR), McFeeters' OPEN-WATER index, which is a different index and made the result
+# backwards: for typical reflectances a dense healthy crop scored NDDI ~13 (flagged "severe drought") while dry bare soil scored below zero ("no drought"). Fixed and covered by tests.
+# The class limits below are conventions kept from the earlier version: Gu et al. define the index, and no published class limits were verified for this implementation. Treat the areas as indicative.
+NDDI_DROUGHT = 0.5
+NDDI_SEVERE = 0.7
+NDDI_MIN_DENOMINATOR = 0.1   # NDVI + NDWI at or below this (bare soil, water, deep shadow) makes the ratio unstable and its sign meaningless, so those pixels are masked (not assessed)
+
+
+def _nddi_image(composite: ee.Image) -> ee.Image:
+    ndvi = composite.normalizedDifference(["B8", "B4"]).rename("NDVI")
+    ndwi = composite.normalizedDifference(["B8", "B11"]).rename("NDWI")
+    denom = ndvi.add(ndwi)
+    return ndvi.subtract(ndwi).divide(denom).updateMask(denom.gt(NDDI_MIN_DENOMINATOR)).rename("NDDI")
 
 
 def _mask_s2_clouds(image: ee.Image) -> ee.Image:
@@ -667,30 +685,20 @@ def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
                 f"No cloud-free Sentinel-2 imagery found for {start.format('YYYY-MM-dd').getInfo()} "
                 f"– {end.format('YYYY-MM-dd').getInfo()}."
             )
-        col = col_raw.median()
-        ndvi = col.normalizedDifference(["B8", "B4"]).rename("NDVI")
-        ndwi = col.normalizedDifference(["B3", "B8"]).rename("NDWI")
-        # NDDI = (NDVI - NDWI) / (NDVI + NDWI). Unprotected division blows
-        # up (or silently returns a meaningless huge value) wherever
-        # NDVI+NDWI is near zero -- explicitly mask those pixels out as
-        # invalid rather than let a near-zero denominator produce a wild
-        # or infinite NDDI that then pollutes the area threshold masks
-        # and the regional mean below.
-        denom = ndvi.add(ndwi)
-        valid_denom = denom.abs().gt(0.01)
-        nddi = ndvi.subtract(ndwi).divide(denom).updateMask(valid_denom).rename("NDDI")
-        return nddi
+        return _nddi_image(col_raw.median())
 
     start_nddi = get_nddi(start_ee, start_ee.advance(1, "year"))
     end_nddi = get_nddi(end_ee.advance(-1, "year"), end_ee)
 
     # High NDDI = drought stress; threshold > 0.5
-    drought_mask = end_nddi.gt(0.5)
-    severe_drought_mask = end_nddi.gt(0.7)
+    drought_mask = end_nddi.gt(NDDI_DROUGHT)
+    severe_drought_mask = end_nddi.gt(NDDI_SEVERE)
 
     drought_km2 = _calc_area_km2(drought_mask, region)
     severe_km2 = _calc_area_km2(severe_drought_mask, region)
     region_area_km2 = _region_area_km2(region)
+    assessed_km2 = _calc_area_km2(end_nddi.mask(), region)      # where NDDI could be computed at all (not cloud, bare soil, water)
+    assessed_pct = round(min(max(assessed_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
     drought_affected_pct = round(min(max(drought_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
     severe_drought_pct = round(min(max(severe_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
 
@@ -715,11 +723,13 @@ def compute_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict:
             "drought_affected_km2": round(drought_km2, 4),
             "severe_drought_km2": round(severe_km2, 4),
             "region_area_km2": round(region_area_km2, 4),
+            "assessed_area_pct": assessed_pct,
             "drought_affected_pct": drought_affected_pct,
             "severe_drought_pct": severe_drought_pct,
             "avg_nddi_start": round(avg_nddi_start, 4) if avg_nddi_start is not None else None,
             "avg_nddi_end": round(avg_nddi_end, 4) if avg_nddi_end is not None else None,
             "nddi_change": round(avg_nddi_end - avg_nddi_start, 4) if nddi_data_available else None,
+            "thresholds": {"drought": NDDI_DROUGHT, "severe": NDDI_SEVERE},
         },
         "ee_image": drought_mask,
         "ee_geometry": region,
@@ -971,26 +981,23 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
     start_ee = ee.Date(start_date)
 
     smap = ee.ImageCollection("NASA/SMAP/SPL4SMGP/008").filterBounds(region)
+    sm_reducer = ee.Reducer.mean().combine(ee.Reducer.min(), sharedInputs=True).combine(ee.Reducer.max(), sharedInputs=True)
 
     def get_sm_stats(start, end):
+        """(stats, sampling). stats is None when there is no SMAP value for the area. An area smaller than one ~9 km SMAP pixel used to come back null (and later show as 0%
+        dry stress); reduce_stats() falls back to the pixel under the area's centre and reports that in `sampling`."""
         col = smap.filterDate(start, end).select("sm_surface")
         if col.size().getInfo() == 0:
-            return None
-        img = col.mean()
-        stats = img.reduceRegion(
-            reducer=ee.Reducer.mean().combine(ee.Reducer.min(), sharedInputs=True)
-                                     .combine(ee.Reducer.max(), sharedInputs=True),
-            geometry=region, scale=10000, maxPixels=1e9, bestEffort=True, tileScale=4,
-        ).getInfo()
-        # reduceRegion output keys are named after the (renamed) band, so
-        # normalize back to the "ssm_*" shape the rest of this function
-        # already expects rather than touching every call site below.
-        if stats:
-            stats = {k.replace("sm_surface", "ssm"): v for k, v in stats.items()}
-        return stats
+            return None, None
+        stats, sampling = reduce_stats(col.mean(), region, sm_reducer, 10000)
+        if not stats:
+            return None, None
+        # reduceRegion output keys are named after the (renamed) band, so normalize back to the "ssm_*" shape the rest of this function expects.
+        return {k.replace("sm_surface", "ssm"): v for k, v in stats.items()}, sampling
 
-    start_stats = get_sm_stats(start_ee, start_ee.advance(3, "month"))
-    end_stats = get_sm_stats(end_ee.advance(-3, "month"), end_ee)
+    start_stats, start_sampling = get_sm_stats(start_ee, start_ee.advance(3, "month"))
+    end_stats, end_sampling = get_sm_stats(end_ee.advance(-3, "month"), end_ee)
+    sampling = "pixel_at_centroid" if "pixel_at_centroid" in (start_sampling, end_sampling) else (end_sampling or start_sampling)
 
     # SMAP's fixed 3-month averaging window on each side doesn't adapt to
     # the requested period's actual length -- for a short requested window
@@ -1026,9 +1033,16 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
     else:
         end_sm_img = end_window.mean()
         dry_mask = end_sm_img.lt(0.1)
-        dry_km2 = round(_calc_area_km2(dry_mask, region, scale=10000), 4)
-        region_area_km2 = _region_area_km2(region)
-        dry_pct = round(min(max(dry_km2 / region_area_km2 * 100, 0), 100), 4) if region_area_km2 > 0 else None
+        # Share of the AOI that is dry = mean of the 0/1 dry mask (equal to dry area / AOI area, but it also works when the AOI is smaller than a SMAP pixel).
+        frac_stats, dry_sampling = reduce_stats(dry_mask.rename("dry"), region, ee.Reducer.mean(), 10000)
+        frac = frac_stats.get("dry")
+        if frac is None:
+            dry_km2 = None
+            dry_pct = None
+        else:
+            dry_pct = round(min(max(frac * 100, 0), 100), 4)
+            dry_km2 = round(_region_area_km2(region) * min(max(frac, 0), 1), 4)
+            if dry_sampling == "pixel_at_centroid": sampling = "pixel_at_centroid"
 
     return {
         "metrics": {
@@ -1037,8 +1051,10 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict:
             "moisture_change": round(end_mean - start_mean, 4) if data_available else None,
             "dry_stress_area_km2": dry_km2,
             "dry_stress_pct": dry_pct,
-            "end_min_sm": round((end_stats or {}).get("ssm_min"), 4) if (end_stats or {}).get("ssm_min") is not None else None,
-            "end_max_sm": round((end_stats or {}).get("ssm_max"), 4) if (end_stats or {}).get("ssm_max") is not None else None,
+            "end_min_sm": num(end_stats or {}, "ssm_min", 4),
+            "end_max_sm": num(end_stats or {}, "ssm_max", 4),
+            "sampling": sampling,
+            "sampling_note": sampling_note(sampling, 9, "SMAP"),
             "data_available": data_available,
             "window_overlap_caveat": window_overlap_caveat,
         },

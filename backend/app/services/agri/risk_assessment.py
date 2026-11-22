@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from . import engine_config as cfg
 from .crop_requirements import TEXTURE_NAMES
 from .water_balance import AWC_MM_PER_M, thornthwaite_pet
+from ..vdi_contract import vdi_index_key
 
 logger = logging.getLogger(__name__)
 NORMAL = statistics.NormalDist()
@@ -125,10 +126,11 @@ def _rel(n, hi, mid): return "high" if n >= hi else ("medium" if n >= mid else "
 def ind_vhi(vdi: Optional[Dict[str, Any]], err: Optional[str] = None) -> Dict[str, Any]:
     nm, src = "Vegetation Health Index (VHI)", "MODIS NDVI 250 m + LST 1 km (Spectra drought index)"
     if not vdi or "indices" not in vdi: return _missing("vhi", nm, "vegetation", err or "drought index not available for this area/period", src)
-    vhi = (vdi["indices"].get("VHI") or {}); mean = vhi.get("mean"); valid = vdi.get("valid_pixel_fraction")
-    if mean is None or (valid is not None and valid < 0.2): return _missing("vhi", nm, "vegetation", f"too few valid pixels ({valid})", src)
+    idx = vdi["indices"]; vhi = (idx.get(vdi_index_key("VHI")) or {}); mean = vhi.get("mean"); valid = vdi.get("valid_pixel_fraction")
+    if mean is None: return _missing("vhi", nm, "vegetation", "no valid MODIS pixel for this area and window" + (f" ({vdi['sampling_note']})" if vdi.get("sampling_note") else ""), src)
+    if valid is not None and valid < 0.2: return _missing("vhi", nm, "vegetation", f"too few valid pixels ({valid})", src)
     base = vdi.get("baseline") or {}; yrs = min(base.get("ndvi_years_with_data") or 0, base.get("lst_years_with_data") or 0)
-    code, label = vhi_class(mean); comp = {k: (vdi["indices"].get(k) or {}).get("mean") for k in ("VCI", "TCI")}
+    code, label = vhi_class(mean); comp = {k: (idx.get(vdi_index_key(k)) or {}).get("mean") for k in ("VCI", "TCI")}
     return _ind("vhi", nm, "vegetation", round(mean, 1), "0-100", f"per-pixel record {base.get('years_requested', 'n/a')}; {yrs} years with data", None, f"{label} (Kogan)", vhi_stress(mean),
                 _rel(yrs, 15, 8), src, "1 km", base.get("window", ""), f"VCI {comp['VCI']} (vegetation condition), TCI {comp['TCI']} (temperature condition). Valid pixels {valid}.")
 

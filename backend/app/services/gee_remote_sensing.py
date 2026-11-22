@@ -32,6 +32,8 @@ from .gee_client import (
     _mask_landsat_clouds, _landsat89_collection,
 )
 from .satellite_imagery import _fetch_thumb_bytes
+from .gee_sampling import num, reduce_stats, sampling_note
+from .vdi_contract import VDI_KEYS, package_vdi_indices, vdi_index_key
 from . import trend_stats
 from .trend_stats import mann_kendall_test
 from .accuracy_stats import compute_confusion_matrix
@@ -1023,26 +1025,30 @@ def compute_soil_moisture(aoi: Dict, start_date: str, end_date: str) -> Dict[str
             ),
         }
 
-    sm = col.mean().clip(region)
+    sm_raw = col.mean()
+    sm = sm_raw.clip(region)      # clipped ONLY for the map layer and download; the statistics use the unclipped image so an area smaller than a SMAP pixel is not masked away
 
-    stats = sm.reduceRegion(
-        reducer=ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True),
-        geometry=region, scale=10000, maxPixels=1e9, bestEffort=True, tileScale=4,
-    ).getInfo()
-
-    valid_px = col.mosaic().mask().reduceRegion(
-        reducer=ee.Reducer.mean(), geometry=region, scale=10000, maxPixels=1e9, bestEffort=True, tileScale=4,
-    ).getInfo()
-    valid_pixel_fraction = round((valid_px.get("sm_surface", 0) or 0), 4)
+    reducer = ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True)
+    stats, sampling = reduce_stats(sm_raw, region, reducer, 10000)
+    valid_px, _ = reduce_stats(col.mosaic().mask(), region, ee.Reducer.mean(), 10000)
+    valid_pixel_fraction = num(valid_px, "sm_surface", 4)
+    if not stats:
+        # Previously every missing statistic was written as 0.0 (a "real" reading of zero moisture). Report no data instead.
+        return {
+            "sm_surface": None, "scene_count": scene_count, "sampling": None, "sampling_note": None,
+            "method": ("NASA SMAP L4 (SPL4SMGP.008) surface soil moisture, band sm_surface, ~9km/3-hourly. Scenes exist for this date range but SMAP returned no value for this area; "
+                       "this is a missing reading, not zero moisture."),
+        }
 
     return {
         "sm_surface": {
-            "mean": round(stats.get("sm_surface_mean", 0) or 0, 4),
-            "min": round(stats.get("sm_surface_min", 0) or 0, 4),
-            "max": round(stats.get("sm_surface_max", 0) or 0, 4),
-            "std_dev": round(stats.get("sm_surface_stdDev", 0) or 0, 4),
+            "mean": num(stats, "sm_surface_mean", 4),
+            "min": num(stats, "sm_surface_min", 4),
+            "max": num(stats, "sm_surface_max", 4),
+            "std_dev": num(stats, "sm_surface_stdDev", 4),
             "units": "m\u00b3/m\u00b3 (volumetric water content)",
         },
+        "sampling": sampling, "sampling_note": sampling_note(sampling, 9, "SMAP"),
         "scene_count": scene_count,
         "valid_pixel_fraction": valid_pixel_fraction,
         "aoi_area_km2": round(_region_area_km2(region), 3),
@@ -2056,6 +2062,15 @@ def _build_vhi_stack(region: ee.Geometry, start_date: str, end_date: str) -> Dic
             "ndvi_composites_used": n_target.size().getInfo(), "lst_composites_used": l_target.size().getInfo()}
 
 
+def vdi_classes(hist: Dict[str, Any]) -> list:
+    """Share of valid pixels per Kogan drought class; every share is None when there were no valid pixels (not 0%, which would read as 'no drought')."""
+    total = sum((v or 0) for v in hist.values())
+    return [{
+        "code": code, "label": label, "vhi_range": (f"VHI ≤ {upper}" if code == 0 else f"{VHI_DROUGHT_CLASSES[code-1][2]} < VHI ≤ {upper}" if upper < 100 else f"VHI > {VHI_DROUGHT_CLASSES[code-1][2]}"),
+        "pct_of_valid_pixels": round(100 * (hist.get(str(code), 0) or 0) / total, 2) if total > 0 else None,
+    } for code, label, upper in VHI_DROUGHT_CLASSES]
+
+
 def compute_vegetation_drought_index(aoi: Dict, start_date: str, end_date: str) -> Dict[str, Any]:
     """VCI, TCI and VHI (Kogan 1990/1995) for a window inside one calendar
     year, against a per-pixel baseline of the same calendar window in
@@ -2068,20 +2083,16 @@ def compute_vegetation_drought_index(aoi: Dict, start_date: str, end_date: str) 
     ndvi_years, lst_years = b["ndvi_years"], b["lst_years"]
 
     reducer = ee.Reducer.mean().combine(ee.Reducer.minMax(), sharedInputs=True).combine(ee.Reducer.stdDev(), sharedInputs=True)
-    kw = dict(geometry=region, scale=DROUGHT_SCALE_M, maxPixels=1e9, bestEffort=True, tileScale=4)
-    st = stack.reduceRegion(reducer=reducer, **kw).getInfo()
-    valid = vhi.mask().reduceRegion(reducer=ee.Reducer.mean(), **kw).getInfo()
+    # reduce_stats: an AOI smaller than one 1 km LST pixel used to come back null and be reported as VHI 0 (= extreme drought). Now it samples the pixel under the AOI centre, and says so.
+    st, sampling = reduce_stats(stack, region, reducer, DROUGHT_SCALE_M)
+    valid, _ = reduce_stats(vhi.mask(), region, ee.Reducer.mean(), DROUGHT_SCALE_M)
 
     cls = ee.Image(4)
     for code, _label, upper in VHI_DROUGHT_CLASSES[:-1][::-1]:
         cls = cls.where(vhi.lte(upper), code)
     cls = cls.updateMask(vhi.mask()).rename("class")
-    hist = cls.reduceRegion(reducer=ee.Reducer.frequencyHistogram(), **kw).getInfo().get("class") or {}
-    total = sum(hist.values()) or 1
-    classes = [{
-        "code": code, "label": label, "vhi_range": (f"VHI ≤ {upper}" if code == 0 else f"{VHI_DROUGHT_CLASSES[code-1][2]} < VHI ≤ {upper}" if upper < 100 else f"VHI > {VHI_DROUGHT_CLASSES[code-1][2]}"),
-        "pct_of_valid_pixels": round(100 * (hist.get(str(code), 0) or 0) / total, 2),
-    } for code, label, upper in VHI_DROUGHT_CLASSES]
+    hist_stats, _ = reduce_stats(cls, region, ee.Reducer.frequencyHistogram(), DROUGHT_SCALE_M)
+    classes = vdi_classes(hist_stats.get("class") or {})
 
     palettes = {
         "VCI": {"min": 0, "max": 100, "palette": ["#7f0000", "#fdd49e", "#ffffbf", "#a6d96a", "#1a9850"]},
@@ -2093,15 +2104,7 @@ def compute_vegetation_drought_index(aoi: Dict, start_date: str, end_date: str) 
         "TCI": ("TCI — Temperature Condition Index", "100 × (LSTmax − LST) / (LSTmax − LSTmin)", "Kogan 1995", "Same idea for daytime land-surface temperature, inverted so hotter than usual scores low. Low = thermal stress."),
         "VHI": ("VHI — Vegetation Health Index", f"{VHI_ALPHA} × VCI + {1 - VHI_ALPHA} × TCI", "Kogan 1995, 2001", "Combined moisture + thermal stress. Low values indicate agricultural drought stress; classes below."),
     }
-    indices = {}
-    for key in ("VCI", "TCI", "VHI"):
-        label, formula, cite, interp = meta[key]
-        indices[key.lower()] = {
-            "label": label, "formula": formula, "citation": cite, "interpretation": interp,
-            "mean": round(st.get(f"{key}_mean", 0) or 0, 2), "min": round(st.get(f"{key}_min", 0) or 0, 2),
-            "max": round(st.get(f"{key}_max", 0) or 0, 2), "std_dev": round(st.get(f"{key}_stdDev", 0) or 0, 2),
-            "map_layer": _tile_layer(stack.select(key), palettes[key]),
-        }
+    indices = package_vdi_indices(st, meta, lambda key: _tile_layer(stack.select(key), palettes[key]))
     return {
         "indices": indices,
         "drought_classes": classes,
@@ -2109,7 +2112,8 @@ def compute_vegetation_drought_index(aoi: Dict, start_date: str, end_date: str) 
         "baseline": {"years_requested": f"{y0}–{y1}", "ndvi_years_with_data": ndvi_years, "lst_years_with_data": lst_years,
                      "window": f"{m1:02d}-{d1:02d} to {m2:02d}-{d2:02d} each year",
                      "caveat": "VCI/TCI are relative to this baseline; short records understate extremes. Pixels with no baseline range are masked."},
-        "valid_pixel_fraction": round((valid.get("VHI", 0) or 0), 4),
+        "valid_pixel_fraction": num(valid, "VHI", 4),
+        "sampling": sampling, "sampling_note": sampling_note(sampling, 1, "MODIS land-surface-temperature"),
         "ndvi_composites_used": b["ndvi_composites_used"], "lst_composites_used": b["lst_composites_used"],
         "download_url": _download_url(stack, region, scale=DROUGHT_SCALE_M),
         "download_note": "3-band GeoTIFF: VCI, TCI, VHI (0–100) at 1 km.",
