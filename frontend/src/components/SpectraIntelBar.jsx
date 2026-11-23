@@ -34,16 +34,17 @@ const INDEX_CHOICES = [
   ['ndvi', 'NDVI — Vegetation'], ['ndwi', 'NDWI — Open water'], ['mndwi', 'MNDWI — Water (urban-safe)'],
   ['ndbi', 'NDBI — Built-up'], ['savi', 'SAVI — Soil-adjusted vegetation'], ['evi', 'EVI — Enhanced vegetation'],
   ['ndsi', 'NDSI — Snow/ice'],
+  ['ndmi', 'NDMI — Vegetation moisture'], ['ndre', 'NDRE — Red-edge (chlorophyll)'], ['msavi2', 'MSAVI2 — Soil-adjusted (sparse crops)'], ['nbr', 'NBR — Burn ratio / dryness'],
 ];
 
 const REFERENCE_DATA = [
-  { tool: 'Spectral Indices', dataset: 'Sentinel-2 SR Harmonized', resolution: '10-20m', note: 'NDVI, NDWI, MNDWI, NDBI, SAVI, EVI, NDSI — cloud-masked median composite. Citations: Rouse 1974, McFeeters 1996, Xu 2006, Zha et al. 2003, Huete 1988/2002, Hall et al. 1995. Includes scene-level provenance (exact scene IDs/dates/cloud%).' },
+  { tool: 'Spectral Indices', dataset: 'Sentinel-2 SR Harmonized', resolution: '10-20m', note: 'NDVI, NDWI, MNDWI, NDBI, SAVI, EVI, NDSI, NDMI, NDRE, MSAVI2, NBR — cloud-masked median composite. Citations: Rouse 1974, McFeeters 1996, Xu 2006, Zha et al. 2003, Huete 1988/2002, Hall et al. 1995, Gao 1996, Gitelson & Merzlyak 1994, Qi et al. 1994, Key & Benson 2006. NDRE tracks chlorophyll, not nitrogen directly; NDMI is not the open-water NDWI. Includes scene-level provenance (exact scene IDs/dates/cloud%).' },
   { tool: 'Time Series', dataset: 'Sentinel-2 SR Harmonized', resolution: '10-20m', note: 'Any index across monthly/quarterly sub-periods, plus a Mann-Kendall trend test + Sen\'s slope (Mann 1945; Kendall 1975; Sen 1968) — tells you whether an apparent trend is statistically significant, not just what the chart looks like.' },
   { tool: 'Terrain Analysis', dataset: 'Copernicus DEM GLO-30', resolution: '30m', note: 'TanDEM-X-derived DSM (includes buildings/vegetation, not bare-earth). EGM2008 vertical datum. Aspect averaged circularly.' },
   { tool: 'Land Cover', dataset: 'ESA WorldCover v200', resolution: '10m, 2021', note: '11-class classification, 76.7% overall validated accuracy. Zanaga et al. 2022.' },
   { tool: 'Snow Cover', dataset: 'Sentinel-2 SR (NDSI)', resolution: '20m', note: 'NDSI > 0.4 threshold (Hall et al. 1995), same threshold as MODIS\'s operational snow product, at far finer resolution.' },
   { tool: 'SAR Backscatter', dataset: 'Sentinel-1 GRD (IW, dual-pol)', resolution: '20m', note: 'All-weather, day/night. RVI computed on linear backscatter power, not raw dB values.' },
-  { tool: 'Change Detection', dataset: 'Sentinel-2 SR', resolution: '20m', note: 'Any of the 7 indices, diffed between two independently-composited periods. Both periods include scene-level provenance (exact scene IDs/dates/cloud%).' },
+  { tool: 'Change Detection', dataset: 'Sentinel-2 SR', resolution: '20m', note: 'Any of the 11 indices, diffed between two independently-composited periods. Both periods include scene-level provenance (exact scene IDs/dates/cloud%).' },
   { tool: 'Burn Severity', dataset: 'Sentinel-2 SR (dNBR + RBR)', resolution: '20m', note: 'USGS FIREMON dNBR (Key & Benson 2006) plus RBR (Parks, Dillon & Miller 2014) side by side — RBR corrects for pre-fire vegetation density bias in dNBR.' },
   { tool: 'Atmospheric Composition', dataset: 'Sentinel-5P / TROPOMI OFFL L3', resolution: '~1.1km', note: 'NO2, SO2, CO column density + aerosol index. Column densities, not ground-level concentrations.' },
   { tool: 'ML Classify', dataset: 'Sentinel-2 SR + user training points', resolution: '10m', note: 'Random Forest (ee.Classifier.smileRandomForest, Breiman 2001), trained per-request on points you supply. Reports held-out test accuracy separately from optimistic training accuracy.' },

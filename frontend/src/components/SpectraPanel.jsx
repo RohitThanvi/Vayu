@@ -128,7 +128,11 @@ const MIN_CLASSES = 2;
 const INDEX_CHOICES = [
   ['ndvi', 'NDVI'], ['ndwi', 'NDWI'], ['mndwi', 'MNDWI'], ['ndbi', 'NDBI'],
   ['savi', 'SAVI'], ['evi', 'EVI'], ['ndsi', 'NDSI'],
+  ['ndmi', 'NDMI'], ['ndre', 'NDRE'], ['msavi2', 'MSAVI2'], ['nbr', 'NBR'],
 ];
+
+// A statistic that is missing is null (never 0): show it as "no data" instead of a blank or "null".
+const stat = (v, fallback = 'no data') => (v == null ? fallback : v);
 
 function todayMinus(days) {
   const d = new Date();
@@ -288,17 +292,18 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
           <div key={id} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '8px 10px', marginBottom: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
               <span style={{ fontSize: 12, color: S.gold }}>{d.label}</span>
-              <span style={{ fontFamily: S.mono, fontSize: 15, color: S.text, fontWeight: 700 }}>{d.mean}</span>
+              <span style={{ fontFamily: S.mono, fontSize: d.mean == null ? 12 : 15, color: d.mean == null ? S.text3 : S.text, fontWeight: 700 }}>{stat(d.mean)}</span>
             </div>
             <div style={{ fontSize: 10, color: S.text3, marginBottom: 3 }}>{d.formula} &middot; {d.citation}</div>
             <div style={{ fontSize: 10.5, color: S.text2, lineHeight: 1.4, marginBottom: 4 }}>{d.interpretation}</div>
             <div style={{ display: 'flex', gap: 12, fontSize: 10, color: S.text3, fontFamily: S.mono }}>
-              <span>min {d.min}</span><span>max {d.max}</span><span>σ {d.std_dev}</span>
+              <span>min {stat(d.min, '—')}</span><span>max {stat(d.max, '—')}</span><span>σ {stat(d.std_dev, '—')}</span>
             </div>
             <RasterControls mapLayer={d.map_layer} downloadUrl={d.download_url} label={id.toUpperCase()} onShowOverlay={onShowOverlay}
               active={activeLayerId === id} onActivate={() => setActiveLayerId?.(id)} />
           </div>
         ))}
+        {result.sampling_note && <div data-testid="sampling-note" style={{ fontSize: 10.5, color: S.text2, marginBottom: 6, lineHeight: 1.4 }}>{result.sampling_note}</div>}
         {result.valid_pixel_fraction != null && (
           <div style={{ fontSize: 10, color: S.text3, marginBottom: 6 }}>
             Valid (cloud-free) pixel coverage: {Math.round(result.valid_pixel_fraction * 100)}% of AOI
@@ -578,12 +583,12 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
           <div key={id} style={{ background: S.surface2, border: `1px solid ${S.border}`, borderRadius: 4, padding: '8px 10px', marginBottom: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
               <span style={{ fontSize: 12, color: S.gold }}>{d.label}</span>
-              <span style={{ fontFamily: S.mono, fontSize: 15, color: S.text, fontWeight: 700 }}>{d.mean}</span>
+              <span style={{ fontFamily: S.mono, fontSize: d.mean == null ? 12 : 15, color: d.mean == null ? S.text3 : S.text, fontWeight: 700 }}>{stat(d.mean)}</span>
             </div>
             <div style={{ fontSize: 10, color: S.text3, marginBottom: 3 }}>{d.formula} &middot; {d.citation}</div>
             <div style={{ fontSize: 10.5, color: S.text2, lineHeight: 1.4, marginBottom: 4 }}>{d.interpretation}</div>
             <div style={{ display: 'flex', gap: 12, fontSize: 10, color: S.text3, fontFamily: S.mono }}>
-              <span>min {d.min}</span><span>max {d.max}</span><span>σ {d.std_dev}</span>
+              <span>min {stat(d.min, '—')}</span><span>max {stat(d.max, '—')}</span><span>σ {stat(d.std_dev, '—')}</span>
             </div>
             <RasterControls mapLayer={d.map_layer} downloadUrl={null} label={id.toUpperCase()} onShowOverlay={onShowOverlay}
               active={activeLayerId === `vdi_${id}`} onActivate={() => setActiveLayerId?.(`vdi_${id}`)} />
@@ -593,13 +598,14 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
           <div key={c.code} style={{ marginBottom: 6 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 2 }}>
               <span style={{ color: S.text2 }}><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 2, background: CLASS_COLORS[c.code], marginRight: 6, verticalAlign: 'middle' }} />{c.label} <span style={{ color: S.text3, fontSize: 10 }}>({c.vhi_range})</span></span>
-              <span style={{ fontFamily: S.mono, color: S.gold }}>{c.pct_of_valid_pixels}%</span>
+              <span style={{ fontFamily: S.mono, color: c.pct_of_valid_pixels == null ? S.text3 : S.gold }}>{c.pct_of_valid_pixels == null ? 'no data' : `${c.pct_of_valid_pixels}%`}</span>
             </div>
             <div style={{ height: 4, background: S.surface2, borderRadius: 2, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${c.pct_of_valid_pixels}%`, background: CLASS_COLORS[c.code] }} />
+              <div style={{ height: '100%', width: `${c.pct_of_valid_pixels ?? 0}%`, background: CLASS_COLORS[c.code] }} />
             </div>
           </div>
         ))}
+        {result.sampling_note && <div data-testid="sampling-note" style={{ fontSize: 10.5, color: S.text2, marginBottom: 6, lineHeight: 1.4 }}>{result.sampling_note}</div>}
         <div style={{ fontSize: 10, color: S.text3, marginBottom: 6 }}>{result.class_note}</div>
         <StatRow label="Baseline years (NDVI / LST with data)" value={`${result.baseline.years_requested} (${result.baseline.ndvi_years_with_data} / ${result.baseline.lst_years_with_data})`} />
         <StatRow label="Composites used (NDVI / LST)" value={`${result.ndvi_composites_used} / ${result.lst_composites_used}`} />
@@ -743,7 +749,9 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
       return (
         <div>
           <div style={{ fontSize: 12, color: S.text3, padding: '10px 0' }}>
-            No SMAP coverage found for this AOI/date range — try widening the dates.
+            {result.scene_count > 0
+              ? 'SMAP scenes exist for this period, but none returned a value for this area. This is a missing reading, not zero moisture.'
+              : 'No SMAP coverage found for this AOI/date range — try widening the dates.'}
           </div>
           <MethodNote text={result.method} />
         </div>
@@ -758,6 +766,7 @@ function ResultView({ tool, result, onShowOverlay, activeLayerId, setActiveLayer
         {result.valid_pixel_fraction != null && (
           <StatRow label="Valid pixel coverage" value={`${Math.round(result.valid_pixel_fraction * 100)}%`} />
         )}
+        {result.sampling_note && <div data-testid="sampling-note" style={{ fontSize: 10.5, color: S.text2, marginTop: 6, lineHeight: 1.4 }}>{result.sampling_note}</div>}
         <div style={{ fontSize: 10.5, color: S.text3, marginTop: 6, lineHeight: 1.4 }}>
           SMAP's ~9km resolution is suited to regional/district-scale monitoring, not field-level irrigation decisions.
         </div>
