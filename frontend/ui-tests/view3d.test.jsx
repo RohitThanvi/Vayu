@@ -6,7 +6,8 @@ import { createElevationSampler } from '../src/lib/view3d/elevation.js';
 import { createBaseImageryProvider, createHillshadeProvider, createTerrainProvider, watchImageryErrors, zoomForLevel } from '../src/lib/view3d/terrain.js';
 import { BUILDING_ZOOM, buildingColorHex, footprintBase, getTileTemplate, parseBuildings, resetTileTemplate, tileUrl } from '../src/lib/view3d/buildings.js';
 import { EOX_2016_ATTRIBUTION, EOX_2016_URL, GIBS_ATTRIBUTION, gibsUrl, imageryConfig } from '../src/lib/view3d/imagery.js';
-import { QUALITY, detectQuality, utcForSolarHour, view3dEnabled } from '../src/lib/view3d/quality.js';
+import { QUALITY, detectQuality, utcForSolarHour, view3dEnabled, VIEW3D_MIN_MAP_ZOOM, view3dVisible } from '../src/lib/view3d/quality.js';
+import { createView3dSlot } from '../src/lib/view3d/slot.js';
 import { CESIUM_BASE, CESIUM_VERSION, loadCesium, CESIUM_JS_SRI, CESIUM_CSS_SRI } from '../src/lib/view3d/loadCesium.js';
 import View3DLauncher from '../src/components/View3DLauncher.jsx';
 
@@ -171,8 +172,23 @@ export function register() {
   });
 
   // ------------------------------------------------------------------ launcher + viewer component
-  test('3D launcher: renders nothing unless the flag is "1"', async () => {
-    for (const env of [{}, { VITE_ENABLE_3D_VIEW: '0' }]) { const m = await mount(<View3DLauncher getView={() => ({ lat: 1, lon: 2, zoom: 5 })} env={env} />); try { ok(!q(m.container, '[data-testid="open-3d"]'), 'no button'); } finally { await m.unmount(); } }
+  // ------------------------------------------------------------------ 3D button: visibility rule, map control, launcher in its slot
+  const withSlot = () => { const slot = document.createElement('div'); slot.style.display = 'none'; document.body.appendChild(slot); return { slot, done: () => slot.remove() }; };
+  const ON = { VITE_ENABLE_3D_VIEW: '1' };
+  const spyInfo = () => { const prev = console.info, lines = []; console.info = (...a) => lines.push(a.join(' ')); return { lines, restore: () => { console.info = prev; } }; };
+  test('3D button rule: only with the flag on AND at city zoom or closer', () => {
+    eq(VIEW3D_MIN_MAP_ZOOM, 11);
+    for (const [z, want] of [[2, false], [5, false], [10, false], [10.99, false], [11, true], [11.5, true], [14, true], [20, true], [null, false], [undefined, false], [NaN, false], ['12', false]]) eq(view3dVisible(ON, z), want, `zoom ${z}`);
+    for (const env of [{}, { VITE_ENABLE_3D_VIEW: '0' }, { VITE_ENABLE_3D_VIEW: 'true' }, { VITE_ENABLE_3D_VIEW: ' 1' }]) eq(view3dVisible(env, 15), false, JSON.stringify(env));
+  });
+  test('3D button slot: a Leaflet control in the top-right column, hidden until needed, that swallows clicks', () => {
+    const log = []; const fakeL = { Control: { extend: (proto) => function C() { this.options = proto.options; this.getContainer = () => (this._el = this._el || proto.onAdd.call(this)); } },
+      DomUtil: { create: (tag, cls) => { const el = document.createElement(tag); el.className = cls; return el; } }, DomEvent: { disableClickPropagation: (el) => log.push(['click', el]), disableScrollPropagation: (el) => log.push(['scroll', el]) } };
+    const map = { addControl: (c) => log.push(['add', c]) }; log.push(['draw-control-first']);
+    const el = createView3dSlot(fakeL, map); const add = log.find((x) => x[0] === 'add');
+    eq(log[0][0], 'draw-control-first'); eq(log.indexOf(add) > 0, true, 'added after the draw tools');
+    eq(add[1].options.position, 'topright', 'same corner as the draw tools'); eq(el.className, 'leaflet-bar leaflet-control vayu-3d-slot', 'styled like the other map buttons'); eq(el.style.display, 'none', 'hidden until the launcher shows it');
+    ok(log.some((x) => x[0] === 'click' && x[1] === el) && log.some((x) => x[0] === 'scroll' && x[1] === el), 'clicks and scrolls do not reach the map'); eq(add[1].getContainer(), el);
   });
 
   // A permissive stand-in for Cesium: every property is callable/assignable, Viewer is spied.
@@ -224,14 +240,45 @@ export function register() {
     try { const t = text(q(m.container, '[data-testid="terrain3d-error"]')); has(t, 'WebGL is not supported.'); has(t, 'normal map is unaffected'); await click(buttonWith(q(m.container, '[data-testid="terrain3d-error"]'), 'Back to the map')); eq(closed.n, 1); }
     finally { await m.unmount(); delete window.Cesium; }
   });
-  test('3D launcher: with the flag on, the button opens the view at the map position and Close returns to the map', async () => {
-    const log = {}; window.Cesium = fakeCesium(log); let asked = 0;
-    const m = await mount(<View3DLauncher env={{ VITE_ENABLE_3D_VIEW: '1' }} getView={() => { asked++; return { lat: 26.9, lon: 75.8, zoom: 11 }; }} />);
+  test('3D launcher: a cube button in the slot, shown only with the flag on and at city zoom; the old floating text button is gone', async () => {
+    const { slot, done } = withSlot(); const info = spyInfo(); const m = await mount(<View3DLauncher slot={slot} zoom={5} getView={() => ({ lat: 1, lon: 2, zoom: 12 })} env={ON} />);
     try {
-      await click(q(m.container, '[data-testid="open-3d"]')); await flush(60); eq(asked, 1); ok(q(m.container, '[data-testid="terrain3d"]'), 'view open');
-      await click(byLabel(m.container, 'Close 3D view')); await flush(20); ok(!q(m.container, '[data-testid="terrain3d"]'), 'view closed'); ok(q(m.container, '[data-testid="open-3d"]'), 'button back');
-    } finally { await m.unmount(); delete window.Cesium; }
-    const m2 = await mount(<View3DLauncher env={{ VITE_ENABLE_3D_VIEW: '1' }} getView={() => null} />);
-    try { await click(q(m2.container, '[data-testid="open-3d"]')); await flush(30); ok(!q(m2.container, '[data-testid="terrain3d"]'), 'no map yet -> nothing opens'); } finally { await m2.unmount(); }
+      ok(!slot.querySelector('[data-testid="open-3d"]'), 'zoomed out: no button'); eq(slot.style.display, 'none', 'zoomed out: the empty control box is hidden too');
+      await m.rerender(<View3DLauncher slot={slot} zoom={10.9} getView={() => null} env={ON} />); ok(!slot.querySelector('[data-testid="open-3d"]'), 'just below the limit: still hidden');
+      await m.rerender(<View3DLauncher slot={slot} zoom={11} getView={() => null} env={ON} />);
+      const a = slot.querySelector('[data-testid="open-3d"]'); ok(a, 'city zoom: button appears'); eq(slot.style.display, '', 'the control box is shown'); eq(a.getAttribute('title'), '3D view'); has(a.getAttribute('aria-label'), '3D view');
+      ok(a.querySelector('svg') && a.querySelectorAll('svg path').length === 2, 'a cube icon'); lacks(text(a), '3D VIEW', 'icon only, no text label'); ok(!q(m.container, '[data-testid="open-3d"]'), 'not floating over the map');
+      await m.rerender(<View3DLauncher slot={slot} zoom={4} getView={() => null} env={ON} />); ok(!slot.querySelector('[data-testid="open-3d"]'), 'zooming out hides it again'); eq(slot.style.display, 'none');
+      await m.rerender(<View3DLauncher slot={slot} zoom={null} getView={() => null} env={ON} />); ok(!slot.querySelector('[data-testid="open-3d"]'), 'zoom not known yet: hidden');
+      ok(info.lines.some((l) => l.includes('3D view is enabled in this build')), 'console says it is enabled');
+    } finally { await m.unmount(); done(); info.restore(); }
+  });
+  test('3D launcher: with the flag off nothing is shown and the console says how to turn it on', async () => {
+    for (const env of [{}, { VITE_ENABLE_3D_VIEW: '0' }, { VITE_ENABLE_3D_VIEW: 'true' }]) {
+      const { slot, done } = withSlot(); const info = spyInfo(); const m = await mount(<View3DLauncher slot={slot} zoom={15} getView={() => ({ lat: 1, lon: 2, zoom: 15 })} env={env} />);
+      try { ok(!slot.querySelector('[data-testid="open-3d"]') && !q(m.container, '[data-testid="open-3d"]'), `no button for ${JSON.stringify(env)}`); ok(info.lines.some((l) => l.includes('3D view is off in this build') && l.includes('VITE_ENABLE_3D_VIEW=1') && l.includes('redeploy'))); }
+      finally { await m.unmount(); done(); info.restore(); }
+    }
+  });
+  test('3D launcher: clicking the cube opens the view at the map position, Close returns to the map, and the page does not jump', async () => {
+    const log = {}; window.Cesium = fakeCesium(log); let asked = 0; const { slot, done } = withSlot();
+    const m = await mount(<View3DLauncher slot={slot} zoom={13} env={ON} getView={() => { asked++; return { lat: 26.9, lon: 75.8, zoom: 13 }; }} />);
+    try {
+      const a = slot.querySelector('[data-testid="open-3d"]'); const ev = new window.MouseEvent('click', { bubbles: true, cancelable: true }); a.dispatchEvent(ev); await flush(60);
+      ok(ev.defaultPrevented, 'href="#" must not navigate'); eq(asked, 1, 'position read at click time'); ok(q(m.container, '[data-testid="terrain3d"]'), 'view open');
+      await click(byLabel(m.container, 'Close 3D view')); await flush(20); ok(!q(m.container, '[data-testid="terrain3d"]'), 'view closed'); ok(slot.querySelector('[data-testid="open-3d"]'), 'button back');
+    } finally { await m.unmount(); delete window.Cesium; done(); }
+    const s2 = withSlot(); const m2 = await mount(<View3DLauncher slot={s2.slot} zoom={13} env={ON} getView={() => null} />);
+    try { await click(s2.slot.querySelector('[data-testid="open-3d"]')); await flush(30); ok(!q(m2.container, '[data-testid="terrain3d"]'), 'no map yet -> nothing opens'); } finally { await m2.unmount(); s2.done(); }
+  });
+  test('3D button wiring (source check; App is too heavy to mount here): the control is created right after the draw tools and the launcher gets the slot and the zoom', async () => {
+    const fs = await import('node:fs'); const read = (f) => fs.readFileSync(`${process.cwd()}/${f}`, 'utf8'); const src = read('src/App.jsx');      // the suite runs from frontend/ (npm run test:ui)
+    const draw = src.indexOf('map.addControl(dc);'), slot = src.indexOf('createView3dSlot(L, map)'); ok(draw > 0 && slot > draw, 'the 3D slot is created after the draw control, so it sits below it');
+    ok(src.slice(draw, slot).split('\n').length < 6, 'directly after the draw control, with no other control in between'); has(src, 'view3dEnabled(import.meta.env)'); has(src, 'onView3dSlot={setView3dSlot}');
+    ok(/<View3DLauncher slot=\{view3dSlot\} zoom=\{mapZoom\}/.test(src), 'launcher receives the slot and the live zoom'); ok(!/position: 'fixed', left: 12, bottom: 96/.test(read('src/components/View3DLauncher.jsx')), 'the old floating button style is gone');
+  });
+  test('3D launcher: without a slot (map control not created) it renders no button', async () => {
+    const m = await mount(<View3DLauncher slot={null} zoom={15} env={ON} getView={() => ({ lat: 1, lon: 2, zoom: 15 })} />);
+    try { ok(!q(m.container, '[data-testid="open-3d"]') && !document.querySelector('[data-testid="open-3d"]')); } finally { await m.unmount(); }
   });
 }

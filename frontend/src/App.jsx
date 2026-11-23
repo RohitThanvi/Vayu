@@ -21,6 +21,8 @@ const OrbitalGlobe = lazy(() => import('./components/OrbitalGlobe'));
 // when a user actually opens Street View, same reasoning as OrbitalGlobe.
 const StreetViewPanel = lazy(() => import('./components/StreetViewPanel'));
 import View3DLauncher from './components/View3DLauncher.jsx';
+import { createView3dSlot } from './lib/view3d/slot.js';
+import { view3dEnabled } from './lib/view3d/quality.js';
 import GlobeCloseUpMap from './components/GlobeCloseUpMap';
 import { ESRI_HIGH_RES_URL, ESRI_ATTRIBUTION, attachEsriZoomGuard } from './lib/esriZoomGuard.js';
 import LiveGoesPanel from './components/LiveGoesPanel';
@@ -831,7 +833,7 @@ function OrbitalSidebarPanel({
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────────
-function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, sitesLayerRef, onZoomChange, streetViewMode, onMapClickForStreetView, pointPickMode, onMapClickForPointPick }) {
+function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayerRef, sitesLayerRef, onZoomChange, onView3dSlot, streetViewMode, onMapClickForStreetView, pointPickMode, onMapClickForPointPick }) {
   const divRef = useRef(null);
   // The map-creation effect below runs once ([] deps) — it can't read a
   // prop value that changes later without going stale, so streetViewMode
@@ -938,6 +940,8 @@ function VayuMap({ onAreaDrawn, mapRef, drawGroupRef, intelLayerRef, vesselLayer
       },
     });
     map.addControl(dc);
+    // The 3D-view button lives in the same control column, directly below the draw tools (added after them). Only created when the feature is switched on for this build.
+    if (onView3dSlot && view3dEnabled(import.meta.env)) onView3dSlot(createView3dSlot(L, map));
     map.on(L.Draw.Event.CREATED, e => { dg.clearLayers(); dg.addLayer(e.layer); onAreaDrawn(e.layer.toGeoJSON().geometry); });
     map.on(L.Draw.Event.EDITED, e => { e.layers.eachLayer(l => onAreaDrawn(l.toGeoJSON().geometry)); });
     map.on(L.Draw.Event.DELETED, () => { if(dg.getLayers().length===0) onAreaDrawn(null); });
@@ -2029,6 +2033,7 @@ export default function App({ tier = 'full', onChangeTier, tierLocked = false })
   const [satelliteLayers, setSatelliteLayers] = useState({ true_color:false, true_color_live:false, high_res:false, ndvi:false, sar:false, thermal:false, worldview:false });
   const [satelliteLoadingKey, setSatelliteLoadingKey] = useState(null);
   const [mapZoom, setMapZoom] = useState(null);
+  const [view3dSlot, setView3dSlot] = useState(null);
   const [aqiOn, setAqiOn] = useState(false);
   const [aqiLoading, setAqiLoading] = useState(false);
   const [sitesOn, setSitesOn] = useState(false);
@@ -2864,7 +2869,7 @@ export default function App({ tier = 'full', onChangeTier, tierLocked = false })
     : intelPanelEl;
 
   const mapEl = (
-    <VayuMap onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} sitesLayerRef={sitesLayerRef} onZoomChange={setMapZoom}
+    <VayuMap onView3dSlot={setView3dSlot} onAreaDrawn={handleManualAreaDrawn} mapRef={mapRef} drawGroupRef={drawGroupRef} intelLayerRef={intelLayerRef} vesselLayerRef={vesselLayerRef} sitesLayerRef={sitesLayerRef} onZoomChange={setMapZoom}
       streetViewMode={streetViewMode} onMapClickForStreetView={handleMapClickForStreetView}
       pointPickMode={pointPickActive} onMapClickForPointPick={handleMapClickForPointPick} />
   );
@@ -3000,7 +3005,7 @@ export default function App({ tier = 'full', onChangeTier, tierLocked = false })
         </Suspense>
       )}
 
-      <View3DLauncher getView={() => { const m = mapRef.current; if (!m) return null; const c = m.getCenter(); return { lat: c.lat, lon: c.lng, zoom: m.getZoom() }; }} />
+      <View3DLauncher slot={view3dSlot} zoom={mapZoom} getView={() => { const m = mapRef.current; if (!m) return null; const c = m.getCenter(); return { lat: c.lat, lon: c.lng, zoom: m.getZoom() }; }} />
 
       {streetViewNotFoundAt && (
         <div style={{

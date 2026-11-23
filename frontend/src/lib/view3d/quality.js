@@ -15,3 +15,7 @@ export function utcForSolarHour(hour, lon, base = new Date()) {
 }
 /** Is the 3D view switched on at build time? Off unless VITE_ENABLE_3D_VIEW is exactly "1". */
 export const view3dEnabled = (env = {}) => String(env.VITE_ENABLE_3D_VIEW || '') === '1';
+
+/** The 3D button only appears at city scale or closer: zoomed out to a region or country there is nothing to see in 3D (building tiles start at zoom 14, terrain detail is lost). Leaflet zoom 11 shows about 25 km across. */
+export const VIEW3D_MIN_MAP_ZOOM = 11;
+export const view3dVisible = (env = {}, zoom = null) => view3dEnabled(env) && Number.isFinite(zoom) && zoom >= VIEW3D_MIN_MAP_ZOOM;
