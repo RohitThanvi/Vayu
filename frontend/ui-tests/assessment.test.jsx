@@ -141,6 +141,13 @@ export function register() {
     } finally { await m.unmount(); n.restore(); }
   });
 
+  test('Assessment: a barren area shows "no vegetation at the start" instead of a measured 0% loss', async () => {
+    const fx = JSON.parse(JSON.stringify(FX.full)); Object.assign(fx.legacy.raw_metrics.vegetation, { loss_pct: null, no_baseline_vegetation: true, initial_vegetation_km2: 0, vegetation_loss_km2: 0 });
+    route('/agri/risk-assessment', fx); const n = net(); const m = await mount(panel());
+    try { await runAssessment(m); const v = text(q(m.container, '[data-testid="original-vegetation_loss"]')); has(v, 'No vegetation was detected at the start of the period'); has(v, 'not a verified 0%'); has(v, 'n/a of the initial vegetated area'); lacks(v, '0% of the initial'); }
+    finally { await m.unmount(); n.restore(); }
+  });
+
   test('Assessment: no original-indicator block when the original score was unavailable', async () => {
     route('/agri/risk-assessment', FX.empty); const n = net(); const m = await mount(panel());
     try { await runAssessment(m); ok(!q(m.container, '[data-testid="original-indicators"]')); } finally { await m.unmount(); n.restore(); }

@@ -287,7 +287,8 @@ def compute_vegetation_change(aoi: Dict, start_date: str, end_date: str) -> Dict
     loss_km2 = _calc_area_km2(loss_mask, region)
     gain_km2 = _calc_area_km2(gain_mask, region)
     initial_km2 = _calc_area_km2(start_veg, region)
-    loss_pct = (loss_km2 / initial_km2 * 100) if initial_km2 > 0 else 0
+    # None (not 0) when nothing was vegetated at the start: "0% lost" would read as a verified no-loss result for a barren area.
+    loss_pct = (loss_km2 / initial_km2 * 100) if initial_km2 > 0 else None
 
     # Confirmed via analysis of a real production report (Aksai Chin, an
     # arid high-altitude region with essentially no vegetation): loss_pct
@@ -316,10 +317,11 @@ def compute_vegetation_change(aoi: Dict, start_date: str, end_date: str) -> Dict
             "vegetation_gain_km2": round(gain_km2, 4),
             "initial_vegetation_km2": round(initial_km2, 4),
             "net_change_km2": round(gain_km2 - loss_km2, 4),
-            "loss_pct": round(loss_pct, 4),
+            "loss_pct": round(loss_pct, 4) if loss_pct is not None else None,
             "region_area_km2": round(region_area_km2, 4),
             "vegetation_pct_of_aoi": vegetation_pct_of_aoi,
             "small_base_caveat": small_base_caveat,
+            "no_baseline_vegetation": initial_km2 <= 0,
         },
         "ee_image": loss_mask,
         "ee_geometry": region,

@@ -135,3 +135,30 @@ def test_composite_renormalises_weights_when_drought_is_not_assessed(monkeypatch
     w = risk_scoring.WEIGHTS; expected = round((40.0 * w["vegetation_loss"] + 10.0 * w["moisture_deficit"]) / (w["vegetation_loss"] + w["moisture_deficit"]), 1)
     assert r["sub_scores"]["drought"] is None and "drought" in r["inputs_failed"] and r["risk_score"] == expected and r["weights"] == w
     assert r["raw_metrics"]["drought"]["assessed_area_pct"] == 3.0
+
+
+# ---------------- vegetation loss: no baseline vegetation is not "0% lost" ----------------
+class Any_:
+    def __getattr__(self, n): return lambda *a, **k: self
+
+
+@pytest.fixture
+def veg(monkeypatch):
+    def run(loss, gain, initial, region=10.0):
+        seq = iter([loss, gain, initial])
+        monkeypatch.setattr(gc, "ee", SimpleNamespace(Date=lambda d: Any_())); monkeypatch.setattr(gc, "_sentinel2_ndvi_composite", lambda *a, **k: Any_())
+        monkeypatch.setattr(gc, "_calc_area_km2", lambda *a, **k: next(seq)); monkeypatch.setattr(gc, "_region_area_km2", lambda r: region)
+        monkeypatch.setattr(gc, "_polygon_geometry", lambda a: Any_()); monkeypatch.setattr(gc, "_cap_end_date", lambda d: Any_())
+        monkeypatch.setattr(gc, "_validate_date_range", lambda *a: None); monkeypatch.setattr(gc, "_require_start_after", lambda *a: None)
+        return gc.compute_vegetation_change({"type": "Polygon"}, "2024-06-01", "2026-06-01")["metrics"]
+    return run
+
+
+def test_loss_percentage_is_computed_against_the_initial_vegetated_area(veg):
+    m = veg(1.2, 0.4, 4.0); assert m["loss_pct"] == 30.0 and m["no_baseline_vegetation"] is False and m["vegetation_pct_of_aoi"] == 40.0 and m["small_base_caveat"] is False
+
+
+def test_a_barren_area_has_no_loss_percentage_instead_of_a_verified_zero(veg):
+    m = veg(0.0, 0.0, 0.0)
+    assert m["loss_pct"] is None and m["no_baseline_vegetation"] is True and m["small_base_caveat"] is True
+    assert risk_scoring._vegetation_subscore(m) == 0.0, "the composite still treats 'nothing to lose' as no vegetation-loss risk (unchanged scoring), but the report no longer claims a measured 0%"

@@ -379,3 +379,10 @@ def test_the_report_carries_the_recommendations_for_its_class():
     c = rp.build_content(FULL); assert c["recommendations"] and any("field visit" in r for r in c["recommendations"])
     if HAS_PDFTOTEXT: assert "What to do with this assessment" in text_of(rp.render_pdf(c))
     e = rp.build_content(EMPTY); assert any("no risk class is given" in r for r in e["recommendations"])
+
+
+def test_a_barren_area_says_so_instead_of_printing_a_loss_percentage():
+    a = copy.deepcopy(FULL); v = a["legacy"]["raw_metrics"]["vegetation"]; v.update(loss_pct=None, no_baseline_vegetation=True, initial_vegetation_km2=0.0, vegetation_loss_km2=0.0, vegetation_pct_of_aoi=0.0)
+    o = rp.build_content(a)["original"]; flat = " | ".join(" ".join(r) for r in o["vegetation"])
+    assert "No vegetation was detected at the start" in flat and "not a verified 0%" in flat and "n/a of the initial" in flat
+    assert rp.render_pdf(rp.build_content(a))[:5] == b"%PDF-"

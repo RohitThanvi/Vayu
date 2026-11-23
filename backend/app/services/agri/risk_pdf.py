@@ -120,7 +120,8 @@ def _original_content(lg: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     veg = [("Vegetation lost", f"{_km2(v.get('vegetation_loss_km2'))} ({_pc(v.get('loss_pct'))} of the initial vegetated area)", "NDVI fell below 0.2 between the two years"),
            ("Vegetation gained", _km2(v.get("vegetation_gain_km2")), ""), ("Net change", _km2(v.get("net_change_km2")), ""),
            ("Initial vegetated area", f"{_km2(v.get('initial_vegetation_km2'))} ({_pc(v.get('vegetation_pct_of_aoi'))} of the area)", "")] if v else []
-    if v.get("small_base_caveat"): veg.append(("Caution", "Vegetation covers under 2% of the area", "the loss percentage rests on very few pixels and can swing a lot"))
+    if v.get("no_baseline_vegetation"): veg.append(("Caution", "No vegetation was detected at the start of the period", "so there is nothing to lose and no loss percentage is given (this is not a verified 0%)"))
+    elif v.get("small_base_caveat"): veg.append(("Caution", "Vegetation covers under 2% of the area", "the loss percentage rests on very few pixels and can swing a lot"))
     moist = [("Average soil moisture, start and end", f"{_num(m.get('start_avg_soil_moisture'), 3)} and {_num(m.get('end_avg_soil_moisture'), 3)} m3/m3", "SMAP surface layer, 0-5 cm"),
              ("Change in soil moisture", f"{_num(m.get('moisture_change'), 3)} m3/m3", "negative = drying"),
              ("Lowest and highest end value", f"{_num(m.get('end_min_sm'), 3)} and {_num(m.get('end_max_sm'), 3)} m3/m3", ""),

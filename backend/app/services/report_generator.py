@@ -1821,7 +1821,11 @@ RS_TOOL_LABELS = {
 
 RS_GLOSSARY = [
     ("NDVI", "Normalized Difference Vegetation Index = (NIR\u2212Red)/(NIR+Red). Higher values indicate denser/healthier vegetation."),
-    ("NDWI / MNDWI", "Water indices using Green/NIR or Green/SWIR bands. Higher values indicate open water."),
+    ("NDWI / MNDWI", "Open-water indices using Green/NIR (McFeeters) or Green/SWIR bands. Higher values indicate open water."),
+    ("NDMI", "Normalized Difference Moisture Index = (NIR\u2212SWIR1)/(NIR+SWIR1) (Gao 1996, published as NDWI). Follows the water content of vegetation canopies; lower values mean drier or water-stressed vegetation. Not an open-water index."),
+    ("NDRE", "Normalized Difference Red Edge Index = (NIR\u2212RedEdge1)/(NIR+RedEdge1) (Gitelson & Merzlyak 1994). Follows leaf chlorophyll content and keeps responding in dense canopies where NDVI saturates. It tracks chlorophyll, not nitrogen directly."),
+    ("MSAVI2", "Modified Soil-Adjusted Vegetation Index (Qi et al. 1994) with a self-adjusting soil factor; suited to sparse vegetation where bare soil biases NDVI."),
+    ("NBR", "Normalized Burn Ratio = (NIR\u2212SWIR2)/(NIR+SWIR2) (Key & Benson 2006). A single-date value; burn severity (dNBR) needs a pre-fire and a post-fire date."),
     ("NDBI", "Normalized Difference Built-up Index, using SWIR/NIR bands. Higher values indicate built-up/impervious surfaces."),
     ("SAVI / EVI", "Soil/atmosphere-adjusted variants of NDVI, reducing soil-background and atmospheric noise respectively."),
     ("NDSI", "Normalized Difference Snow Index = (Green\u2212SWIR1)/(Green+SWIR1). Classified as snow above a 0.4 threshold (Hall et al. 1995)."),

@@ -47,7 +47,9 @@ const results = [];
 export function test(name, fn) { results.push([name, fn]); }
 export async function runAll() {
   let pass = 0, fail = 0;
+  const only = globalThis.process?.env?.UI_TEST_FILTER;      // optional: run only tests whose name contains this text (e.g. UI_TEST_FILTER=Spectra)
   for (const [name, fn] of results) {
+    if (only && !name.includes(only)) continue;
     resetNet(); localStorage.clear(); document.body.innerHTML = ''; window.__vayuBusinessCommand = null;
     try { await fn(); pass++; console.log('  ✓', name); } catch (e) { fail++; console.log('  ✗', name, '\n      ', (e && e.errors ? e.errors.map((x) => String(x.stack || x).split('\n').slice(0, 3).join(' | ')).join(' || ') : String((e && e.stack) || e).split('\n').slice(0, 4).join(' | '))); }
   }

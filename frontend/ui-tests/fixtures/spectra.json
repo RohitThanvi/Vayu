@@ -1,0 +1,571 @@
+{
+ "indices_ids": [
+  "ndvi",
+  "ndwi",
+  "mndwi",
+  "ndbi",
+  "savi",
+  "evi",
+  "ndsi",
+  "ndmi",
+  "ndre",
+  "msavi2",
+  "nbr"
+ ],
+ "indices_null": {
+  "aoi_area_km2": 2.0,
+  "indices": {
+   "evi": {
+    "citation": "Huete et al. 2002 (MODIS EVI algorithm)",
+    "download_url": null,
+    "formula": "2.5 x (NIR - Red) / (NIR + 6xRed - 7.5xBlue + 1)",
+    "interpretation": "Corrects for atmospheric haze and canopy background \u2014 more reliable than NDVI in high-biomass (dense canopy) areas where NDVI saturates.",
+    "label": "EVI \u2014 Enhanced Vegetation Index",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "mndwi": {
+    "citation": "Xu 2006",
+    "download_url": null,
+    "formula": "(Green - SWIR1) / (Green + SWIR1)  =  (B3 - B11) / (B3 + B11)",
+    "interpretation": "Higher = more water. Better than NDWI at suppressing built-up/soil noise, standard choice for urban or mixed-landuse water mapping.",
+    "label": "MNDWI \u2014 Modified NDWI",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "msavi2": {
+    "citation": "Qi et al. 1994",
+    "download_url": null,
+    "formula": "(2xNIR + 1 - sqrt((2xNIR + 1)^2 - 8x(NIR - Red))) / 2  with NIR = B8, Red = B4",
+    "interpretation": "A soil-adjusted vegetation index whose soil factor adjusts itself (SAVI uses a fixed L): suited to sparse vegetation and fields dominated by bare soil, where NDVI is biased by soil brightness. It reduces soil noise at the cost of a smaller dynamic range than NDVI.",
+    "label": "MSAVI2 \u2014 Modified Soil-Adjusted Vegetation Index",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "nbr": {
+    "citation": "Key & Benson 2006; Garc\u00eda & Caselles 1991",
+    "download_url": null,
+    "formula": "(NIR - SWIR2) / (NIR + SWIR2)  =  (B8 - B12) / (B8 + B12)",
+    "interpretation": "High for healthy vegetation, low or negative for burnt or very dry ground (SWIR2 rises and NIR falls after burning). This is a single-date value: burn severity needs the difference between a pre-fire and a post-fire date (dNBR), which the Burn Severity tool computes.",
+    "label": "NBR \u2014 Normalized Burn Ratio",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "ndbi": {
+    "citation": "Zha et al. 2003",
+    "download_url": null,
+    "formula": "(SWIR1 - NIR) / (SWIR1 + NIR)  =  (B11 - B8) / (B11 + B8)",
+    "interpretation": "Higher = more built-up/impervious surface. Bare soil can also read positive \u2014 cross-check against NDVI to separate the two.",
+    "label": "NDBI \u2014 Normalized Difference Built-up Index",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "ndmi": {
+    "citation": "Gao 1996 (published as NDWI; also called NDMI)",
+    "download_url": null,
+    "formula": "(NIR - SWIR1) / (NIR + SWIR1)  =  (B8 - B11) / (B8 + B11)",
+    "interpretation": "Follows the water content of vegetation canopies: higher = wetter canopy, lower = drier or water-stressed vegetation. NOT the open-water NDWI above (McFeeters, Green/NIR): do not use it to map water bodies. It is the NDWI used inside the NDDI drought index. Compare a place with its own earlier values; no single threshold separates stressed from healthy across crops.",
+    "label": "NDMI \u2014 Normalized Difference Moisture Index (Gao's NDWI)",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "ndre": {
+    "citation": "Gitelson & Merzlyak 1994",
+    "download_url": null,
+    "formula": "(NIR - RedEdge1) / (NIR + RedEdge1)  =  (B8 - B5) / (B8 + B5)",
+    "interpretation": "A red-edge index that follows leaf chlorophyll content, so it keeps responding in dense, mature canopies where NDVI saturates. It tracks chlorophyll (greenness), not nitrogen directly: a low value can come from nitrogen shortage but equally from water stress, disease or growth stage. B5 is a 20 m band, resampled to 10 m.",
+    "label": "NDRE \u2014 Normalized Difference Red Edge Index",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "ndsi": {
+    "citation": "Hall et al. 1995",
+    "download_url": null,
+    "formula": "(Green - SWIR1) / (Green + SWIR1)  =  (B3 - B11) / (B3 + B11)",
+    "interpretation": "Same band math as MNDWI, different interpretation context: NDSI > 0.4 is the standard threshold for classifying a pixel as snow/ice-covered.",
+    "label": "NDSI \u2014 Normalized Difference Snow Index",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "ndvi": {
+    "citation": "Rouse et al. 1974",
+    "download_url": null,
+    "formula": "(NIR - Red) / (NIR + Red)  =  (B8 - B4) / (B8 + B4)",
+    "interpretation": "Higher = denser/healthier green vegetation. <0 typically water/cloud/snow, 0-0.2 bare soil/sparse veg, 0.2-0.5 moderate, >0.5 dense vegetation.",
+    "label": "NDVI \u2014 Normalized Difference Vegetation Index",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "ndwi": {
+    "citation": "McFeeters 1996",
+    "download_url": null,
+    "formula": "(Green - NIR) / (Green + NIR)  =  (B3 - B8) / (B3 + B8)",
+    "interpretation": "Higher = more open water. Tuned for open water bodies; can under-detect water in built-up areas \u2014 use MNDWI there instead.",
+    "label": "NDWI \u2014 Normalized Difference Water Index (McFeeters)",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "savi": {
+    "citation": "Huete 1988",
+    "download_url": null,
+    "formula": "((NIR - Red) / (NIR + Red + L)) x (1 + L), L = 0.5",
+    "interpretation": "NDVI corrected for soil brightness \u2014 preferred over NDVI in sparse-vegetation/arid AOIs where bare soil otherwise skews the index.",
+    "label": "SAVI \u2014 Soil-Adjusted Vegetation Index",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   }
+  },
+  "method": "Sentinel-2 SR Harmonized median composite of 7 scene(s).",
+  "sampling": null,
+  "sampling_note": null,
+  "scene_count": 7,
+  "scene_provenance": [],
+  "valid_pixel_fraction": null
+ },
+ "indices_ok": {
+  "aoi_area_km2": 2.0,
+  "indices": {
+   "evi": {
+    "citation": "Huete et al. 2002 (MODIS EVI algorithm)",
+    "download_url": null,
+    "formula": "2.5 x (NIR - Red) / (NIR + 6xRed - 7.5xBlue + 1)",
+    "interpretation": "Corrects for atmospheric haze and canopy background \u2014 more reliable than NDVI in high-biomass (dense canopy) areas where NDVI saturates.",
+    "label": "EVI \u2014 Enhanced Vegetation Index",
+    "map_layer": null,
+    "max": 0.7,
+    "mean": 0.5,
+    "min": 0.3,
+    "std_dev": 0.05
+   },
+   "mndwi": {
+    "citation": "Xu 2006",
+    "download_url": null,
+    "formula": "(Green - SWIR1) / (Green + SWIR1)  =  (B3 - B11) / (B3 + B11)",
+    "interpretation": "Higher = more water. Better than NDWI at suppressing built-up/soil noise, standard choice for urban or mixed-landuse water mapping.",
+    "label": "MNDWI \u2014 Modified NDWI",
+    "map_layer": null,
+    "max": 0.7,
+    "mean": 0.5,
+    "min": 0.3,
+    "std_dev": 0.05
+   },
+   "msavi2": {
+    "citation": "Qi et al. 1994",
+    "download_url": null,
+    "formula": "(2xNIR + 1 - sqrt((2xNIR + 1)^2 - 8x(NIR - Red))) / 2  with NIR = B8, Red = B4",
+    "interpretation": "A soil-adjusted vegetation index whose soil factor adjusts itself (SAVI uses a fixed L): suited to sparse vegetation and fields dominated by bare soil, where NDVI is biased by soil brightness. It reduces soil noise at the cost of a smaller dynamic range than NDVI.",
+    "label": "MSAVI2 \u2014 Modified Soil-Adjusted Vegetation Index",
+    "map_layer": null,
+    "max": 0.7,
+    "mean": 0.5,
+    "min": 0.3,
+    "std_dev": 0.05
+   },
+   "nbr": {
+    "citation": "Key & Benson 2006; Garc\u00eda & Caselles 1991",
+    "download_url": null,
+    "formula": "(NIR - SWIR2) / (NIR + SWIR2)  =  (B8 - B12) / (B8 + B12)",
+    "interpretation": "High for healthy vegetation, low or negative for burnt or very dry ground (SWIR2 rises and NIR falls after burning). This is a single-date value: burn severity needs the difference between a pre-fire and a post-fire date (dNBR), which the Burn Severity tool computes.",
+    "label": "NBR \u2014 Normalized Burn Ratio",
+    "map_layer": null,
+    "max": 0.7,
+    "mean": 0.5,
+    "min": 0.3,
+    "std_dev": 0.05
+   },
+   "ndbi": {
+    "citation": "Zha et al. 2003",
+    "download_url": null,
+    "formula": "(SWIR1 - NIR) / (SWIR1 + NIR)  =  (B11 - B8) / (B11 + B8)",
+    "interpretation": "Higher = more built-up/impervious surface. Bare soil can also read positive \u2014 cross-check against NDVI to separate the two.",
+    "label": "NDBI \u2014 Normalized Difference Built-up Index",
+    "map_layer": null,
+    "max": 0.7,
+    "mean": 0.5,
+    "min": 0.3,
+    "std_dev": 0.05
+   },
+   "ndmi": {
+    "citation": "Gao 1996 (published as NDWI; also called NDMI)",
+    "download_url": null,
+    "formula": "(NIR - SWIR1) / (NIR + SWIR1)  =  (B8 - B11) / (B8 + B11)",
+    "interpretation": "Follows the water content of vegetation canopies: higher = wetter canopy, lower = drier or water-stressed vegetation. NOT the open-water NDWI above (McFeeters, Green/NIR): do not use it to map water bodies. It is the NDWI used inside the NDDI drought index. Compare a place with its own earlier values; no single threshold separates stressed from healthy across crops.",
+    "label": "NDMI \u2014 Normalized Difference Moisture Index (Gao's NDWI)",
+    "map_layer": null,
+    "max": 0.7,
+    "mean": 0.5,
+    "min": 0.3,
+    "std_dev": 0.05
+   },
+   "ndre": {
+    "citation": "Gitelson & Merzlyak 1994",
+    "download_url": null,
+    "formula": "(NIR - RedEdge1) / (NIR + RedEdge1)  =  (B8 - B5) / (B8 + B5)",
+    "interpretation": "A red-edge index that follows leaf chlorophyll content, so it keeps responding in dense, mature canopies where NDVI saturates. It tracks chlorophyll (greenness), not nitrogen directly: a low value can come from nitrogen shortage but equally from water stress, disease or growth stage. B5 is a 20 m band, resampled to 10 m.",
+    "label": "NDRE \u2014 Normalized Difference Red Edge Index",
+    "map_layer": null,
+    "max": 0.7,
+    "mean": 0.5,
+    "min": 0.3,
+    "std_dev": 0.05
+   },
+   "ndsi": {
+    "citation": "Hall et al. 1995",
+    "download_url": null,
+    "formula": "(Green - SWIR1) / (Green + SWIR1)  =  (B3 - B11) / (B3 + B11)",
+    "interpretation": "Same band math as MNDWI, different interpretation context: NDSI > 0.4 is the standard threshold for classifying a pixel as snow/ice-covered.",
+    "label": "NDSI \u2014 Normalized Difference Snow Index",
+    "map_layer": null,
+    "max": 0.7,
+    "mean": 0.5,
+    "min": 0.3,
+    "std_dev": 0.05
+   },
+   "ndvi": {
+    "citation": "Rouse et al. 1974",
+    "download_url": null,
+    "formula": "(NIR - Red) / (NIR + Red)  =  (B8 - B4) / (B8 + B4)",
+    "interpretation": "Higher = denser/healthier green vegetation. <0 typically water/cloud/snow, 0-0.2 bare soil/sparse veg, 0.2-0.5 moderate, >0.5 dense vegetation.",
+    "label": "NDVI \u2014 Normalized Difference Vegetation Index",
+    "map_layer": null,
+    "max": 0.7,
+    "mean": 0.5,
+    "min": 0.3,
+    "std_dev": 0.05
+   },
+   "ndwi": {
+    "citation": "McFeeters 1996",
+    "download_url": null,
+    "formula": "(Green - NIR) / (Green + NIR)  =  (B3 - B8) / (B3 + B8)",
+    "interpretation": "Higher = more open water. Tuned for open water bodies; can under-detect water in built-up areas \u2014 use MNDWI there instead.",
+    "label": "NDWI \u2014 Normalized Difference Water Index (McFeeters)",
+    "map_layer": null,
+    "max": 0.7,
+    "mean": 0.5,
+    "min": 0.3,
+    "std_dev": 0.05
+   },
+   "savi": {
+    "citation": "Huete 1988",
+    "download_url": null,
+    "formula": "((NIR - Red) / (NIR + Red + L)) x (1 + L), L = 0.5",
+    "interpretation": "NDVI corrected for soil brightness \u2014 preferred over NDVI in sparse-vegetation/arid AOIs where bare soil otherwise skews the index.",
+    "label": "SAVI \u2014 Soil-Adjusted Vegetation Index",
+    "map_layer": null,
+    "max": 0.7,
+    "mean": 0.5,
+    "min": 0.3,
+    "std_dev": 0.05
+   }
+  },
+  "method": "Sentinel-2 SR Harmonized median composite of 7 scene(s).",
+  "sampling": "aoi",
+  "sampling_note": null,
+  "scene_count": 7,
+  "scene_provenance": [],
+  "valid_pixel_fraction": 0.93
+ },
+ "indices_small": {
+  "aoi_area_km2": 2.0,
+  "indices": {
+   "evi": {
+    "citation": "Huete et al. 2002 (MODIS EVI algorithm)",
+    "download_url": null,
+    "formula": "2.5 x (NIR - Red) / (NIR + 6xRed - 7.5xBlue + 1)",
+    "interpretation": "Corrects for atmospheric haze and canopy background \u2014 more reliable than NDVI in high-biomass (dense canopy) areas where NDVI saturates.",
+    "label": "EVI \u2014 Enhanced Vegetation Index",
+    "map_layer": null,
+    "max": 0.6,
+    "mean": 0.4,
+    "min": 0.2,
+    "std_dev": 0.05
+   },
+   "mndwi": {
+    "citation": "Xu 2006",
+    "download_url": null,
+    "formula": "(Green - SWIR1) / (Green + SWIR1)  =  (B3 - B11) / (B3 + B11)",
+    "interpretation": "Higher = more water. Better than NDWI at suppressing built-up/soil noise, standard choice for urban or mixed-landuse water mapping.",
+    "label": "MNDWI \u2014 Modified NDWI",
+    "map_layer": null,
+    "max": 0.6,
+    "mean": 0.4,
+    "min": 0.2,
+    "std_dev": 0.05
+   },
+   "msavi2": {
+    "citation": "Qi et al. 1994",
+    "download_url": null,
+    "formula": "(2xNIR + 1 - sqrt((2xNIR + 1)^2 - 8x(NIR - Red))) / 2  with NIR = B8, Red = B4",
+    "interpretation": "A soil-adjusted vegetation index whose soil factor adjusts itself (SAVI uses a fixed L): suited to sparse vegetation and fields dominated by bare soil, where NDVI is biased by soil brightness. It reduces soil noise at the cost of a smaller dynamic range than NDVI.",
+    "label": "MSAVI2 \u2014 Modified Soil-Adjusted Vegetation Index",
+    "map_layer": null,
+    "max": 0.6,
+    "mean": 0.4,
+    "min": 0.2,
+    "std_dev": 0.05
+   },
+   "nbr": {
+    "citation": "Key & Benson 2006; Garc\u00eda & Caselles 1991",
+    "download_url": null,
+    "formula": "(NIR - SWIR2) / (NIR + SWIR2)  =  (B8 - B12) / (B8 + B12)",
+    "interpretation": "High for healthy vegetation, low or negative for burnt or very dry ground (SWIR2 rises and NIR falls after burning). This is a single-date value: burn severity needs the difference between a pre-fire and a post-fire date (dNBR), which the Burn Severity tool computes.",
+    "label": "NBR \u2014 Normalized Burn Ratio",
+    "map_layer": null,
+    "max": 0.6,
+    "mean": 0.4,
+    "min": 0.2,
+    "std_dev": 0.05
+   },
+   "ndbi": {
+    "citation": "Zha et al. 2003",
+    "download_url": null,
+    "formula": "(SWIR1 - NIR) / (SWIR1 + NIR)  =  (B11 - B8) / (B11 + B8)",
+    "interpretation": "Higher = more built-up/impervious surface. Bare soil can also read positive \u2014 cross-check against NDVI to separate the two.",
+    "label": "NDBI \u2014 Normalized Difference Built-up Index",
+    "map_layer": null,
+    "max": 0.6,
+    "mean": 0.4,
+    "min": 0.2,
+    "std_dev": 0.05
+   },
+   "ndmi": {
+    "citation": "Gao 1996 (published as NDWI; also called NDMI)",
+    "download_url": null,
+    "formula": "(NIR - SWIR1) / (NIR + SWIR1)  =  (B8 - B11) / (B8 + B11)",
+    "interpretation": "Follows the water content of vegetation canopies: higher = wetter canopy, lower = drier or water-stressed vegetation. NOT the open-water NDWI above (McFeeters, Green/NIR): do not use it to map water bodies. It is the NDWI used inside the NDDI drought index. Compare a place with its own earlier values; no single threshold separates stressed from healthy across crops.",
+    "label": "NDMI \u2014 Normalized Difference Moisture Index (Gao's NDWI)",
+    "map_layer": null,
+    "max": 0.6,
+    "mean": 0.4,
+    "min": 0.2,
+    "std_dev": 0.05
+   },
+   "ndre": {
+    "citation": "Gitelson & Merzlyak 1994",
+    "download_url": null,
+    "formula": "(NIR - RedEdge1) / (NIR + RedEdge1)  =  (B8 - B5) / (B8 + B5)",
+    "interpretation": "A red-edge index that follows leaf chlorophyll content, so it keeps responding in dense, mature canopies where NDVI saturates. It tracks chlorophyll (greenness), not nitrogen directly: a low value can come from nitrogen shortage but equally from water stress, disease or growth stage. B5 is a 20 m band, resampled to 10 m.",
+    "label": "NDRE \u2014 Normalized Difference Red Edge Index",
+    "map_layer": null,
+    "max": 0.6,
+    "mean": 0.4,
+    "min": 0.2,
+    "std_dev": 0.05
+   },
+   "ndsi": {
+    "citation": "Hall et al. 1995",
+    "download_url": null,
+    "formula": "(Green - SWIR1) / (Green + SWIR1)  =  (B3 - B11) / (B3 + B11)",
+    "interpretation": "Same band math as MNDWI, different interpretation context: NDSI > 0.4 is the standard threshold for classifying a pixel as snow/ice-covered.",
+    "label": "NDSI \u2014 Normalized Difference Snow Index",
+    "map_layer": null,
+    "max": 0.6,
+    "mean": 0.4,
+    "min": 0.2,
+    "std_dev": 0.05
+   },
+   "ndvi": {
+    "citation": "Rouse et al. 1974",
+    "download_url": null,
+    "formula": "(NIR - Red) / (NIR + Red)  =  (B8 - B4) / (B8 + B4)",
+    "interpretation": "Higher = denser/healthier green vegetation. <0 typically water/cloud/snow, 0-0.2 bare soil/sparse veg, 0.2-0.5 moderate, >0.5 dense vegetation.",
+    "label": "NDVI \u2014 Normalized Difference Vegetation Index",
+    "map_layer": null,
+    "max": 0.6,
+    "mean": 0.4,
+    "min": 0.2,
+    "std_dev": 0.05
+   },
+   "ndwi": {
+    "citation": "McFeeters 1996",
+    "download_url": null,
+    "formula": "(Green - NIR) / (Green + NIR)  =  (B3 - B8) / (B3 + B8)",
+    "interpretation": "Higher = more open water. Tuned for open water bodies; can under-detect water in built-up areas \u2014 use MNDWI there instead.",
+    "label": "NDWI \u2014 Normalized Difference Water Index (McFeeters)",
+    "map_layer": null,
+    "max": 0.6,
+    "mean": 0.4,
+    "min": 0.2,
+    "std_dev": 0.05
+   },
+   "savi": {
+    "citation": "Huete 1988",
+    "download_url": null,
+    "formula": "((NIR - Red) / (NIR + Red + L)) x (1 + L), L = 0.5",
+    "interpretation": "NDVI corrected for soil brightness \u2014 preferred over NDVI in sparse-vegetation/arid AOIs where bare soil otherwise skews the index.",
+    "label": "SAVI \u2014 Soil-Adjusted Vegetation Index",
+    "map_layer": null,
+    "max": 0.6,
+    "mean": 0.4,
+    "min": 0.2,
+    "std_dev": 0.05
+   }
+  },
+  "method": "Sentinel-2 SR Harmonized median composite of 7 scene(s).",
+  "sampling": "pixel_at_centroid",
+  "sampling_note": "The area of interest is smaller than one Sentinel-2 pixel (about 0.02 km), so this value describes the pixel under the centre of the area, not only the area you drew.",
+  "scene_count": 7,
+  "scene_provenance": [],
+  "valid_pixel_fraction": 1.0
+ },
+ "moisture_missing": {
+  "method": "SMAP returned no value for this area; this is a missing reading, not zero moisture.",
+  "sampling": null,
+  "sampling_note": null,
+  "scene_count": 5,
+  "sm_surface": null
+ },
+ "moisture_nocoverage": {
+  "method": "No SMAP coverage found for this AOI/date range.",
+  "scene_count": 0,
+  "sm_surface": null
+ },
+ "moisture_ok": {
+  "download_url": null,
+  "map_layer": null,
+  "method": "NASA SMAP",
+  "sampling": "aoi",
+  "sampling_note": null,
+  "scene_count": 5,
+  "sm_surface": {
+   "max": 0.27,
+   "mean": 0.213,
+   "min": 0.15,
+   "std_dev": 0.02,
+   "units": "m3/m3"
+  },
+  "valid_pixel_fraction": 1.0
+ },
+ "moisture_small": {
+  "download_url": null,
+  "map_layer": null,
+  "method": "NASA SMAP",
+  "sampling": "pixel_at_centroid",
+  "sampling_note": "The area of interest is smaller than one SMAP pixel (about 9 km), so this value describes the pixel under the centre of the area, not only the area you drew.",
+  "scene_count": 5,
+  "sm_surface": {
+   "max": 0.18,
+   "mean": 0.18,
+   "min": 0.18,
+   "std_dev": 0.0,
+   "units": "m3/m3"
+  },
+  "valid_pixel_fraction": 1.0
+ },
+ "vhi_null": {
+  "baseline": {
+   "caveat": "",
+   "lst_years_with_data": 24,
+   "ndvi_years_with_data": 24,
+   "years_requested": "2001-2025"
+  },
+  "class_note": "",
+  "download_url": null,
+  "drought_classes": [
+   {
+    "code": 0,
+    "label": "Extreme drought",
+    "pct_of_valid_pixels": null,
+    "vhi_range": "VHI \u2264 10"
+   },
+   {
+    "code": 1,
+    "label": "Severe drought",
+    "pct_of_valid_pixels": null,
+    "vhi_range": "10 < VHI \u2264 20"
+   },
+   {
+    "code": 2,
+    "label": "Moderate drought",
+    "pct_of_valid_pixels": null,
+    "vhi_range": "20 < VHI \u2264 30"
+   },
+   {
+    "code": 3,
+    "label": "Mild drought",
+    "pct_of_valid_pixels": null,
+    "vhi_range": "30 < VHI \u2264 40"
+   },
+   {
+    "code": 4,
+    "label": "No drought",
+    "pct_of_valid_pixels": null,
+    "vhi_range": "VHI > 40"
+   }
+  ],
+  "indices": {
+   "tci": {
+    "citation": "cite",
+    "formula": "formula",
+    "interpretation": "interp",
+    "label": "TCI label",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "vci": {
+    "citation": "cite",
+    "formula": "formula",
+    "interpretation": "interp",
+    "label": "VCI label",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   },
+   "vhi": {
+    "citation": "cite",
+    "formula": "formula",
+    "interpretation": "interp",
+    "label": "VHI label",
+    "map_layer": null,
+    "max": null,
+    "mean": null,
+    "min": null,
+    "std_dev": null
+   }
+  },
+  "lst_composites_used": 4,
+  "method": "m",
+  "ndvi_composites_used": 2,
+  "sampling": null,
+  "sampling_note": null,
+  "valid_pixel_fraction": null
+ }
+}

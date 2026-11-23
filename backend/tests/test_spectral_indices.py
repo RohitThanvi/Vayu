@@ -168,3 +168,19 @@ def test_a_genuine_zero_mean_stays_a_value(run):
 def test_tiny_area_falls_back_to_the_pixel_at_the_centre_and_says_so(run):
     ids = ["ndvi", "ndmi"]; null = {k: None for k in full_stats(ids)}; r, _, _ = run(null, full_stats(ids, 0.4), indices=ids)
     assert r["indices"]["ndmi"]["mean"] == 0.4 and r["sampling"] == "pixel_at_centroid" and "smaller than one Sentinel-2 pixel" in r["sampling_note"]
+
+
+def test_the_report_glossary_explains_every_index_the_tool_can_compute():
+    from app.services import report_generator as rg
+    text = " ".join(f"{k} {v}" for k, v in rg.RS_GLOSSARY).upper()
+    for idx in g.INDEX_DEFINITIONS: assert idx.upper() in text, f"{idx} is computable but missing from the report glossary"
+    assert "McFeeters" in " ".join(v for k, v in rg.RS_GLOSSARY if "NDWI" in k) and "not nitrogen directly" in " ".join(v for k, v in rg.RS_GLOSSARY if k == "NDRE")
+
+
+def test_frontend_spectra_fixture_matches_the_real_index_definitions():
+    import json
+    fx = json.loads((Path(__file__).resolve().parents[2] / "frontend" / "ui-tests" / "fixtures" / "spectra.json").read_text(encoding="utf-8"))
+    assert fx["indices_ids"] == list(g.INDEX_DEFINITIONS), "regenerate frontend/ui-tests/fixtures/spectra.json: the index set changed"
+    for k, d in g.INDEX_DEFINITIONS.items():
+        card = fx["indices_ok"]["indices"][k]; assert (card["label"], card["formula"], card["citation"], card["interpretation"]) == (d["label"], d["formula"], d["citation"], d["interpretation"]), k
+    assert set(fx["indices_ok"]) >= {"indices", "valid_pixel_fraction", "sampling", "sampling_note", "scene_count"}

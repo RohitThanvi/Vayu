@@ -63,7 +63,8 @@ function OriginalIndicators({ lg }) {
     ['vegetation_loss', 'Vegetation loss (Sentinel-2 NDVI)', 'vegetation', [
       ['Vegetation lost', `${km2(v.vegetation_loss_km2)} (${pc(v.loss_pct)} of the initial vegetated area)`],
       ['Vegetation gained', km2(v.vegetation_gain_km2)], ['Initial vegetated area', `${km2(v.initial_vegetation_km2)} (${pc(v.vegetation_pct_of_aoi)} of the area)`],
-      ...(v.small_base_caveat ? [['Caution', 'Vegetation covers under 2% of the area, so the loss percentage rests on very few pixels.']] : [])]],
+      ...(v.no_baseline_vegetation ? [['Caution', 'No vegetation was detected at the start of the period, so there is no loss percentage (this is not a verified 0%).']]
+        : v.small_base_caveat ? [['Caution', 'Vegetation covers under 2% of the area, so the loss percentage rests on very few pixels.']] : [])]],
     ['moisture_deficit', 'Soil moisture (NASA SMAP)', 'soil_moisture', [
       ['Average moisture start / end', `${fmt(m.start_avg_soil_moisture, 3)} / ${fmt(m.end_avg_soil_moisture, 3)} m³/m³`], ['Change', `${fmt(m.moisture_change, 3)} m³/m³`],
       ['Dry-stress share (below 0.1 m³/m³)', `${pc(m.dry_stress_pct)} (${km2(m.dry_stress_area_km2)})`],
