@@ -35,8 +35,11 @@ export default function Terrain3D({ center, zoom, onClose, watchdogMs = 8000 }) 
         const tileStats = createTileStats(), t0 = Date.now(), note = (m) => setNotes((n) => (n.includes(m) ? n : [...n, m]));
         const sampler = createElevationSampler({ fetchTile, cacheSize: QUALITY[quality].elevationCache }), img = imageryConfig(import.meta.env);
         setImgInfo({ source: img.source, attribution: img.attribution }); if (img.warning) note(img.warning);
+        // Errors Cesium raises itself for terrain tiles (building the mesh, its web workers) never pass through our sampler, so listen for them too.
+        const terrainProvider = createTerrainProvider(Cesium, sampler, { credit: TERRAIN_ATTRIBUTION, onResult: tileStats.terrain });
+        terrainProvider.errorEvent?.addEventListener?.((e) => tileStats.mesh({ ok: false, message: e && (e.message || (e.error && e.error.message)) }));
         viewer = new Cesium.Viewer(host.current, {
-          baseLayer: false, terrainProvider: createTerrainProvider(Cesium, sampler, { credit: TERRAIN_ATTRIBUTION, onResult: tileStats.terrain }), requestRenderMode: true,
+          baseLayer: false, terrainProvider, requestRenderMode: true,
           baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false, navigationHelpButton: false, animation: false, timeline: false, fullscreenButton: false, infoBox: false, selectionIndicator: false,
         });
         const scene = viewer.scene, globe = scene.globe;

@@ -181,6 +181,7 @@ export function register() {
     t.imagery({ ok: false, message: '  HTTP\n 404  ' }); eq(problemText(t.stats, 0), 'Imagery: 2 loaded, 1 failed (first error: HTTP 404).'); t.imagery({ ok: false, message: 'later error' }); has(problemText(t.stats, 0), 'first error: HTTP 404');
     const d = createTileStats(); d.imagery({ ok: false, message: 'x'.repeat(500) }); has(problemText(d.stats, 0), 'Imagery: no tile loaded, 1 failed'); ok(problemText(d.stats, 0).length < 260, 'long errors are cut');
     d.resetImagery(); eq(d.stats.imagery, { ok: 0, fail: 0, first: null }); eq(problemText(d.stats, 0), null);
+    const w = createTileStats(); w.mesh({ ok: false, message: 'worker failed' }); eq(problemText(w.stats, 0), 'Terrain engine: 1 tile failed inside Cesium (first error: worker failed).'); w.mesh({ ok: false }); has(problemText(w.stats, 0), '2 tiles failed inside Cesium');
     const e = createTileStats(); e.terrain({ ok: false, message: 'boom' }); eq(problemText(e.stats, 0), 'Terrain: 1 tile could not be built from elevation data and is drawn flat (first error: boom).');
     e.terrain({ ok: false }); has(problemText(e.stats, 0), '2 tiles could not be built'); has(problemText(e.stats, 0), 'are drawn flat'); has(problemText(e.stats, 0), 'first error: boom');
     eq([errMessage(new Error('m')), errMessage({ statusCode: 403 }), errMessage({ type: 'error' }), errMessage('plain'), errMessage(null)], ['m', 'HTTP 403', 'error', 'plain', 'null']);
@@ -226,6 +227,13 @@ export function register() {
       eq(text(q(m.container, '[data-testid="terrain3d-problem"]')), 'Imagery: no tile loaded, 1 failed (first error: HTTP 404).');
     } finally { await m.unmount(); delete window.Cesium; }
   });
+  test('3D view: errors Cesium itself reports for terrain tiles are shown too (not only our own sampling errors)', async () => {
+    const log = {}; const { m } = await open(log, { watchdogMs: 60000 });
+    try {
+      ok(log.terrain, 'the terrain provider is listened to'); log.terrain.fire({ error: { message: 'Failed to obtain terrain tile 3/2/1: worker blocked' } }); log.terrain.fire({ message: 'second' }); await flush(1200);
+      eq(text(q(m.container, '[data-testid="terrain3d-problem"]')), 'Terrain engine: 2 tiles failed inside Cesium (first error: Failed to obtain terrain tile 3/2/1: worker blocked).');
+    } finally { await m.unmount(); delete window.Cesium; }
+  });
   test('3D view: a start-up heartbeat keeps redrawing while tiles arrive, and stops when the view closes', async () => {
     const log = {}; const { m } = await open(log, { watchdogMs: 60000 });
     try { await flush(300); const n0 = log.renders || 0; await flush(1100); ok((log.renders || 0) - n0 >= 2, `redrawn repeatedly after start-up settled (${(log.renders || 0) - n0} more)`); } finally { await m.unmount(); delete window.Cesium; }
@@ -256,6 +264,7 @@ export function register() {
   const fakeCesium = (log) => { const C = deep();
     C.UrlTemplateImageryProvider = function (opts) { const p = deep(), hs = []; p.errorEvent = { addEventListener: (h) => hs.push(h), removeEventListener: (h) => { const k = hs.indexOf(h); if (k >= 0) hs.splice(k, 1); } }; let impl = async () => ({ img: 1 }); p.requestImage = (...a) => impl(...a); (log.providers = log.providers || []).push({ opts, fire: () => hs.slice().forEach((h) => h({})), request: (x = 1, y = 1, l = 5) => p.requestImage(x, y, l), setImpl: (f) => { impl = f; } }); return p; };
     C.Color = { fromCssColorString: (c) => ({ css: c }) };
+    C.CustomHeightmapTerrainProvider = function (opts) { const p = deep(), hs = []; p.errorEvent = { addEventListener: (h) => hs.push(h), removeEventListener: () => {} }; log.terrain = { opts, fire: (e) => hs.forEach((h) => h(e)) }; return p; };
     C.Viewer = function (el, opts) { log.opts = opts; log.el = el; const v = deep(); const sc = deep(); sc.requestRender = () => { log.renders = (log.renders || 0) + 1; }; v.scene = sc; log.layers = []; v.imageryLayers = { addImageryProvider: (prov, idx) => { const l = { alpha: 1, prov, idx }; log.layers.push(l); return l; }, remove: (l) => { log.removed = (log.removed || 0) + 1; log.removedLayer = l; } }; v.destroy = () => { log.destroyed = (log.destroyed || 0) + 1; }; v.isDestroyed = () => false; log.viewer = v; return v; }; return C; };
   const open = async (log, props = {}) => { window.Cesium = fakeCesium(log); const closed = { n: 0 }; const Terrain3D = (await import('../src/components/Terrain3D.jsx')).default; const m = await mount(<Terrain3D center={{ lat: 26.9, lon: 75.8 }} zoom={12} onClose={() => closed.n++} {...props} />); await flush(40); return { m, closed }; };
 
