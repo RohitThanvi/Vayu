@@ -6,16 +6,17 @@ import { imageryConfig } from '../lib/view3d/imagery.js';
 import { BUILDINGS_ATTRIBUTION, DEFAULT_HEIGHT_NOTE, buildingColorHex, buildingTilesAround, footprintBase, getTileTemplate, parseBuildings, tileUrl, BUILDING_ZOOM } from '../lib/view3d/buildings.js';
 import { QUALITY, detectQuality, utcForSolarHour } from '../lib/view3d/quality.js';
 import { altitudeForZoom, tileCorner } from '../lib/view3d/geo.js';
+import { createTileStats, problemText } from '../lib/view3d/diagnostics.js';
 
 // Optional 3D view: free, commercial-safe data only (no Cesium ion, no Google tiles). Terrain = AWS/Mapzen Terrain Tiles, relief = computed hillshade, buildings = OpenFreeMap (OSM),
 // imagery = EOX Sentinel-2 cloudless 2016 by default (falls back to NASA GIBS). It sits on top of the app as an overlay and is off unless VITE_ENABLE_3D_VIEW=1. See README, "Optional 3D view".
 const S = { text: '#e8efe9', dim: '#9fb0a5', bg: 'rgba(10,18,14,0.82)', border: 'rgba(255,255,255,0.14)', accent: '#7eb8d4', mono: "'JetBrains Mono','Courier New',monospace" };
 const ELEV_ZOOM = 13;       // zoom used for building base heights (the source data is ~30 m, so more detail would not be real)
 
-export default function Terrain3D({ center, zoom, onClose }) {
+export default function Terrain3D({ center, zoom, onClose, watchdogMs = 8000 }) {
   const host = useRef(null), api = useRef({}), [status, setStatus] = useState('loading'), [error, setError] = useState(null);
   const [quality, setQuality] = useState(() => detectQuality({ deviceMemory: navigator.deviceMemory, hardwareConcurrency: navigator.hardwareConcurrency, mobile: /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) }));
-  const [hour, setHour] = useState(15), [count, setCount] = useState(0), [notes, setNotes] = useState([]);
+  const [hour, setHour] = useState(15), [count, setCount] = useState(0), [notes, setNotes] = useState([]), [problem, setProblem] = useState(null);
   const [imgInfo, setImgInfo] = useState(() => { const c = imageryConfig(import.meta.env); return { source: c.source, attribution: c.attribution }; });
 
   useEffect(() => {
@@ -31,21 +32,35 @@ export default function Terrain3D({ center, zoom, onClose }) {
             const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.drawImage(bmp, 0, 0); return ctx.getImageData(0, 0, 256, 256).data;
           } finally { aborters.delete(ctl); }
         };
+        const tileStats = createTileStats(), t0 = Date.now(), note = (m) => setNotes((n) => (n.includes(m) ? n : [...n, m]));
         const sampler = createElevationSampler({ fetchTile, cacheSize: QUALITY[quality].elevationCache }), img = imageryConfig(import.meta.env);
-        setImgInfo({ source: img.source, attribution: img.attribution }); if (img.warning) setNotes((n) => [...n, img.warning]);
+        setImgInfo({ source: img.source, attribution: img.attribution }); if (img.warning) note(img.warning);
         viewer = new Cesium.Viewer(host.current, {
-          baseLayer: false, terrainProvider: createTerrainProvider(Cesium, sampler, { credit: TERRAIN_ATTRIBUTION }), requestRenderMode: true,
+          baseLayer: false, terrainProvider: createTerrainProvider(Cesium, sampler, { credit: TERRAIN_ATTRIBUTION, onResult: tileStats.terrain }), requestRenderMode: true,
           baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false, navigationHelpButton: false, animation: false, timeline: false, fullscreenButton: false, infoBox: false, selectionIndicator: false,
         });
         const scene = viewer.scene, globe = scene.globe;
-        const baseProvider = createBaseImageryProvider(Cesium, img), baseLayer = viewer.imageryLayers.addImageryProvider(baseProvider);
-        // The sharper imagery's URL could not be tested from the dev sandbox: if its tiles keep failing, swap to the coarse NASA GIBS layer (under the hillshade) instead of leaving a black globe.
-        if (img.fallback) watchImageryErrors(baseProvider, { onFail: () => {
-          if (cancelled || viewer.isDestroyed()) return;
-          viewer.imageryLayers.remove(baseLayer, true); viewer.imageryLayers.addImageryProvider(createBaseImageryProvider(Cesium, img.fallback), 0);
-          setImgInfo({ source: img.fallback.source, attribution: img.fallback.attribution }); setNotes((n) => [...n, 'The sharper imagery could not be loaded, so coarser NASA GIBS imagery is shown instead.']); scene.requestRender();
-        } });
+        // Where no imagery has loaded, show a neutral ground colour. Cesium's default is solid blue, which looks like a broken blue screen rather than "no imagery".
+        globe.baseColor = Cesium.Color.fromCssColorString('#26332b');
+        const baseProvider = createBaseImageryProvider(Cesium, img, { onResult: tileStats.imagery }); let baseLayer = viewer.imageryLayers.addImageryProvider(baseProvider), swapped = false;
+        // The sharper imagery's URL could not be tested from the dev sandbox. Two independent ways to notice a dead source: repeated tile errors, or simply no tile loading within watchdogMs. Either swaps once to the coarse
+        // NASA GIBS layer (under the hillshade); if that also loads nothing, the view says so and carries on with relief shading and buildings.
+        const swapToFallback = (why) => {
+          if (swapped || !img.fallback || cancelled || viewer.isDestroyed()) return false; swapped = true;
+          console.warn(`[Vayu 3D] imagery source failed (${why}); switching to NASA GIBS.`);
+          viewer.imageryLayers.remove(baseLayer, true); tileStats.resetImagery();
+          baseLayer = viewer.imageryLayers.addImageryProvider(createBaseImageryProvider(Cesium, img.fallback, { onResult: tileStats.imagery }), 0);
+          setImgInfo({ source: img.fallback.source, attribution: img.fallback.attribution }); note('The sharper imagery could not be loaded, so coarser NASA GIBS imagery is shown instead.'); scene.requestRender(); return true;
+        };
+        if (img.fallback) watchImageryErrors(baseProvider, { onFail: () => swapToFallback('repeated tile errors') });
+        const NO_IMAGERY = 'No map imagery could be loaded, so only relief shading and buildings are shown.';
+        const watch = (after) => { const id = setTimeout(() => { if (cancelled || viewer.isDestroyed() || tileStats.stats.imagery.ok > 0) return; after(); }, watchdogMs); timers.push(() => clearTimeout(id)); };
+        watch(() => { if (swapToFallback(`no tile loaded within ${Math.round(watchdogMs / 1000)} s`)) watch(() => note(NO_IMAGERY)); else note(NO_IMAGERY); });
         viewer.imageryLayers.addImageryProvider(createHillshadeProvider(Cesium, sampler, { credit: TERRAIN_ATTRIBUTION })).alpha = 0.6;
+        // With on-demand rendering Cesium normally redraws as tiles arrive; a short heartbeat guarantees progressive drawing during start-up whatever the source of a late tile.
+        const beat = setInterval(() => { if (!viewer.isDestroyed()) scene.requestRender(); }, 400); timers.push(() => clearInterval(beat)); const beatEnd = setTimeout(() => clearInterval(beat), 25000); timers.push(() => clearTimeout(beatEnd));
+        let lastProblem = null;
+        const diag = setInterval(() => { const t = problemText(tileStats.stats, Date.now() - t0, Math.max(watchdogMs - 1000, 1000)); setProblem(t); if (t && t !== lastProblem) { lastProblem = t; console.warn(`[Vayu 3D] ${t}`); } }, 1000); timers.push(() => clearInterval(diag));
         globe.depthTestAgainstTerrain = true; globe.enableLighting = true; globe.showGroundAtmosphere = true;
         scene.fog.enabled = true; scene.skyAtmosphere.show = true; scene.screenSpaceCameraController.minimumZoomDistance = 60;
         viewer.clock.shouldAnimate = false;
@@ -142,6 +157,7 @@ export default function Terrain3D({ center, zoom, onClose }) {
       <div style={{ position: 'absolute', left: 10, right: 10, bottom: 34, color: S.dim, fontSize: 11, lineHeight: 1.5, fontFamily: S.mono, pointerEvents: 'none', textShadow: '0 1px 2px #000' }}>
         {count > 0 && <div data-testid="terrain3d-count">{count} buildings shown. {DEFAULT_HEIGHT_NOTE} Terrain is ~30 m resolution; relief shading is computed. Visualisation only.</div>}
         {notes.map((n) => <div key={n}>{n}</div>)}
+        {problem && <div data-testid="terrain3d-problem" style={{ color: '#e0b36a' }}>{problem}</div>}
         <div data-testid="terrain3d-credit">{credit()}</div>
       </div>
     </div>

@@ -8,6 +8,7 @@ import { BUILDING_ZOOM, buildingColorHex, footprintBase, getTileTemplate, parseB
 import { EOX_2016_ATTRIBUTION, EOX_2016_URL, GIBS_ATTRIBUTION, gibsUrl, imageryConfig } from '../src/lib/view3d/imagery.js';
 import { QUALITY, detectQuality, utcForSolarHour, view3dEnabled, VIEW3D_MIN_MAP_ZOOM, view3dVisible } from '../src/lib/view3d/quality.js';
 import { createView3dSlot } from '../src/lib/view3d/slot.js';
+import { createTileStats, problemText, errMessage } from '../src/lib/view3d/diagnostics.js';
 import { CESIUM_BASE, CESIUM_VERSION, loadCesium, CESIUM_JS_SRI, CESIUM_CSS_SRI } from '../src/lib/view3d/loadCesium.js';
 import View3DLauncher from '../src/components/View3DLauncher.jsx';
 
@@ -172,6 +173,65 @@ export function register() {
   });
 
   // ------------------------------------------------------------------ launcher + viewer component
+  // ------------------------------------------------------------------ blank-globe hardening: diagnostics, flat-terrain fallback, imagery watchdog
+  test('3D diagnostics: counts become one honest sentence (or nothing when all is well)', () => {
+    const t = createTileStats(); eq(problemText(t.stats, 0), null, 'nothing yet and still inside the grace period'); eq(problemText(t.stats, 5000), null);
+    has(problemText(t.stats, 7000), 'no tile has loaded yet');
+    t.imagery({ ok: true }); t.imagery({ ok: true }); eq(problemText(t.stats, 99999), null, 'tiles are loading fine');
+    t.imagery({ ok: false, message: '  HTTP\n 404  ' }); eq(problemText(t.stats, 0), 'Imagery: 2 loaded, 1 failed (first error: HTTP 404).'); t.imagery({ ok: false, message: 'later error' }); has(problemText(t.stats, 0), 'first error: HTTP 404');
+    const d = createTileStats(); d.imagery({ ok: false, message: 'x'.repeat(500) }); has(problemText(d.stats, 0), 'Imagery: no tile loaded, 1 failed'); ok(problemText(d.stats, 0).length < 260, 'long errors are cut');
+    d.resetImagery(); eq(d.stats.imagery, { ok: 0, fail: 0, first: null }); eq(problemText(d.stats, 0), null);
+    const e = createTileStats(); e.terrain({ ok: false, message: 'boom' }); eq(problemText(e.stats, 0), 'Terrain: 1 tile could not be built from elevation data and is drawn flat (first error: boom).');
+    e.terrain({ ok: false }); has(problemText(e.stats, 0), '2 tiles could not be built'); has(problemText(e.stats, 0), 'are drawn flat'); has(problemText(e.stats, 0), 'first error: boom');
+    eq([errMessage(new Error('m')), errMessage({ statusCode: 403 }), errMessage({ type: 'error' }), errMessage('plain'), errMessage(null)], ['m', 'HTTP 403', 'error', 'plain', 'null']);
+  });
+  test('3D terrain: a tile that cannot be sampled is returned FLAT (never failed), and the failure is reported', async () => {
+    const C = { Math: { toDegrees: (r) => r }, GeographicTilingScheme: class { tileXYToRectangle() { return { west: 0, south: 0, east: 1, north: 1 }; } }, CustomHeightmapTerrainProvider: class { constructor(o) { this.o = o; } } };
+    const res = []; const mk = (sampleGrid) => createTerrainProvider(C, { sampleGrid }, { onResult: (r) => res.push(r) }).o;
+    const good = new Float32Array(65 * 65).fill(7); let g = await mk(async () => good).callback(0, 0, 3); eq(g, good); eq(res.pop(), { ok: true });
+    g = await mk(async () => { throw new Error('S3 blocked'); }).callback(0, 0, 3); eq(g.length, 65 * 65); ok(g instanceof Float32Array && g.every((v) => v === 0), 'flat ground'); eq(res.pop(), { ok: false, message: 'S3 blocked' });
+    g = await mk(async () => new Float32Array(3)).callback(0, 0, 3); eq(g.length, 65 * 65, 'a wrong-sized grid is replaced by a valid flat one'); has(res.pop().message, 'wrong size');
+    g = await mk(async () => null).callback(0, 0, 3); eq(g.length, 65 * 65); eq(res.pop().ok, false);
+    await createTerrainProvider(C, { sampleGrid: async () => good }).o.callback(0, 0, 0);            // no onResult: still fine
+  });
+  test('3D imagery: per-tile results are counted, errors are rethrown, a throttled (undefined) answer passes through uncounted', async () => {
+    class P { constructor(o) { this.o = o; this.impl = async () => 'img'; } requestImage(x, y, l, r) { return this.impl(x, y, l, r); } }
+    const C = { UrlTemplateImageryProvider: P }, cfg = { url: 'u', maxZoom: 9, attribution: 'a' }, res = [];
+    const p = createBaseImageryProvider(C, cfg, { onResult: (r) => res.push(r) }); eq(await p.requestImage(1, 2, 3), 'img'); eq(res.pop(), { ok: true, level: 3 });
+    p.impl = async () => { throw { statusCode: 404 }; }; let thrown = null; try { await p.requestImage(1, 2, 4); } catch (e) { thrown = e; } eq(thrown, { statusCode: 404 }, 'the original error still reaches Cesium'); eq(res.pop(), { ok: false, level: 4, message: 'HTTP 404' });
+    p.impl = () => undefined; eq(p.requestImage(1, 2, 5), undefined); eq(res.length, 0, 'Cesium\'s throttled answer is not a tile result');
+    const plain = createBaseImageryProvider(C, cfg); eq(await plain.requestImage(0, 0, 0), 'img'); eq(createBaseImageryProvider({ UrlTemplateImageryProvider: class { constructor() {} } }, cfg, { onResult: () => {} }) instanceof Object, true, 'a provider without requestImage is left alone');
+  });
+  test('3D view: the globe base colour is neutral ground, not Cesium\'s default solid blue', async () => {
+    const log = {}; const { m } = await open(log, { watchdogMs: 60000 });
+    try { eq(log.viewer.scene.globe.baseColor.css, '#26332b'); } finally { await m.unmount(); delete window.Cesium; }
+  });
+  test('3D view: if no imagery tile loads within the watchdog time it swaps to NASA GIBS once, then says so if that also loads nothing', async () => {
+    const log = {}; const { m } = await open(log, { watchdogMs: 400 });
+    try {
+      ok(!log.removed, 'not yet'); await flush(550); eq(log.removed, 1, 'dead source replaced'); const added = log.layers[log.layers.length - 1]; eq(added.idx, 0, 'under the hillshade'); has(log.providers[log.providers.length - 1].opts.url, 'gibs.earthdata.nasa.gov');
+      has(text(m.container), 'coarser NASA GIBS imagery is shown instead'); has(text(q(m.container, '[data-testid="terrain3d-credit"]')), 'NASA GIBS'); lacks(text(m.container), 'No map imagery could be loaded');
+      await flush(500); has(text(m.container), 'No map imagery could be loaded, so only relief shading and buildings are shown.'); eq(log.removed, 1, 'swaps only once');
+    } finally { await m.unmount(); delete window.Cesium; }
+  });
+  test('3D view: when imagery tiles load, nothing is swapped and no warning is shown', async () => {
+    const log = {}; const { m } = await open(log, { watchdogMs: 400 });
+    try { await log.providers[0].request(); await flush(650); ok(!log.removed, 'no swap'); lacks(text(m.container), 'No map imagery'); lacks(text(m.container), 'coarser NASA'); ok(!q(m.container, '[data-testid="terrain3d-problem"]'), 'no problem line'); }
+    finally { await m.unmount(); delete window.Cesium; }
+  });
+  test('3D view: failing imagery is explained on screen with the first error', async () => {
+    const log = {}; const { m } = await open(log, { watchdogMs: 60000 });
+    try {
+      log.providers[0].setImpl(async () => { throw { statusCode: 404 }; }); await log.providers[0].request().catch(() => {}); await flush(1200);
+      eq(text(q(m.container, '[data-testid="terrain3d-problem"]')), 'Imagery: no tile loaded, 1 failed (first error: HTTP 404).');
+    } finally { await m.unmount(); delete window.Cesium; }
+  });
+  test('3D view: a start-up heartbeat keeps redrawing while tiles arrive, and stops when the view closes', async () => {
+    const log = {}; const { m } = await open(log, { watchdogMs: 60000 });
+    try { await flush(300); const n0 = log.renders || 0; await flush(1100); ok((log.renders || 0) - n0 >= 2, `redrawn repeatedly after start-up settled (${(log.renders || 0) - n0} more)`); } finally { await m.unmount(); delete window.Cesium; }
+    const after = log.renders; await flush(900); eq(log.renders, after, 'no redraws after close');
+  });
+
   // ------------------------------------------------------------------ 3D button: visibility rule, map control, launcher in its slot
   const withSlot = () => { const slot = document.createElement('div'); slot.style.display = 'none'; document.body.appendChild(slot); return { slot, done: () => slot.remove() }; };
   const ON = { VITE_ENABLE_3D_VIEW: '1' };
@@ -194,8 +254,9 @@ export function register() {
   // A permissive stand-in for Cesium: every property is callable/assignable, Viewer is spied.
   const deep = () => { const store = new Map(); const p = new Proxy(function () {}, { get: (_, k) => { if (k === 'then') return undefined; if (k === Symbol.toPrimitive) return () => 0; if (!store.has(k)) store.set(k, deep()); return store.get(k); }, set: (_, k, v) => { store.set(k, v); return true; }, apply: () => deep(), construct: () => deep() }); return p; };
   const fakeCesium = (log) => { const C = deep();
-    C.UrlTemplateImageryProvider = function (opts) { const p = deep(), hs = []; p.errorEvent = { addEventListener: (h) => hs.push(h), removeEventListener: (h) => { const k = hs.indexOf(h); if (k >= 0) hs.splice(k, 1); } }; (log.providers = log.providers || []).push({ opts, fire: () => hs.slice().forEach((h) => h({})) }); return p; };
-    C.Viewer = function (el, opts) { log.opts = opts; log.el = el; const v = deep(); log.layers = []; v.imageryLayers = { addImageryProvider: (prov, idx) => { const l = { alpha: 1, prov, idx }; log.layers.push(l); return l; }, remove: (l) => { log.removed = (log.removed || 0) + 1; log.removedLayer = l; } }; v.destroy = () => { log.destroyed = (log.destroyed || 0) + 1; }; v.isDestroyed = () => false; log.viewer = v; return v; }; return C; };
+    C.UrlTemplateImageryProvider = function (opts) { const p = deep(), hs = []; p.errorEvent = { addEventListener: (h) => hs.push(h), removeEventListener: (h) => { const k = hs.indexOf(h); if (k >= 0) hs.splice(k, 1); } }; let impl = async () => ({ img: 1 }); p.requestImage = (...a) => impl(...a); (log.providers = log.providers || []).push({ opts, fire: () => hs.slice().forEach((h) => h({})), request: (x = 1, y = 1, l = 5) => p.requestImage(x, y, l), setImpl: (f) => { impl = f; } }); return p; };
+    C.Color = { fromCssColorString: (c) => ({ css: c }) };
+    C.Viewer = function (el, opts) { log.opts = opts; log.el = el; const v = deep(); const sc = deep(); sc.requestRender = () => { log.renders = (log.renders || 0) + 1; }; v.scene = sc; log.layers = []; v.imageryLayers = { addImageryProvider: (prov, idx) => { const l = { alpha: 1, prov, idx }; log.layers.push(l); return l; }, remove: (l) => { log.removed = (log.removed || 0) + 1; log.removedLayer = l; } }; v.destroy = () => { log.destroyed = (log.destroyed || 0) + 1; }; v.isDestroyed = () => false; log.viewer = v; return v; }; return C; };
   const open = async (log, props = {}) => { window.Cesium = fakeCesium(log); const closed = { n: 0 }; const Terrain3D = (await import('../src/components/Terrain3D.jsx')).default; const m = await mount(<Terrain3D center={{ lat: 26.9, lon: 75.8 }} zoom={12} onClose={() => closed.n++} {...props} />); await flush(40); return { m, closed }; };
 
   test('3D view: starts the viewer on free sources only, shows every attribution, and tears down on close', async () => {
